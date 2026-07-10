@@ -762,7 +762,7 @@ function buildPromptContext(pageContext = {}) {
   return ctx;
 }
 
-export async function runAgentLoop({ tabId, skillId, skillMarkdown, userInstruction, pageContext, sendProgress, continueSession, highRandomness, negativeFilter, maxLoopSteps }) {
+export async function runAgentLoop({ tabId, skillId, skillMarkdown, userInstruction, pageContext, sendProgress, continueSession, highRandomness, negativeFilter, maxLoopSteps, resumeState = null, onCheckpoint = null }) {
   const settings = await getSettings();
   const maxSteps = maxLoopSteps || Math.max(parseInt(settings.maxLoopSteps) || 25, 25);
 
@@ -779,7 +779,7 @@ export async function runAgentLoop({ tabId, skillId, skillMarkdown, userInstruct
     return true;
   });
   const availableTools = filteredToolList.join(", ");
-  let toolHistory = [];
+  let toolHistory = Array.isArray(resumeState?.toolHistory) ? [...resumeState.toolHistory] : [];
 
   const actualTargetImageUrl = pageContext?.targetImageUrl || "";
   const ctxForPrompt = buildPromptContext(pageContext);
@@ -843,25 +843,42 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       __hasDeepReflected: Boolean(ctxForPrompt.__hasDeepReflected),
     };
     globalSessionCache[sessionKey] = { messages, toolHistory, ctxState };
+    const checkpointPayload = {
+      status: "running",
+      tabId,
+      skillId,
+      userInstruction,
+      pageUrl: pageContext?.url || "",
+      pageTitle: pageContext?.title || "",
+      messages,
+      toolHistory,
+      ctxState,
+      maxSteps,
+      lastStage: patch.lastStage || patch.lastNode || patch.status || "checkpoint",
+      ...patch,
+    };
     try {
-      await saveAgentCheckpoint(sessionKey, {
-        status: "running",
-        skillId,
-        userInstruction,
-        pageUrl: pageContext?.url || "",
-        pageTitle: pageContext?.title || "",
-        messages,
-        toolHistory,
-        ctxState,
-        ...patch,
-      });
+      await saveAgentCheckpoint(sessionKey, checkpointPayload);
+      if (typeof onCheckpoint === "function") {
+        await onCheckpoint({
+          ...checkpointPayload,
+          messages: serializeMessagesForCheckpoint(messages),
+          updatedAt: new Date().toISOString(),
+        });
+      }
     } catch (err) {
       console.warn("Failed to persist agent checkpoint:", err.message);
     }
   };
 
   let restoredCheckpoint = null;
-  if (continueSession) {
+  if (continueSession && Array.isArray(resumeState?.messages) && resumeState.messages.length > 0) {
+    restoredCheckpoint = {
+      ...resumeState,
+      messages: hydrateMessagesFromCheckpoint(resumeState.messages),
+      toolHistory: Array.isArray(resumeState.toolHistory) ? [...resumeState.toolHistory] : [],
+    };
+  } else if (continueSession) {
     const cached = globalSessionCache[sessionKey];
     if (Array.isArray(cached)) {
       restoredCheckpoint = { messages: cached, toolHistory: [], ctxState: {} };
@@ -885,7 +902,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     sendProgress({
       type: "checkpoint_restored",
       step: restoredCheckpoint.step || 0,
-      message: `已恢复上次中断的 workflow：${toolHistory.length} 个工具节点，继续从下一步推进。`,
+      message: `已恢复上次中断的 workflow：${restoredCheckpoint.lastStage || restoredCheckpoint.lastNode || restoredCheckpoint.status || "checkpoint"}，沿用 ${toolHistory.length} 个工具证据继续推进。`,
     });
     if (messages.length > 0 && messages[0].role === "system") {
       messages[0].content = systemPrompt;
@@ -895,9 +912,12 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     delete newCtx.screenshot;
     const ctxString = JSON.stringify(newCtx, null, 2);
 
-    let instructionText = userInstruction 
-        ? `[追加指令] 用户对刚才的执行结果提出了新的要求或调整。请严格基于以上的上下文记忆，重新推演并输出最终的 JSON 报告。\n用户的最新要求是：\n"${userInstruction}"` 
-        : `[追加指令] 请结合你最新的 System Prompt（你的目标任务可能已经发生了改变），并基于最新的页面上下文进行深度推演。`;
+    let instructionText = `[断点续跑] 请从上次中断节点继续，不要重复已经完成的搜索、开页、筛选或已获得的工具证据。`;
+    if (userInstruction) {
+      instructionText += `\n\n用户最新补充信息：\n"${userInstruction}"`;
+    } else {
+      instructionText += `\n\n请结合最新 System Prompt 和页面上下文继续推进。`;
+    }
     
     if ((skillId || "").includes("domestic_sourcing_finder") || (skillId || "").includes("etsy_sourcing_finder")) {
       instructionText += `\n\n【⚠️ 极其重要：禁止直接生成/必须调用浏览器工具真实寻源】\n当前匹配到的是寻源任务（例如需要去 1688、淘宝等平台寻找货源或对比价格），**你绝对禁止直接从历史记忆中复制或凭空捏造虚假的 1688/淘宝 详情页链接！**\n如果最新页面上下文中存在 targetImageUrl，且目标商品属于非标外观/模具/造型商品，你必须在第一步调用 'image_search_1688'（优先）或 'image_search_taobao' 执行供应商平台以图搜源；如果已配置生图模型且平台自动框选主体不完整，可先调用 'prepare_clean_product_image' 准备干净主体图，再把返回的 image_search_argument.imageUrl 传给图片搜索工具。非标品一旦进入图片检索路径，Critic 打回后也严禁切回 'input_text_and_search' 关键词搜索；只有目标明确为标品或用户明确要求文本兜底，才允许文本搜索。只有在通过工具真实获取并校验了详情页内容、价格和起批量后，才被允许在最后的报告中写入真实的 1688/淘宝详情页链接并输出 final 报告！`;
@@ -947,6 +967,12 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     }, highRandomness);
 
     sendProgress({ type: "llm_done", step, content: assistantContent });
+    await saveCheckpoint({
+      status: "llm_done",
+      step,
+      lastNode: "llm_response_received",
+      pendingAssistantContent: assistantContent,
+    });
 
     let parsed = extractJSONBlock(assistantContent);
 
@@ -1046,6 +1072,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
               error: "当前任务是 Etsy 店铺优化诊断，不是寻源流程。第一步必须围绕店铺健康评级、页面/截图/自营 API 数据、Etsy 站内竞品、Google Trends / Etsy 搜索 需求证据构建 ABC 优化方案；除非用户明确要求 1688/货源/采购，否则禁止调用采购平台搜索或生成供应商链接。",
             }),
           });
+          await saveCheckpoint({ status: "tool_guard_retry", step, lastNode: "shop_optimizer_sourcing_guard", toolName });
           continue;
         }
       }
@@ -1064,6 +1091,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
           role: "user",
           content: JSON.stringify(sourcingWorkflowGuardError),
         });
+        await saveCheckpoint({ status: "tool_guard_retry", step, lastNode: "sourcing_workflow_guard", toolName });
         continue;
       }
 
@@ -1083,6 +1111,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
               },
             }),
           });
+          await saveCheckpoint({ status: "tool_guard_retry", step, lastNode: "incomplete_image_search_guard", toolName });
           continue;
         }
 
@@ -1096,6 +1125,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
               error: "本轮国内寻源已经进入非标视觉/以图搜图路径。对于非标外观、模具、造型类商品，Critic 打回后也严格禁止回到文本框关键词搜索。请继续使用 productCards、截图和候选主图做视觉相似度筛选；如 1688 自动框选主体不完整且已配置生图模型，请先调用 prepare_clean_product_image，再把返回的 image_search_argument.imageUrl 传给 image_search_1688/image_search_taobao。",
             }),
           });
+          await saveCheckpoint({ status: "tool_guard_retry", step, lastNode: "visual_route_text_guard", toolName });
           continue;
         }
       }
@@ -1116,6 +1146,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
               query,
             }),
           });
+          await saveCheckpoint({ status: "tool_guard_retry", step, lastNode: "agentic_web_search_guard", toolName });
           continue;
         }
       }
@@ -1125,6 +1156,13 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         progressToolArgs.imageUrl = "__UPLOADED_IMAGE_DATA__";
       }
       sendProgress({ type: "tool_call", step, toolName, toolArgs: progressToolArgs });
+      await saveCheckpoint({
+        status: "tool_pending",
+        step,
+        lastNode: "tool_call_ready",
+        toolName,
+        toolArgs: progressToolArgs,
+      });
 
       if (!tools[toolName]) {
         const errMsg = `Unknown tool: ${toolName}. Available: ${availableTools}`;
@@ -1133,6 +1171,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
           role: "user",
           content: JSON.stringify({ type: "tool_error", tool: toolName, error: errMsg }),
         });
+        await saveCheckpoint({ status: "tool_error", step, lastNode: "unknown_tool", toolName });
         continue;
       }
 
@@ -1254,6 +1293,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     };
   }
 
+  await saveCheckpoint({ status: "max_steps_exceeded", step: maxSteps, lastNode: "max_steps_exceeded" });
   throw new Error(`Agent loop exceeded maximum steps (${maxSteps})`);
 }
 

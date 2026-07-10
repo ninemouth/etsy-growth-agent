@@ -1051,6 +1051,7 @@ function workflowCaseStatusLabel(status) {
     ready: "待诊断",
     queued: "排队中",
     running: "运行中",
+    interrupted: "已保存断点",
     completed: "已生成报告",
     failed: "运行失败",
     needs_frontend_context: "需前台页面执行",
@@ -1141,6 +1142,7 @@ function assessStoreFoundation({ skuRows = [], reports = [], opportunities = [],
 function statusFromCaseRuns(caseItem = {}) {
   const runs = caseItem.runs || [];
   if (runs.some(run => run.status === "running")) return "running";
+  if (runs.some(run => run.status === "interrupted")) return "interrupted";
   if (runs.some(run => run.status === "failed")) return "failed";
   if (runs.some(run => run.status === "completed")) return "completed";
   if (runs.some(run => run.status === "queued")) return "queued";
@@ -2441,11 +2443,11 @@ function startDashboardGrowthRun(run) {
     port.onDisconnect?.addListener(async () => {
       if (settled) return;
       await persistGrowthRunUpdate(run.caseId, run.id, {
-        status: "failed",
-        error: "后台连接中断",
-        failedAt: new Date().toISOString(),
-      }, { status: "failed" });
-      reject(new Error("后台连接中断"));
+        status: "interrupted",
+        error: "后台连接中断，已保存断点，可再次运行继续。",
+        interruptedAt: new Date().toISOString(),
+      }, { status: "interrupted" });
+      reject(new Error("后台连接中断，已保存断点，可再次运行继续。"));
     });
     port.postMessage({
       type: "RUN_SKILL",
@@ -2518,13 +2520,16 @@ async function handleGrowthAction(actionId, sku = "") {
     await refreshAllData();
     openWorkflowPip({ rootId: GROWTH_ACTION_CASE_TYPE[actionId] || "store_health" });
   } catch (err) {
-    const fallbackStatus = /当前环境不支持|Receiving end|无法获取当前活动|无法注入|content/i.test(err.message)
+    const isInterrupted = /已保存断点|后台连接中断/.test(err.message);
+    const fallbackStatus = isInterrupted
+      ? "interrupted"
+      : /当前环境不支持|Receiving end|无法获取当前活动|无法注入|content/i.test(err.message)
       ? "needs_frontend_context"
       : "failed";
     await persistGrowthRunUpdate(run.caseId, run.id, {
       status: fallbackStatus,
       error: err.message,
-      failedAt: new Date().toISOString(),
+      ...(isInterrupted ? { interruptedAt: new Date().toISOString() } : { failedAt: new Date().toISOString() }),
     }, { status: fallbackStatus });
     await refreshAllData();
     openWorkflowPip({ rootId: GROWTH_ACTION_CASE_TYPE[actionId] || "store_health" });

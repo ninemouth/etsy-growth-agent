@@ -251,16 +251,64 @@ async function listSkills() {
 
 // ── Port Connection Handling (Streaming Progress) ──
 const activePorts = new Map();
+const WORKFLOW_CHECKPOINTS_KEY = "agentWorkflowCheckpoints";
+
+function buildWorkflowCheckpointKey({ tabId, matchedSkills = [], message = {} } = {}) {
+  if (message.workflowSessionId) return String(message.workflowSessionId);
+  if (message.growthCaseId) return `growth_case:${message.growthCaseId}`;
+  const skillPart = matchedSkills.join("+") || normalizeSkillPath(message.skillPath) || "auto";
+  const actionPart = message.growthActionId || "manual";
+  return `tab:${tabId || "unknown"}:${actionPart}:${skillPart}`;
+}
+
+async function getWorkflowCheckpoints() {
+  const data = await new Promise((resolve) => chrome.storage.local.get([WORKFLOW_CHECKPOINTS_KEY], resolve));
+  return data[WORKFLOW_CHECKPOINTS_KEY] || {};
+}
+
+async function getWorkflowCheckpoint(key) {
+  if (!key) return null;
+  const checkpoints = await getWorkflowCheckpoints();
+  return checkpoints[key] || null;
+}
+
+async function setWorkflowCheckpoint(key, patch = {}) {
+  if (!key) return;
+  const checkpoints = await getWorkflowCheckpoints();
+  const previous = checkpoints[key] || {};
+  checkpoints[key] = {
+    ...previous,
+    ...patch,
+    key,
+    updatedAt: new Date().toISOString(),
+  };
+  const entries = Object.entries(checkpoints)
+    .sort((a, b) => new Date(b[1].updatedAt || 0) - new Date(a[1].updatedAt || 0))
+    .slice(0, 30);
+  await new Promise((resolve) => chrome.storage.local.set({ [WORKFLOW_CHECKPOINTS_KEY]: Object.fromEntries(entries) }, resolve));
+}
+
+function isResumableCheckpoint(checkpoint) {
+  return checkpoint && !["completed", "cancelled"].includes(checkpoint.status);
+}
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name === "etsy-agent-loop") {
     const portId = Date.now().toString();
     activePorts.set(portId, port);
     let isCancelled = false;
+    let activeCheckpointKey = "";
 
     port.onDisconnect.addListener(() => {
       isCancelled = true;
       activePorts.delete(portId);
+      if (activeCheckpointKey) {
+        setWorkflowCheckpoint(activeCheckpointKey, {
+          status: "interrupted",
+          lastStage: "port_disconnected",
+          interruptedAt: new Date().toISOString(),
+        }).catch((err) => console.warn("Could not persist interrupted checkpoint:", err.message));
+      }
       console.log(`Port ${portId} disconnected.`);
     });
 
@@ -347,6 +395,25 @@ chrome.runtime.onConnect.addListener((port) => {
             ? [selectedSkillPath]
             : await dispatchEtsySkills(message.userInstruction);
           console.log("Matched Etsy skills:", matchedSkills);
+          const checkpointKey = buildWorkflowCheckpointKey({ tabId: tab.id, matchedSkills, message });
+          activeCheckpointKey = checkpointKey;
+          const existingCheckpoint = await getWorkflowCheckpoint(checkpointKey);
+          const shouldResumeFromCheckpoint = isResumableCheckpoint(existingCheckpoint) && (
+            message.continueSession ||
+            Boolean(message.userInstruction) ||
+            Boolean(message.growthCaseId)
+          );
+
+          if (shouldResumeFromCheckpoint) {
+            port.postMessage({
+              type: "PROGRESS",
+              data: {
+                type: "reflection",
+                step: existingCheckpoint.step || 0,
+                message: `🔁 已找到可恢复工作流：${existingCheckpoint.lastStage || existingCheckpoint.lastNode || existingCheckpoint.status || "checkpoint"}。将沿用 ${existingCheckpoint.toolHistory?.length || 0} 条工具证据继续执行。`
+              }
+            });
+          }
 
           // Notify user via progress stream
           const matchedNames = matchedSkills.map(p => {
@@ -388,9 +455,23 @@ chrome.runtime.onConnect.addListener((port) => {
             userInstruction: message.userInstruction,
             pageContext,
             sendProgress,
-            continueSession: shouldContinueSession,
+            continueSession: shouldContinueSession || shouldResumeFromCheckpoint,
             highRandomness: message.highRandomness,
-            negativeFilter: message.negativeFilter
+            negativeFilter: message.negativeFilter,
+            resumeState: shouldResumeFromCheckpoint ? existingCheckpoint : null,
+            onCheckpoint: async (checkpoint) => {
+              await setWorkflowCheckpoint(checkpointKey, {
+                ...checkpoint,
+                matchedSkills,
+                skillPath: matchedSkills.join("+"),
+                growthActionId: message.growthActionId || "",
+                growthRunId: message.growthRunId || "",
+                growthCaseId: message.growthCaseId || "",
+                workflowSessionId: message.workflowSessionId || "",
+                pageUrl: tab.url || "",
+                pageTitle: tab.title || "",
+              });
+            },
           });
 
           if (!isCancelled) {
@@ -430,8 +511,23 @@ chrome.runtime.onConnect.addListener((port) => {
                 savedEntry,
               }
             });
+            await setWorkflowCheckpoint(checkpointKey, {
+              status: "completed",
+              completedAt: new Date().toISOString(),
+              lastStage: "success_delivered",
+            });
+            activeCheckpointKey = "";
           }
         } catch (err) {
+          if (activeCheckpointKey) {
+            await setWorkflowCheckpoint(activeCheckpointKey, {
+              status: "failed",
+              error: err.message,
+              lastStage: "error",
+              failedAt: new Date().toISOString(),
+            });
+            activeCheckpointKey = "";
+          }
           if (!isCancelled) {
             port.postMessage({
               type: "ERROR",
