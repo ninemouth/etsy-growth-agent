@@ -746,7 +746,7 @@ function buildSkuRows(tracked = [], savedResults = [], events = [], activeShop =
   }
 
   const mock = activeShop ? getShopMockData(activeShop) : null;
-  const categories = ["个护牙刷", "车载加湿器", "厨房收纳", "防寒耳罩", "园艺剪刀", "宠物清洁", "车载加热杯", "儿童泡泡机"];
+  const categories = ["定制项链", "宠物纪念牌", "婚礼座位牌", "手工串珠套装", "墙面装饰画", "婴儿姓名毯", "蜡烛模具", "节日礼品盒"];
   const sourceProducts = tracked.length
     ? tracked
     : categories.slice(0, 6).map((title, index) => ({
@@ -793,7 +793,7 @@ function buildSkuRows(tracked = [], savedResults = [], events = [], activeShop =
     }[issue];
     rows.push({
       id: prod.id || `sku_${index}`,
-      sku: prod.sku || `${String(seed).slice(0, 5)}-OZ`,
+      sku: prod.sku || `${String(seed).slice(0, 5)}-ET`,
       title: prod.title || prod.name || `Etsy 商品 ${index + 1}`,
       url: prod.url || prod.pageUrl || "",
       issue,
@@ -998,7 +998,7 @@ function buildWorkflowTasks({ skuRows = [], opportunities = [], events = [], rep
         : `当前来自${row.dataSource || "本地追踪/示例"}，需要同步 Seller API 后确认。`,
       actionText: row.nextAction,
       actionId,
-      source: hasSkuApi ? "Seller API 全量 SKU 轻体检" : "本地队列",
+      source: hasSkuApi ? "Seller API 全量 SKU 轻体检" : row.mockSource ? "示例队列（非真实数据）" : "本地队列",
       owner: row.issue === "fulfillment" ? "运营/仓配确认" : "运营执行",
       dueLabel: row.issue === "fulfillment" ? "立即" : "今天",
     }, taskState));
@@ -3406,7 +3406,7 @@ function getShopMockData(shop) {
   const tail = 4 + (seed % 4); 
   const profit = 100 - commission - logistics - tail;
 
-  const categories = ["个护牙刷", "车载加湿", "泡泡机", "加湿器", "电动牙刷", "防寒耳罩", "园艺剪刀", "车载加热杯"];
+  const categories = ["定制项链", "宠物纪念牌", "婚礼座位牌", "手工串珠套装", "墙面装饰画", "婴儿姓名毯", "蜡烛模具", "节日礼品盒"];
   const orderCount = 2 + (seed % 4);
   const orders = [];
   for (let i = 0; i < orderCount; i++) {

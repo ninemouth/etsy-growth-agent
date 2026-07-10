@@ -198,7 +198,7 @@ async function listSkills() {
       path: "skills/etsy_product_opportunity_explorer.skill.md",
       name: "Etsy 多维智能选品决策专家 (Auto)",
       description: "一键分析当前商品或搜索页，提取欧美本土需求、CE/CPC/FDA/IP合规准入、泡货运费风险及痛点，输出高胜率爆品蓝图",
-      icon: "🇷🇺",
+      icon: "🛍️",
     },
     {
       id: "etsy_sourcing_finder",
