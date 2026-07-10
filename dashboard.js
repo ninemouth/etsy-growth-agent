@@ -13,7 +13,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.body.classList.add("workflow-mode");
   initTabs();
   await refreshAllData();
-  maybeAutoRefreshSellerApiCache().catch((err) => console.warn("Seller API auto refresh skipped:", err.message));
+  maybeAutoRefreshSellerApiCache().catch((err) => console.warn("Etsy 个人访问 API auto refresh skipped:", err.message));
   bindEvents();
 });
 
@@ -696,7 +696,7 @@ function buildSkuRows(tracked = [], savedResults = [], events = [], activeShop =
         savedEvidence: savedResults.length,
         eventCount: events.length,
         mockSource: false,
-        dataSource: "Seller API",
+        dataSource: "Etsy 个人访问 API",
       };
     });
   }
@@ -928,7 +928,7 @@ function buildWorkflowTasks({ skuRows = [], opportunities = [], events = [], rep
       reason: foundation.reason,
       actionText: "确认目标客群、主价格带、商品矩阵、差异化理由和应下架/弱化的商品群；形成定位方案后再拆商品页、价格和海报任务。",
       actionId: "diagnose_store_growth",
-      source: foundation.explicitRisk ? "AI 决策书定位风险" : "Seller API 全量 SKU 轻体检",
+      source: foundation.explicitRisk ? "AI 决策书定位风险" : "Etsy 个人访问 API 全量 SKU 轻体检",
       owner: "经营负责人确认",
       dueLabel: "先做",
     }, taskState));
@@ -950,11 +950,11 @@ function buildWorkflowTasks({ skuRows = [], opportunities = [], events = [], rep
       title: `${row.issueLabel}: ${row.title}`,
       sku: row.sku,
       reason: hasSkuApi
-        ? `Seller API 发现该 SKU ${row.issueLabel}；曝光 ${Number(row.sessions || 0).toLocaleString()}，加购 ${row.cartRate}%，付款 ${row.orderRate}%。`
-        : `当前来自${row.dataSource || "本地追踪/示例"}，需要同步 Seller API 后确认。`,
+        ? `Etsy 个人访问 API 发现该 SKU ${row.issueLabel}；曝光 ${Number(row.sessions || 0).toLocaleString()}，加购 ${row.cartRate}%，付款 ${row.orderRate}%。`
+        : `当前来自${row.dataSource || "本地追踪/示例"}，需要同步 Etsy 个人访问 API 后确认。`,
       actionText: row.nextAction,
       actionId,
-      source: hasSkuApi ? "Seller API 全量 SKU 轻体检" : row.mockSource ? "示例队列（非真实数据）" : "本地队列",
+      source: hasSkuApi ? "Etsy 个人访问 API 全量 SKU 轻体检" : row.mockSource ? "示例队列（非真实数据）" : "本地队列",
       owner: row.issue === "fulfillment" ? "运营/仓配确认" : "运营执行",
       dueLabel: row.issue === "fulfillment" ? "立即" : "今天",
     }, taskState));
@@ -1005,7 +1005,7 @@ function buildWorkflowTasks({ skuRows = [], opportunities = [], events = [], rep
         severity: exp.status === "observing" ? "P1" : "P2",
         title: `复盘实验: ${exp.title}`,
         sku: exp.sku,
-        reason: exp.status === "observing" ? "实验已进入观察期，需要对比 Seller API 数据变化。" : "实验正在执行中，请确认人工动作是否已完成。",
+        reason: exp.status === "observing" ? "实验已进入观察期，需要对比 Etsy 个人访问 API 数据变化。" : "实验正在执行中，请确认人工动作是否已完成。",
         actionText: exp.status === "observing" ? "拉取实验窗口数据，判断继续、停止或二次优化。" : "确认改图/改标题/调价/补货等动作已实际执行。",
         actionId: "review_experiment_result",
         source: "增长实验",
@@ -1019,8 +1019,8 @@ function buildWorkflowTasks({ skuRows = [], opportunities = [], events = [], rep
       id: `seed_${activeShop?.id || "no_shop"}`,
       kind: "bootstrap",
       severity: "P0",
-      title: activeShop ? "先运行一次全店体检，生成第一批运营任务" : "先绑定 Seller API 店铺，建立全量 SKU 体检基线",
-      reason: activeShop ? "当前还没有足够的 SKU 风险、机会、实验和监控事件。" : "没有 Seller API 时只能做页面级诊断，无法形成全量经营任务流。",
+      title: activeShop ? "先运行一次全店体检，生成第一批运营任务" : "先绑定 Etsy 个人访问 API 店铺，建立全量 SKU 体检基线",
+      reason: activeShop ? "当前还没有足够的 SKU 风险、机会、实验和监控事件。" : "没有 Etsy 个人访问 API 时只能做页面级诊断，无法形成全量经营任务流。",
       actionText: activeShop ? "从 Etsy 店铺页点击右侧悬浮栏「店铺」或在此发起全店体检。" : "绑定 API Key / API Key 后同步 SKU analytics。",
       actionId: activeShop ? "diagnose_store_growth" : "",
       source: activeShop ? "启动建议" : "数据源缺口",
@@ -1228,7 +1228,7 @@ function buildRootEvidenceStatus(root, { reports = [], events = [], experiments 
       ? `SKU Analytics 已同步，${skuRows.length} 个 SKU 可参与判断。`
       : hasStoreApi
         ? "店铺快照已同步，可作为店铺级判断依据。"
-        : "未发现 Seller API 本地快照，运行时只能依赖前台页面、历史报告或待验证假设。",
+        : "未发现 Etsy 个人访问 API 本地快照，运行时只能依赖前台页面、历史报告或待验证假设。",
   });
   status.push({
     key: "reports",
@@ -1287,7 +1287,7 @@ function buildWorkflowRoots({ tasks = [], reports = [], events = [], experiments
       taskFilter: task => ["store_positioning", "sku_health", "diagnosis_action", "bootstrap"].includes(task.kind),
       narrative: foundation.needsRepositioning
         ? "这不是一个独立的“定位重构状态”，而是店铺体检给出的 P0 结论：先判断店铺卖给谁、靠什么差异化、主价格带和商品矩阵是否成立，再决定哪些海报、标题、价格和 SKU 动作值得做。"
-        : "从 Seller API 全量 SKU 轻体检开始，AI 挑出高风险/高机会对象，并拆成改图、改标题、调价、补货、监控等人工确认任务。",
+        : "从 Etsy 个人访问 API 全量 SKU 轻体检开始，AI 挑出高风险/高机会对象，并拆成改图、改标题、调价、补货、监控等人工确认任务。",
       foundation,
     },
     {
@@ -1348,7 +1348,7 @@ function buildWorkflowRoots({ tasks = [], reports = [], events = [], experiments
       actionId: "review_experiment_result",
       report: latestReportBy(reports, report => /operations|tracker/i.test(report.skillId || "")),
       taskFilter: task => task.kind === "experiment_review" || ["confirmed", "observing", "done"].includes(task.status),
-      narrative: "智能化的关键不是自动替你改，而是知道哪些动作已人工完成、何时进入观察、复盘时该拿哪些 Seller API 指标对比。",
+      narrative: "智能化的关键不是自动替你改，而是知道哪些动作已人工完成、何时进入观察、复盘时该拿哪些 Etsy 个人访问 API 指标对比。",
     },
   ];
 
@@ -1971,16 +1971,16 @@ function renderSourceLedger() {
   const formatSyncTime = (value) => value ? new Date(value).toLocaleString() : "未同步";
   ledger.innerHTML = `
     <div class="source-ledger-item">
-      <strong><span class="source-dot ${hasSkuApi ? "live" : usesMockSku ? "mock" : "local"}"></span>${hasSkuApi ? "Seller API SKU Analytics" : usesMockSku ? "示例 SKU 队列" : "真实跟踪 SKU"}</strong>
-      <p>${hasSkuApi ? `SKU 作战台已接入 ${growthRuntimeState.skuAnalyticsSnapshot.result.data.length} 行真实 SKU 维度 analytics；本地缓存更新时间：${formatSyncTime(growthRuntimeState.skuAnalyticsSnapshot.syncedAt)}。` : usesMockSku ? "当前没有足够 trackedProducts，SKU 作战台使用示例队列预览流程。" : "SKU 作战台来自本地跟踪商品，指标仍需 Seller API 进一步对齐。"}</p>
+      <strong><span class="source-dot ${hasSkuApi ? "live" : usesMockSku ? "mock" : "local"}"></span>${hasSkuApi ? "Etsy 个人访问 API SKU Analytics" : usesMockSku ? "示例 SKU 队列" : "真实跟踪 SKU"}</strong>
+      <p>${hasSkuApi ? `SKU 作战台已接入 ${growthRuntimeState.skuAnalyticsSnapshot.result.data.length} 行真实 SKU 维度 analytics；本地缓存更新时间：${formatSyncTime(growthRuntimeState.skuAnalyticsSnapshot.syncedAt)}。` : usesMockSku ? "当前没有足够 trackedProducts，SKU 作战台使用示例队列预览流程。" : "SKU 作战台来自本地跟踪商品，指标仍需 Etsy 个人访问 API 进一步对齐。"}</p>
     </div>
     <div class="source-ledger-item">
       <strong><span class="source-dot ${hasHistory ? "local" : "mock"}"></span>${hasHistory ? "本地历史可用" : "暂无历史证据"}</strong>
       <p>${hasHistory ? "机会卡会读取 savedResults / monitorChangeEvents / monitorReports。" : "机会中心会使用启动建议和 AI 推断兜底。"}</p>
     </div>
     <div class="source-ledger-item">
-      <strong><span class="source-dot ${hasStoreApi ? "live" : hasShop ? "local" : "mock"}"></span>${hasStoreApi ? "Seller API 店铺快照" : hasShop ? "已选择活动店铺" : "未绑定 Seller API"}</strong>
-      <p>${hasStoreApi ? `店铺快照已保存在本地；下次 Seller API 同步成功会覆盖更新。最近同步：${formatSyncTime(growthRuntimeState.storeSnapshotCache.syncedAt)}。` : hasShop ? "店铺 API 看板会优先请求 Etsy Seller API；失败时页面会明示模拟数据。" : "店铺业绩、订单和费用只能展示模拟或空状态。"}</p>
+      <strong><span class="source-dot ${hasStoreApi ? "live" : hasShop ? "local" : "mock"}"></span>${hasStoreApi ? "Etsy 个人访问 API 店铺快照" : hasShop ? "已选择活动店铺" : "未绑定 Etsy 个人访问 API"}</strong>
+      <p>${hasStoreApi ? `店铺快照已保存在本地；下次 Etsy 个人访问 API 同步成功会覆盖更新。最近同步：${formatSyncTime(growthRuntimeState.storeSnapshotCache.syncedAt)}。` : hasShop ? "店铺 API 看板会优先请求 Etsy 个人访问 API；失败时页面会明示模拟数据。" : "店铺业绩、订单和费用只能展示模拟或空状态。"}</p>
     </div>
     <div class="source-ledger-item">
       <strong><span class="source-dot ${hasExperiments ? "local" : "ai"}"></span>${hasExperiments ? "实验状态真实保存" : "实验示例待启动"}</strong>
@@ -1992,13 +1992,13 @@ function renderSourceLedger() {
 function getEndpointAuditSummary() {
   return [
     {
-      name: "Seller API 店铺快照",
+      name: "Etsy 个人访问 API 店铺快照",
       status: "真实端点",
       evidence: "GET_ETSY_STORE_SNAPSHOT 调用 etsy_api_get_store_snapshot，成功后缓存到 etsyStoreSnapshotCache。",
       action: "保留在 API 概览；画布只引用它作为经营证据。",
     },
     {
-      name: "Seller API SKU analytics",
+      name: "Etsy 个人访问 API SKU analytics",
       status: "真实端点",
       evidence: "GET_ETSY_SKU_ANALYTICS 调用 etsy_api_get_analytics，成功后缓存到 etsySkuAnalyticsSnapshot。",
       action: "作为全量 SKU 轻体检、定位风险和任务优先级输入。",
@@ -2012,7 +2012,7 @@ function getEndpointAuditSummary() {
     {
       name: "增长实验",
       status: "本地真实状态",
-      evidence: "growthExperiments 可创建、推进、观察和复盘；真实效果仍需拉 Seller API 时间窗对比。",
+      evidence: "growthExperiments 可创建、推进、观察和复盘；真实效果仍需拉 Etsy 个人访问 API 时间窗对比。",
       action: "整合为画布 Scrum 列和案件复盘，不再作为左侧一级菜单。",
     },
     {
@@ -2435,7 +2435,7 @@ async function handleGrowthAction(actionId, sku = "") {
 
 async function syncSkuAnalyticsFromApi() {
   const btn = document.getElementById("sync-sku-api-btn");
-  const original = btn?.innerText || "同步 Seller API SKU";
+  const original = btn?.innerText || "同步 Etsy 个人访问 API SKU";
   if (btn) {
     btn.disabled = true;
     btn.innerText = "同步中...";
@@ -2449,7 +2449,7 @@ async function syncSkuAnalyticsFromApi() {
 	    });
     const rows = response?.data?.result?.data || [];
     if (!response?.ok || !rows.length) {
-      alert(`Seller API SKU analytics 暂无数据：${response?.error || response?.data?.error || "返回为空"}`);
+      alert(`Etsy 个人访问 API SKU analytics 暂无数据：${response?.error || response?.data?.error || "返回为空"}`);
       return;
     }
 	    await new Promise((r) => chrome.storage.local.set({
@@ -2914,7 +2914,7 @@ function setStoreApiStatus(kind, message) {
 }
 
 function formatStoreApiFailure(failure = {}) {
-  const endpoint = failure.endpoint || "Seller API";
+  const endpoint = failure.endpoint || "Etsy 个人访问 API";
   const error = String(failure.error || "");
   if (/429|rate limit/i.test(error)) {
     return `${endpoint}: 触发 Etsy 频率限制，系统已排队并自动重试；若仍失败请缩小日期范围或稍后再查`;
@@ -2977,7 +2977,7 @@ function renderStoreMetrics(storeData, sourceKind) {
     tableBody.innerHTML = `
       <tr>
         <td colspan="7" class="empty-cell">
-          <div class="empty-state">${sourceKind === "live" ? "Seller API 暂未返回交易订单。" : "模拟数据暂无订单。"}</div>
+          <div class="empty-state">${sourceKind === "live" ? "Etsy 个人访问 API 暂未返回交易订单。" : "模拟数据暂无订单。"}</div>
         </td>
       </tr>
     `;
@@ -3007,7 +3007,7 @@ function renderStoreCostBreakdown(costData, sourceKind = "mock") {
   const labelContainer = document.querySelector("#store-fees-chart").parentNode.nextElementSibling;
   if (labelContainer) {
     labelContainer.innerHTML = `
-      <div style="font-size:10px; color:var(--text-secondary); margin-bottom:4px;">${sourceKind === "live" ? "费用占比为模型估算，待 Seller API 财务明细验证" : "模拟费用占比，仅用于界面预览"}</div>
+      <div style="font-size:10px; color:var(--text-secondary); margin-bottom:4px;">${sourceKind === "live" ? "费用占比为模型估算，待 Etsy 个人访问 API 财务明细验证" : "模拟费用占比，仅用于界面预览"}</div>
       <div style="display:flex; justify-content:space-between;"><span>类目佣金扣除:</span><strong style="color:#005bff">${costData.commission}%</strong></div>
       <div style="display:flex; justify-content:space-between;"><span>干线运费占比:</span><strong style="color:#ff005b">${costData.logistics}%</strong></div>
       <div style="display:flex; justify-content:space-between;"><span>末端送达扣减:</span><strong style="color:#f59e0b">${costData.tail}%</strong></div>
@@ -3020,7 +3020,7 @@ function renderMockStoreData(activeShop, reason = "") {
   const mockData = getShopMockData(activeShop);
   renderStoreMetrics(mockData, "mock");
   renderStoreCostBreakdown(mockData, "mock");
-  setStoreApiStatus("mock", `模拟数据展示${reason ? `：${reason}` : "，未作为 Seller API 真实证据"}`);
+  setStoreApiStatus("mock", `模拟数据展示${reason ? `：${reason}` : "，未作为 Etsy 个人访问 API 真实证据"}`);
 }
 
 async function renderStoreTab() {
@@ -3044,12 +3044,12 @@ async function renderStoreTab() {
       document.getElementById("api-views").innerText = "--";
       document.getElementById("api-cart-rate").innerText = "--";
       document.getElementById("api-order-rate").innerText = "--";
-      setStoreApiStatus("mock", "未绑定活动店铺，无法调用 Seller API");
+      setStoreApiStatus("mock", "未绑定活动店铺，无法调用 Etsy 个人访问 API");
       return;
     }
 
     if (storeApiRequestInFlight) {
-      setStoreApiStatus("partial", "Seller API 正在同步中，请等待当前查询完成...");
+      setStoreApiStatus("partial", "Etsy 个人访问 API 正在同步中，请等待当前查询完成...");
       return;
     }
     storeApiRequestInFlight = true;
@@ -3058,11 +3058,11 @@ async function renderStoreTab() {
     tableBody.innerHTML = `
       <tr>
         <td colspan="7" class="empty-cell">
-          <div class="empty-state">正在同步 Etsy Seller API...</div>
+          <div class="empty-state">正在同步 Etsy 个人访问 API...</div>
         </td>
       </tr>
     `;
-    setStoreApiStatus("partial", "正在请求 Seller API 实时数据...");
+    setStoreApiStatus("partial", "正在请求 Etsy 个人访问 API 实时数据...");
 
     try {
 	      const response = await chrome.runtime.sendMessage({
@@ -3102,10 +3102,10 @@ async function renderStoreTab() {
       renderStoreCostBreakdown(getShopMockData(activeShop), "live");
       if (snapshot.ok) {
         const skuCount = skuAnalyticsResponse?.data?.result?.data?.length || 0;
-        setStoreApiStatus("live", `Seller API 实时数据：${snapshot.dateFrom} 至 ${snapshot.dateTo}${skuCount ? `；SKU 作战台已同步 ${skuCount} 行真实 analytics` : ""}`);
+        setStoreApiStatus("live", `Etsy 个人访问 API 实时数据：${snapshot.dateFrom} 至 ${snapshot.dateTo}${skuCount ? `；SKU 作战台已同步 ${skuCount} 行真实 analytics` : ""}`);
       } else {
         const reason = (storeMetrics.failures || []).map(formatStoreApiFailure).join("；");
-        setStoreApiStatus("partial", `Seller API 部分成功：${reason || "部分接口无数据"}`);
+        setStoreApiStatus("partial", `Etsy 个人访问 API 部分成功：${reason || "部分接口无数据"}`);
       }
     } catch (err) {
       renderMockStoreData(activeShop, err.message);

@@ -11,7 +11,7 @@ It provides an AI-driven browser side panel, page-reading tools, Etsy-focused sk
 - Etsy trend and product opportunity exploration for lightweight gifts, personalized products, craft supplies, and cross-border supply-chain advantages.
 - 1688 and Taobao sourcing support for visual matching and conservative landed-cost estimation.
 - Competitor/review analysis focused on buyer expectations, packaging, delivery promise, personalization quality, and IP/compliance risk.
-- Optional Etsy Open API adapter for active listings and authorized receipts when an Etsy API Key, Shop ID, and OAuth Token are configured.
+- Optional Etsy personal-access Open API adapter for active listings and authorized receipts when a Shop ID, API key, OAuth access token, and optional refresh token are configured locally.
 
 ## Project Structure
 
@@ -48,7 +48,18 @@ This project keeps the browser automation, dashboard, workflow canvas, report li
 - Runtime routing uses `etsy_*` skills and tool names.
 - The dashboard currency and listing logic are centered on USD-style Etsy economics.
 - Compliance guidance focuses on Etsy IP policy, personalization claims, CE/CPC/FDA/category-specific obligations, and gift-market delivery promises.
-- Etsy API integration uses Etsy Open API concepts: API Key, Shop ID, and optional OAuth Token. Order/receipt data requires OAuth authorization.
+- Etsy API integration is modeled as a personal-access/local-browser setup, not a multi-tenant SaaS authorization flow. Public listing reads use the configured API key. Private shop data such as receipts/orders requires an OAuth access token; when a refresh token is also saved, the adapter can refresh an expired access token before retrying the request.
+
+## Etsy Personal Access Credentials
+
+The extension stores Etsy credentials only in `chrome.storage.local` for the current browser profile:
+
+- `Shop ID`
+- `API Key` in Etsy's `keystring:shared_secret` form
+- `OAuth Access Token` for private shop data such as receipts/orders
+- Optional `Refresh Token` for renewing an expired access token
+
+This project does not currently implement the full OAuth consent screen or hosted multi-user callback flow. Generate or provide the personal access credentials outside the extension, then save them in the extension settings drawer.
 
 ## Install
 

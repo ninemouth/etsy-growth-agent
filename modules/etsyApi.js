@@ -41,6 +41,7 @@ export async function getEtsySettings(explicitShopId = null) {
         "activeShopId",
         "etsyApiKey",
         "etsyOAuthToken",
+        "etsyRefreshToken",
         "etsyShopId",
         "etsyWarehouseType",
       ],
@@ -53,6 +54,7 @@ export async function getEtsySettings(explicitShopId = null) {
         resolve({
           apiKey: activeShop?.apiKey || data.etsyApiKey || "",
           oauthToken: activeShop?.oauthToken || data.etsyOAuthToken || "",
+          refreshToken: activeShop?.refreshToken || data.etsyRefreshToken || "",
           shopId: activeShop?.shopId || activeShop?.id || data.etsyShopId || "",
           shopName: activeShop?.name || "Etsy Shop",
           warehouseType: activeShop?.warehouseType || data.etsyWarehouseType || "Etsy seller-fulfilled",
@@ -62,7 +64,7 @@ export async function getEtsySettings(explicitShopId = null) {
   });
 }
 
-export async function saveEtsySettings(apiKey, oauthToken = "", shopId = "", shopName = "Etsy Shop") {
+export async function saveEtsySettings(apiKey, oauthToken = "", shopId = "", shopName = "Etsy Shop", refreshToken = "") {
   return new Promise((resolve) => {
     chrome.storage.local.get(["etsyShops"], (data) => {
       const shops = data.etsyShops || [];
@@ -72,6 +74,7 @@ export async function saveEtsySettings(apiKey, oauthToken = "", shopId = "", sho
         name: shopName,
         apiKey,
         oauthToken,
+        refreshToken,
         warehouseType: "Etsy seller-fulfilled",
         isDefault: shops.length === 0,
       };
@@ -82,12 +85,66 @@ export async function saveEtsySettings(apiKey, oauthToken = "", shopId = "", sho
           activeShopId: newShop.id,
           etsyApiKey: apiKey,
           etsyOAuthToken: oauthToken,
+          etsyRefreshToken: refreshToken,
           etsyShopId: shopId,
         },
         () => resolve(true)
       );
     });
   });
+}
+
+function getEtsyClientId(apiKey = "") {
+  return String(apiKey || "").split(":")[0].trim();
+}
+
+async function persistRefreshedOAuthToken({ accessToken, refreshToken }) {
+  const settings = await getEtsySettings();
+  const storage = await new Promise((resolve) => chrome.storage.local.get(["etsyShops", "activeShopId"], resolve));
+  const shops = (storage.etsyShops || []).map((shop) => {
+    if (shop.id !== storage.activeShopId && shop.shopId !== settings.shopId) return shop;
+    return {
+      ...shop,
+      oauthToken: accessToken || shop.oauthToken,
+      refreshToken: refreshToken || shop.refreshToken,
+    };
+  });
+  await new Promise((resolve) => chrome.storage.local.set({
+    etsyShops: shops,
+    etsyOAuthToken: accessToken || settings.oauthToken,
+    etsyRefreshToken: refreshToken || settings.refreshToken,
+  }, resolve));
+}
+
+async function refreshEtsyOAuthToken(settings) {
+  if (!settings.refreshToken) return null;
+  const clientId = getEtsyClientId(settings.apiKey);
+  if (!clientId) return null;
+
+  const response = await fetch("https://api.etsy.com/v3/public/oauth/token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: clientId,
+      refresh_token: settings.refreshToken,
+    }),
+  });
+
+  const responseText = await response.text();
+  if (!response.ok) {
+    throw new Error(`Etsy OAuth refresh failed (${response.status}): ${parseEtsyError(responseText)}`);
+  }
+
+  const tokenPayload = responseText ? JSON.parse(responseText) : {};
+  if (!tokenPayload.access_token) return null;
+  await persistRefreshedOAuthToken({
+    accessToken: tokenPayload.access_token,
+    refreshToken: tokenPayload.refresh_token || settings.refreshToken,
+  });
+  return tokenPayload.access_token;
 }
 
 async function waitForEtsyRateSlot() {
@@ -118,12 +175,13 @@ function buildQuery(params = {}) {
 }
 
 async function makeQueuedEtsyRequest(endpoint, { query = {}, method = "GET", body = null, requireOAuth = false } = {}, attempt = 0) {
-  const { apiKey, oauthToken } = await getEtsySettings();
+  const settings = await getEtsySettings();
+  const { apiKey, oauthToken } = settings;
   if (!apiKey) {
-    throw new Error("未配置 Etsy API Key，请在店铺配置中填写 Etsy Open API Key。");
+    throw new Error("未配置 Etsy 个人访问 API Key，请在设置中填写 keystring:shared_secret。");
   }
   if (requireOAuth && !oauthToken) {
-    throw new Error("该 Etsy 数据需要 OAuth Token 授权；请在店铺配置中补充 OAuth Token。");
+    throw new Error("该 Etsy 个人访问数据需要 OAuth Access Token；请在设置中补充 Access Token，建议同时保存 Refresh Token。");
   }
 
   await waitForEtsyRateSlot();
@@ -143,6 +201,12 @@ async function makeQueuedEtsyRequest(endpoint, { query = {}, method = "GET", bod
   const responseText = await response.text();
   if (!response.ok) {
     const errorText = parseEtsyError(responseText);
+    if ((response.status === 401 || response.status === 403) && requireOAuth && settings.refreshToken && attempt < 1) {
+      const refreshedToken = await refreshEtsyOAuthToken(settings);
+      if (refreshedToken) {
+        return makeQueuedEtsyRequest(endpoint, { query, method, body, requireOAuth }, attempt + 1);
+      }
+    }
     if (response.status === 429 && attempt < 2) {
       const retryDelay = ETSY_RATE_LIMIT_RETRY_MS * (attempt + 1);
       console.warn(`[Etsy API Rate Limit] ${endpoint} hit 429, retrying in ${retryDelay}ms...`);

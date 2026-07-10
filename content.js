@@ -2607,7 +2607,7 @@
         </div>
       </div>
       <div class="settings-body">
-        <div class="settings-section-title">Etsy 店铺配置 (Seller API)</div>
+        <div class="settings-section-title">Etsy 个人访问 API 配置</div>
         <div class="form-group">
           <label class="form-label">活动店铺切换</label>
           <select class="form-input" id="etsy-active-shop-select">
@@ -2619,22 +2619,25 @@
           <div id="etsy-drawer-shops-list" style="display:flex; flex-direction:column; gap:4px; margin-bottom:10px;">
             <!-- list of bound shops -->
           </div>
-          <button class="eye-btn" id="etsy-drawer-toggle-add-btn" type="button" style="display:block; width:100%; border:1px dashed var(--border-main); padding:6px; font-size:11px; border-radius:4px; text-align:center; cursor:pointer; background:none; color:var(--text-color);">➕ 绑定新 Etsy 店铺</button>
+          <button class="eye-btn" id="etsy-drawer-toggle-add-btn" type="button" style="display:block; width:100%; border:1px dashed var(--border-main); padding:6px; font-size:11px; border-radius:4px; text-align:center; cursor:pointer; background:none; color:var(--text-color);">➕ 添加个人访问凭证</button>
         </div>
 
         <div id="etsy-drawer-add-shop-form" class="hidden" style="border:1px solid var(--border-main); border-radius:6px; padding:10px; background:rgba(255,255,255,0.02); margin-bottom:15px; display:flex; flex-direction:column; gap:8px;">
-          <div style="font-size:11px; font-weight:600; margin-bottom:4px; color:var(--text-color)">➕ 新增自营店铺 API</div>
+          <div style="font-size:11px; font-weight:600; margin-bottom:4px; color:var(--text-color)">➕ Etsy 个人访问凭证</div>
           <input type="text" class="form-input" id="etsy-new-name" placeholder="店铺备注名，如: Handmade Gift Shop">
           <div class="form-row" style="display:flex; gap:8px;">
             <input type="text" class="form-input" id="etsy-new-client-id" placeholder="Etsy Shop ID" style="flex:1;">
-            <input type="password" class="form-input" id="etsy-new-api-key" placeholder="API Key" style="flex:1;">
+            <input type="password" class="form-input" id="etsy-new-api-key" placeholder="API Key: keystring:shared_secret" style="flex:1;">
           </div>
+          <input type="password" class="form-input" id="etsy-new-oauth-token" placeholder="OAuth Access Token（订单/Receipts 等私有数据需要）">
+          <input type="password" class="form-input" id="etsy-new-refresh-token" placeholder="Refresh Token（可选，用于 Access Token 过期后自动续期）">
+          <div style="font-size:10px; line-height:1.5; color:var(--text-secondary);">个人访问版本仅用于当前本地浏览器。Listings 可只用 API Key；订单、Receipts、私有店铺数据需要 OAuth Bearer token；建议同时保存 refresh token。</div>
           <div class="form-row" style="display:flex; gap:8px;">
             <select class="form-input" id="etsy-new-wh-type" style="flex:1;">
               <option value="Etsy 自发货">Etsy 自发货 (跨境自集运)</option>
               <option value="第三方海外仓">第三方海外仓 (欧美本土仓)</option>
             </select>
-            <button class="eye-btn" id="etsy-drawer-save-shop-btn" type="button" style="flex:1; background:#005bff; color:#fff; border:none; border-radius:4px; font-size:11px; font-weight:600; cursor:pointer; height:32px;">确认保存店铺</button>
+            <button class="eye-btn" id="etsy-drawer-save-shop-btn" type="button" style="flex:1; background:#005bff; color:#fff; border:none; border-radius:4px; font-size:11px; font-weight:600; cursor:pointer; height:32px;">保存凭证</button>
           </div>
         </div>
 
@@ -3586,7 +3589,7 @@
     if (toggleAddBtn && addShopFormContainer) {
       toggleAddBtn.addEventListener("click", () => {
         addShopFormContainer.classList.toggle("hidden");
-        toggleAddBtn.innerText = addShopFormContainer.classList.contains("hidden") ? "➕ 绑定新 Etsy 店铺" : "❌ 取消绑定录入";
+        toggleAddBtn.innerText = addShopFormContainer.classList.contains("hidden") ? "➕ 添加个人访问凭证" : "❌ 取消录入";
       });
     }
 
@@ -3597,11 +3600,15 @@
         const newNameInput = shadow.getElementById("etsy-new-name");
         const newClientIdInput = shadow.getElementById("etsy-new-client-id");
         const newApiKeyInput = shadow.getElementById("etsy-new-api-key");
+        const newOauthTokenInput = shadow.getElementById("etsy-new-oauth-token");
+        const newRefreshTokenInput = shadow.getElementById("etsy-new-refresh-token");
         const newWhSelect = shadow.getElementById("etsy-new-wh-type");
 
         const name = newNameInput.value.trim();
         const shopId = newClientIdInput.value.trim();
         const apiKey = newApiKeyInput.value.trim();
+        const oauthToken = newOauthTokenInput.value.trim();
+        const refreshToken = newRefreshTokenInput.value.trim();
         const warehouseType = newWhSelect.value;
 
         if (!name || !shopId || !apiKey) {
@@ -3613,7 +3620,7 @@
         const shops = storage.etsyShops || [];
 
         if (shops.some(s => s.shopId === shopId || s.id === shopId)) {
-          alert("此 API Key 已绑定过，请勿重复添加！");
+          alert("此 Etsy Shop ID 已绑定过，请勿重复添加！");
           return;
         }
 
@@ -3622,6 +3629,8 @@
           shopId,
           name,
           apiKey,
+          oauthToken,
+          refreshToken,
           warehouseType,
           isDefault: shops.length === 0,
           sellerUrl: window.location.href.includes("/seller/") ? window.location.href : ""
@@ -3630,14 +3639,20 @@
         shops.push(newShop);
         await new Promise(r => chrome.storage.local.set({
           etsyShops: shops,
-          activeShopId: newShop.id
+          activeShopId: newShop.id,
+          etsyShopId: shopId,
+          etsyApiKey: apiKey,
+          etsyOAuthToken: oauthToken,
+          etsyRefreshToken: refreshToken
         }, r));
 
         newNameInput.value = "";
         newClientIdInput.value = "";
         newApiKeyInput.value = "";
+        newOauthTokenInput.value = "";
+        newRefreshTokenInput.value = "";
         addShopFormContainer.classList.add("hidden");
-        toggleAddBtn.innerText = "➕ 绑定新 Etsy 店铺";
+        toggleAddBtn.innerText = "➕ 添加个人访问凭证";
 
         alert(`店铺 [${name}] 绑定并启用成功！`);
         
