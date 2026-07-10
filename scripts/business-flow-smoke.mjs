@@ -10,6 +10,12 @@ const root = process.cwd();
 const html = fs.readFileSync(path.join(root, "dashboard.html"), "utf8");
 const js = fs.readFileSync(path.join(root, "dashboard.js"), "utf8");
 const css = fs.readFileSync(path.join(root, "dashboard.css"), "utf8");
+const agentLoopSource = fs.readFileSync(path.join(root, "modules", "agentLoop.js"), "utf8");
+const toolRegistrySource = fs.readFileSync(path.join(root, "modules", "toolRegistry.js"), "utf8");
+
+assert.match(agentLoopSource, /type:\s*"tool_heartbeat"/, "long-running tool calls should emit heartbeat progress");
+assert.match(toolRegistrySource, /closedTabId/, "browser search should report automatically closed temporary tabs");
+assert.match(toolRegistrySource, /shouldAutoCloseSearchTab[\s\S]*google_trends/, "Google and Trends search tabs should be auto-closed after evidence capture");
 
 const jargonReport = {
   type: "final",

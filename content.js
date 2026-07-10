@@ -3450,6 +3450,8 @@
               }
             } else if (data.type === "tool_call") {
               log(`⚙️ 调用指令: ${data.toolName}`);
+            } else if (data.type === "tool_heartbeat") {
+              log(`⏱ ${data.message || `${data.toolName || "工具"} 仍在执行`}`);
             } else if (data.type === "tool_result") {
               log(`📥 执行完毕，获取到相关数据。`);
             } else if (data.type === "reflection" && data.message) {

@@ -93,6 +93,15 @@ function safeEncodeURI(url) {
   return encoded;
 }
 
+async function closeTabQuietly(tabId) {
+  if (!tabId) return false;
+  return await new Promise((resolve) => {
+    chrome.tabs.remove(parseInt(tabId), () => {
+      resolve(!chrome.runtime.lastError);
+    });
+  });
+}
+
 async function sendToContentScript(tabId, message) {
   try {
     const tab = await chrome.tabs.get(tabId);
@@ -638,7 +647,7 @@ export const tools = {
   },
 
   search_in_browser: async (args) => {
-    const { query, engine = "google" } = args;
+    const { query, engine = "google", keepTab = false } = args;
     if (!query) throw new Error("query is required");
     
     let targetQuery = query;
@@ -674,6 +683,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
     const engines = {
       google: `https://www.google.com/search?q=${encodeURIComponent(targetQuery)}`,
       google_us: `https://www.google.com/search?q=${encodeURIComponent(targetQuery)}&hl=en&gl=us`,
+      google_ru: `https://www.google.com/search?q=${encodeURIComponent(targetQuery)}&hl=ru&gl=ru`,
       google_trends: `https://trends.google.com/trends/explore?date=today%2012-m&geo=US&q=${encodeURIComponent(targetQuery)}`,
       bing: `https://www.bing.com/search?q=${encodeURIComponent(targetQuery)}`,
       amazon: `https://www.amazon.com/s?k=${encodeURIComponent(targetQuery)}`,
@@ -718,8 +728,24 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
     }
 
     const searchUrl = engines[engine] || engines.google;
+    const shouldAutoCloseSearchTab = !keepTab && ["google", "google_us", "google_ru", "google_trends", "bing"].includes(String(engine).toLowerCase());
     return new Promise((resolve) => {
       chrome.tabs.create({ url: safeEncodeURI(searchUrl), active: true }, (newTab) => {
+        const resolveSearch = async (payload) => {
+          if (!shouldAutoCloseSearchTab) {
+            resolve(payload);
+            return;
+          }
+          const closed = await closeTabQuietly(newTab.id);
+          resolve({
+            ...payload,
+            tabClosed: closed,
+            closedTabId: closed ? newTab.id : undefined,
+            message: closed
+              ? "Search evidence captured and temporary search tab closed."
+              : "Search evidence captured, but the temporary search tab could not be closed automatically.",
+          });
+        };
         // Poll immediately for content script readiness and product links
         let attempts = 0;
         const maxAttempts = 20; // up to 10 seconds for new tab load
@@ -733,12 +759,12 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
             
             if (hasProducts || attempts >= maxAttempts) {
               clearInterval(checkLoad);
-              resolve({ ok: true, tabId: newTab.id, searchUrl, queryUsed: targetQuery, pageData });
+              resolveSearch({ ok: true, tabId: newTab.id, searchUrl, queryUsed: targetQuery, pageData });
             }
           } catch (_) {
             if (attempts >= maxAttempts) {
               clearInterval(checkLoad);
-              resolve({ ok: true, tabId: newTab.id, searchUrl, queryUsed: targetQuery, pageData: {} });
+              resolveSearch({ ok: true, tabId: newTab.id, searchUrl, queryUsed: targetQuery, pageData: {} });
             }
           }
         }, 500);

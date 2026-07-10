@@ -978,10 +978,26 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       }
 
       let toolResult;
+      let toolHeartbeatTimer = null;
+      const toolStartedAt = Date.now();
       try {
+        toolHeartbeatTimer = setInterval(() => {
+          const elapsedSeconds = Math.max(1, Math.round((Date.now() - toolStartedAt) / 1000));
+          sendProgress({
+            type: "tool_heartbeat",
+            step,
+            toolName,
+            elapsedSeconds,
+            message: `${toolName} 已运行 ${elapsedSeconds} 秒，仍在等待页面或工具返回数据。`,
+          });
+        }, 30000);
         toolResult = await tools[toolName](toolArgs);
       } catch (err) {
         toolResult = { error: err.message };
+      } finally {
+        if (toolHeartbeatTimer) {
+          clearInterval(toolHeartbeatTimer);
+        }
       }
       toolHistory.push({ tool: toolName, arguments: toolArgs, result: toolResult });
 

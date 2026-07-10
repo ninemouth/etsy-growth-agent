@@ -490,6 +490,8 @@ async function runSkill() {
         if (msg) {
           if (msg.type === "tool_call") {
             addLog("info", "⚙️", `调用工具: ${msg.toolName}`);
+          } else if (msg.type === "tool_heartbeat") {
+            addLog("info", "⏱", msg.message || `${msg.toolName || "工具"} 仍在执行`);
           } else if (msg.type === "auto_fix") {
             addLog("info", "✓", msg.message || "已完成自动修正");
           } else if (msg.type === "reflection" || msg.type === "thinking") {
