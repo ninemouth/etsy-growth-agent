@@ -121,6 +121,8 @@ const mockValidShopOptimizerReport = {
         ],
         expected_impact: "提升点击后的加购率和详情页停留信任。",
         first_actions: ["重做首图", "补充英文规格图", "7 天后对账 API 加购率"],
+        stage_fit: "该方案适合低评价成长店先补齐信任资产，再观察加购率变化。",
+        buyer_scenario: "欧美婚礼礼品买家与伴娘礼品场景",
         risk_guard: "不得伪造趋势和订单数据。"
       }
     ]
@@ -248,6 +250,12 @@ function runShopOptimizerValidation(report) {
     if (!/\b[ABC]-?\d*\b|A级|B级|C级|方案|优化|整改|诊断/i.test(planText)) {
       errors.push(`第 ${idx + 1} 项 (${title}) 不是 A/B/C 优化方案。`);
     }
+    if (!item.stage_fit) {
+      errors.push(`第 ${idx + 1} 项 (${title}) 缺少 stage_fit。`);
+    }
+    if (!item.buyer_scenario) {
+      errors.push(`第 ${idx + 1} 项 (${title}) 缺少 buyer_scenario。`);
+    }
     if (/1688\.com/i.test(String(item.product_link || item.link || ""))) {
       errors.push(`第 ${idx + 1} 项 (${title}) 包含 1688 采购链接。`);
     }
@@ -271,6 +279,13 @@ function runShopOptimizerValidation(report) {
   }
   if (/(无法直接访问|未直接访问).*(etsy|trends|Google Trends)|行业报告摘要|Google 搜索摘要/i.test(combinedText)) {
     errors.push("店铺优化报告不得用未直接访问或摘要替代 Etsy/Google 必做取证。");
+  }
+  const fullText = `${combinedText}\n${JSON.stringify(out.data || [])}`;
+  if (/选品机会书|选品机会深度分析|扩品机会书/i.test(combinedText)) {
+    errors.push("店铺优化报告不得写成选品机会书。");
+  }
+  if (/获取\s*\d+\s*[-–—到至]\s*\d+\s*个评价|补充评价积累/i.test(fullText) && !/合规|真实订单|不得诱导|如实评价|发货后礼貌提醒/i.test(fullText)) {
+    errors.push("店铺优化报告不能把获取评价写成孤立目标，必须约束为合规真实订单后的信任建设。");
   }
   return errors;
 }

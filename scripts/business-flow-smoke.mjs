@@ -44,8 +44,14 @@ assert.doesNotMatch(js, /const bodyHtml = marked\.parse\(rep\.content \|\| ""\);
 assert.match(shopOptimizerSkillSource, /engine="etsy"[\s\S]*不允许作为最终交付/, "shop optimizer should require direct Etsy ranking/search evidence");
 assert.match(shopOptimizerSkillSource, /engine="google_us"[\s\S]*engine="google_trends"[\s\S]*不允许作为最终交付/, "shop optimizer should require direct Google Search or Trends evidence");
 assert.match(shopOptimizerSkillSource, /Etsy international shipping delivery time[\s\S]*禁止凭模型常识写“香港发货 7-12 工作日”/, "shop optimizer should require realtime logistics research before delivery-time claims");
+assert.match(shopOptimizerSkillSource, /新店与垂直婚礼配饰店铺诊断专项规则/, "shop optimizer should include new-shop wedding accessory diagnosis rules");
+assert.match(shopOptimizerSkillSource, /不能把“获取 5-10 个评价”写成孤立第一动作/, "shop optimizer should constrain review-building advice to compliant trust signals");
+assert.match(backgroundSource, /etsy\\.com\\\/shop\\\//, "Etsy shop pages should route to the shop optimizer by default");
 assert.match(agentLoopSource, /Etsy 站内搜索\/热卖榜\/高排名竞品店铺对标证据。该项不能降级为 assumption/, "critic should reject shop optimizer reports without real Etsy ranking evidence");
 assert.match(agentLoopSource, /涉及配送\/物流\/时效判断，但缺少实时物流主题 google_search 证据/, "critic should reject logistics claims without realtime logistics search evidence");
+assert.match(agentLoopSource, /选品机会书\/选品机会分析/, "critic should reject shop optimizer reports that are framed as opportunity books");
+assert.match(agentLoopSource, /stage_fit/, "critic should require shop optimizer plans to explain stage fit");
+assert.match(agentLoopSource, /buyer_scenario/, "critic should require shop optimizer plans to name the buyer scenario");
 assert.match(sidepanelSource, /继续\|继续推进\|恢复\|resume\|continue/, "sidepanel should treat a plain continue message as a session resume request");
 
 const jargonReport = {

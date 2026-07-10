@@ -89,8 +89,10 @@ async function cacheEtsyApiSnapshot(kind, args = {}, result = {}) {
 }
 
 // ── Etsy Intent Router & Dispatcher ──
-async function dispatchEtsySkills(userInstruction) {
+async function dispatchEtsySkills(userInstruction, pageContext = {}) {
   const inst = String(userInstruction).toLowerCase();
+  const pageUrl = String(pageContext?.url || "").toLowerCase();
+  const pageTitle = String(pageContext?.title || "").toLowerCase();
   
   // Keyword mapping to detect which Etsy skills to load
   const matched = [];
@@ -108,6 +110,13 @@ async function dispatchEtsySkills(userInstruction) {
     /1688|寻源|货源|采购|供应商|源头|工厂|拿样|比价|套利|采购直达|供货|批发|起批/.test(inst);
   const hasProductOpportunityIntent =
     /选品|开发|类目|爆品|机会|牙刷|合规|eac|准入/.test(inst);
+  const isEtsyShopPage =
+    /etsy\.com\/shop\//.test(pageUrl) ||
+    /etsy\s+shop|shop\s+on\s+etsy|seller|店铺/.test(pageTitle);
+
+  if (isEtsyShopPage && !hasExplicitSourcingIntent && !hasProductOpportunityIntent) {
+    pushUnique(matched, "skills/etsy_global_shop_optimizer.skill.md");
+  }
   
   if (hasShopOptimizationIntent) {
     pushUnique(matched, "skills/etsy_global_shop_optimizer.skill.md");
@@ -393,7 +402,7 @@ chrome.runtime.onConnect.addListener((port) => {
             ? growthActionSkills
             : selectedSkillPath
             ? [selectedSkillPath]
-            : await dispatchEtsySkills(message.userInstruction);
+            : await dispatchEtsySkills(message.userInstruction, pageContext);
           console.log("Matched Etsy skills:", matchedSkills);
           const checkpointKey = buildWorkflowCheckpointKey({ tabId: tab.id, matchedSkills, message });
           activeCheckpointKey = checkpointKey;

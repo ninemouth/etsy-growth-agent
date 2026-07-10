@@ -464,8 +464,15 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
 
   if (isShopOptimizerOnly(skillId)) {
     const combinedReportText = `${out.overview || ""}\n${out.analysis || ""}\n${out.summary || ""}`;
+    const fullReportText = `${combinedReportText}\n${JSON.stringify(out.data || [])}`;
     if (/货源\s*#|推荐对齐货源|采购直达|1688\s*采购直达链接|detail\.1688\.com|s\.1688\.com/i.test(combinedReportText)) {
       errors.push("店铺优化报告不得输出货源编号、采购直达链接或 1688 推荐清单。请改为店铺健康评级、ABC 分级优化候选方案与执行任务。");
+    }
+    if (/选品机会书|选品机会深度分析|扩品机会书|商品机会书/i.test(combinedReportText)) {
+      errors.push("店铺优化报告标题和概述不得写成“选品机会书/选品机会分析”。当前任务必须是 Etsy 店铺优化诊断、店铺健康体检或 ABC 分级整改方案。");
+    }
+    if (/外部市场数据因工具限制.*待验证假设|任务广度.*跨境物流合规预判|已完成.*跨境物流合规预判/i.test(combinedReportText)) {
+      errors.push("店铺优化报告不得把关键 Etsy/Google 取证缺失包装成完整诊断。若工具或页面受限，必须继续取证或明确输出阻断说明，不能声称已完成外部市场/物流诊断。");
     }
 
     const hasClassifiedPlan = out.data.some((item) => {
@@ -523,6 +530,12 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
       });
 
       const itemText = JSON.stringify(item);
+      if (!item.stage_fit) {
+        errors.push(`店铺优化方案第 ${idx + 1} 项 (${title}) 缺少 stage_fit，必须说明该方案为什么适合当前店铺阶段（新店冷启动/成长店/成熟店/问题修复）。`);
+      }
+      if (!item.buyer_scenario) {
+        errors.push(`店铺优化方案第 ${idx + 1} 项 (${title}) 缺少 buyer_scenario，必须说明对应的欧美买家场景或购买人群。`);
+      }
       if (/API|Seller API|etsy_api|Sessions|session|加购|订单|扣费|交易|履约成本|第三方海外仓|Etsy 自发货/i.test(itemText) && !hasLedgerType(ledgerEntries, "etsy_api") && !hasAssumptionFallback(ledgerEntries, /API|Seller|流量|订单|履约|第三方海外仓|Etsy 自发货/i)) {
         errors.push(`店铺优化方案第 ${idx + 1} 项 (${title}) 使用了 API/流量/订单/履约类结论，但 evidence_ledger 没有 etsy_api 证据或 assumption 降级说明。`);
       }
@@ -561,6 +574,15 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
     }
     if (!/竞品店铺|头部店铺|高排名店铺|高销店铺|best[-\s]?seller|top shop|同类高排名/i.test(combinedReportText)) {
       errors.push("店铺优化报告缺少同类高排名/高销竞品店铺的反向学习结论。必须搜索并对标 2-3 个头部店铺或高排名商品，再提炼其定位、调性、首图、标题和履约承诺。");
+    }
+    if (/1\s*[-–—到至]\s*2\s*周内.*第三方海外仓|立即.*第三方海外仓|海外仓.*第一优先级|大额广告|广告放量/i.test(fullReportText) && !/成熟店|订单密度|库存周转|履约成本证据|etsy_api/i.test(fullReportText)) {
+      errors.push("店铺优化报告把海外仓/广告放量作为过早动作，但缺少成熟店阶段、订单密度、库存和履约成本证据。新店应优先补信任资产、页面信息和小步实验。");
+    }
+    if (/获取首批?\s*\d+\s*[-–—到至]\s*\d+\s*个真实评价|获取\s*\d+\s*[-–—到至]\s*\d+\s*个评价|补充评价积累/i.test(fullReportText) && !/合规|真实订单|不得诱导|如实评价|post[-\s]?purchase|发货后礼貌提醒/i.test(fullReportText)) {
+      errors.push("店铺优化报告不能把“获取 5-10 个评价”写成孤立目标。必须约束为 Etsy 合规的真实订单后评价提醒和信任资产建设，禁止诱导或刷评。");
+    }
+    if (/CE\/CPC\/FDA|CE|CPC|FDA/i.test(fullReportText) && /手拿包|晚宴包|clutch|bag|purse/i.test(fullReportText) && !/非核心认证|通常不是|儿童|电子|电池|食品接触|待确认/i.test(fullReportText)) {
+      errors.push("婚礼手拿包/晚宴包店铺不应把 CE/CPC/FDA 写成主要风险。除非有儿童/电子/电池/食品接触证据，否则应聚焦 IP、商标词、材质安全、天然材质来源、易碎包装和色差预期。");
     }
     const hasLogisticsClaim = /配送|物流|发货|运输|时效|工作日|delivery|shipping|transit|fulfillment/i.test(combinedReportText);
     const hasExactTransitPromise = /\b\d+\s*[-–—到至]\s*\d+\s*(个)?\s*(工作日|日|天|business days?|days?)\b/i.test(combinedReportText);
