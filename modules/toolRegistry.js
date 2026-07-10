@@ -93,6 +93,53 @@ function safeEncodeURI(url) {
   return encoded;
 }
 
+function shouldLocalizeSearchQuery(engine = "", query = "") {
+  const normalizedEngine = String(engine || "").toLowerCase();
+  const value = String(query || "").trim();
+  if (!value) return false;
+  if (!["amazon", "etsy", "google", "google_us", "google_ru", "google_trends", "bing"].includes(normalizedEngine)) return false;
+  if (/https?:\/\//i.test(value)) return false;
+  if (/["“”']/.test(value)) return false;
+  if (/^[A-Z][A-Za-z0-9]+(?:[A-Z][A-Za-z0-9]+)+$/.test(value)) return false; // likely brand/shop name
+  if (/[\u4e00-\u9fa5]/.test(value)) return true;
+  if (normalizedEngine === "etsy" && value.split(/\s+/).length >= 2) return false;
+  return normalizedEngine !== "etsy";
+}
+
+export function hasValidEtsySearchEvidence(result = {}) {
+  if (!result || result.ok === false || result.error || result.isCaptcha) return false;
+  const pageData = result.pageData || {};
+  const pageHealth = pageData.pageHealth || {};
+  const url = String(pageData.url || result.searchUrl || "");
+  if (!/etsy\.com/i.test(url)) return false;
+  if (pageHealth.isLikelyBlocked) return false;
+  const cards = Array.isArray(pageData.productCards) ? pageData.productCards : [];
+  const links = Array.isArray(pageData.productLinks) ? pageData.productLinks : [];
+  const hasListingCards = cards.some((card) =>
+    /etsy\.com\/listing\//i.test(String(card.href || card.listingUrl || "")) &&
+    (card.title || card.imageSrc || card.price || card.shopName || card.reviewCount)
+  );
+  const hasListingLinks = links.some((link) => /etsy\.com\/listing\//i.test(String(link.href || "")));
+  const visibleText = String(pageData.visibleText || "");
+  const hasSearchText = /etsy/i.test(visibleText) && /(results|items|shops|reviews|free shipping|bestseller|star seller|\$)/i.test(visibleText);
+  return hasListingCards || hasListingLinks || (Number(pageHealth.productEvidenceCount || 0) > 0 && hasSearchText);
+}
+
+function withSearchEvidenceStatus(payload, engine) {
+  if (String(engine || "").toLowerCase() !== "etsy") return payload;
+  const evidenceOk = hasValidEtsySearchEvidence(payload);
+  return {
+    ...payload,
+    ok: evidenceOk,
+    evidenceOk,
+    evidenceType: "etsy_search",
+    evidenceStatus: evidenceOk ? "valid" : "invalid_or_blocked",
+    message: evidenceOk
+      ? (payload.message || "Valid Etsy search evidence captured.")
+      : (payload.message || "Etsy search did not return usable listing/shop evidence; page may be blocked, empty, or unreadable."),
+  };
+}
+
 async function closeTabQuietly(tabId) {
   if (!tabId) return false;
   return await new Promise((resolve) => {
@@ -647,14 +694,12 @@ export const tools = {
   },
 
   search_in_browser: async (args) => {
-    const { query, engine = "google", keepTab = false } = args;
+    const { query, engine = "google", keepTab = false, searchType = "listing" } = args;
     if (!query) throw new Error("query is required");
     
     let targetQuery = query;
-    const isForeignPlatform = ["amazon", "etsy", "google", "google_ru", "google_trends", "bing", "google", "etsy"].includes(engine);
-    const hasChinese = /[\u4e00-\u9fa5]/.test(query);
 
-    if (isForeignPlatform && (hasChinese || engine === "etsy" || engine === "amazon" || engine === "google" || engine === "etsy" || engine === "google_trends" || engine === "google_ru")) {
+    if (shouldLocalizeSearchQuery(engine, query)) {
       try {
         console.log(`Localizing query "${query}" for ${engine}...`);
         const messages = [
@@ -687,7 +732,11 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
       google_trends: `https://trends.google.com/trends/explore?date=today%2012-m&geo=US&q=${encodeURIComponent(targetQuery)}`,
       bing: `https://www.bing.com/search?q=${encodeURIComponent(targetQuery)}`,
       amazon: `https://www.amazon.com/s?k=${encodeURIComponent(targetQuery)}`,
-      etsy: `https://www.etsy.com/search?q=${encodeURIComponent(targetQuery)}`,
+      etsy: searchType === "shop"
+        ? `https://www.etsy.com/search/shops?search_query=${encodeURIComponent(targetQuery)}`
+        : searchType === "market"
+        ? `https://www.etsy.com/market/${encodeURIComponent(targetQuery).replace(/%20/g, "_")}`
+        : `https://www.etsy.com/search?q=${encodeURIComponent(targetQuery)}`,
       taobao: `https://s.taobao.com/search?q=${encodeURIComponent(targetQuery)}&_input_charset=utf-8`,
       jd: `https://search.jd.com/Search?keyword=${encodeURIComponent(targetQuery)}&enc=utf-8`,
       pinduoduo: `https://mobile.yangkeduo.com/search_result.html?search_key=${encodeURIComponent(targetQuery)}`,
@@ -728,7 +777,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
     }
 
     const searchUrl = engines[engine] || engines.google;
-    const shouldAutoCloseSearchTab = !keepTab && ["google", "google_us", "google_ru", "google_trends", "bing"].includes(String(engine).toLowerCase());
+    const shouldAutoCloseSearchTab = !keepTab && ["google", "google_us", "google_ru", "google_trends", "bing", "etsy"].includes(String(engine).toLowerCase());
     return new Promise((resolve) => {
       chrome.tabs.create({ url: safeEncodeURI(searchUrl), active: true }, (newTab) => {
         const resolveSearch = async (payload) => {
@@ -759,12 +808,29 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
             
             if (hasProducts || attempts >= maxAttempts) {
               clearInterval(checkLoad);
-              resolveSearch({ ok: true, tabId: newTab.id, searchUrl, queryUsed: targetQuery, pageData });
+              resolveSearch(withSearchEvidenceStatus({
+                ok: true,
+                tabId: newTab.id,
+                searchUrl,
+                queryOriginal: query,
+                queryUsed: targetQuery,
+                searchType,
+                pageData
+              }, engine));
             }
           } catch (_) {
             if (attempts >= maxAttempts) {
               clearInterval(checkLoad);
-              resolveSearch({ ok: true, tabId: newTab.id, searchUrl, queryUsed: targetQuery, pageData: {} });
+              resolveSearch(withSearchEvidenceStatus({
+                ok: true,
+                tabId: newTab.id,
+                searchUrl,
+                queryOriginal: query,
+                queryUsed: targetQuery,
+                searchType,
+                pageData: {},
+                message: "Search completed but failed to read result page DOM."
+              }, engine));
             }
           }
         }, 500);

@@ -1,7 +1,7 @@
 // modules/agentLoop.js — The Agent reasoning & tool loop logic
 
 import { callLLM, getSettings } from './llmClient.js';
-import { tools } from './toolRegistry.js';
+import { tools, hasValidEtsySearchEvidence } from './toolRegistry.js';
 
 const globalSessionCache = {};
 const CHECKPOINT_PREFIX = "etsyAgentCheckpoint:";
@@ -259,10 +259,22 @@ function hasSuccessfulToolCall(toolHistory = [], predicate) {
   });
 }
 
+function hasMeaningfulPageDom(pageContext = {}) {
+  const pageHealth = pageContext?.pageHealth || {};
+  if (pageHealth.isLikelyBlocked) return false;
+  if (pageHealth.hasMeaningfulDom) return true;
+  if (String(pageContext?.visibleText || pageContext?.text || "").trim().length >= 120) return true;
+  if (Array.isArray(pageContext?.productCards) && pageContext.productCards.length > 0) return true;
+  if (Array.isArray(pageContext?.productLinks) && pageContext.productLinks.length > 0) return true;
+  const title = String(pageContext?.title || "").trim();
+  const h1 = String(pageContext?.h1 || "").trim();
+  return Boolean((title && title.toLowerCase() !== "etsy.com") || h1);
+}
+
 function hasEvidenceSource(toolHistory = [], pageContext = {}, sourceType = "") {
   const normalized = String(sourceType || "").toLowerCase();
   if (normalized === "page_dom") {
-    return Boolean(pageContext?.url || pageContext?.title || (pageContext?.text && String(pageContext.text).trim()));
+    return hasMeaningfulPageDom(pageContext);
   }
   if (normalized === "screenshot_visual") {
     return Boolean(pageContext?.screenshot);
@@ -272,7 +284,9 @@ function hasEvidenceSource(toolHistory = [], pageContext = {}, sourceType = "") 
   }
   if (normalized === "etsy_search") {
     return hasSuccessfulToolCall(toolHistory, (entry) =>
-      entry.tool === "search_in_browser" && String(entry.arguments?.engine || "").toLowerCase() === "etsy"
+      entry.tool === "search_in_browser" &&
+      String(entry.arguments?.engine || "").toLowerCase() === "etsy" &&
+      hasValidEtsySearchEvidence(entry.result)
     );
   }
   if (normalized === "google_search") {
@@ -536,7 +550,7 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
       if (!item.buyer_scenario) {
         errors.push(`店铺优化方案第 ${idx + 1} 项 (${title}) 缺少 buyer_scenario，必须说明对应的欧美买家场景或购买人群。`);
       }
-      if (/API|Seller API|etsy_api|Sessions|session|加购|订单|扣费|交易|履约成本|第三方海外仓|Etsy 自发货/i.test(itemText) && !hasLedgerType(ledgerEntries, "etsy_api") && !hasAssumptionFallback(ledgerEntries, /API|Seller|流量|订单|履约|第三方海外仓|Etsy 自发货/i)) {
+      if (/API|Seller API|etsy_api|Sessions|session|订单|扣费|交易|履约成本|第三方海外仓|Etsy 自发货/i.test(itemText) && !hasLedgerType(ledgerEntries, "etsy_api") && !hasAssumptionFallback(ledgerEntries, /API|Seller|流量|订单|履约|第三方海外仓|Etsy 自发货/i)) {
         errors.push(`店铺优化方案第 ${idx + 1} 项 (${title}) 使用了 API/流量/订单/履约类结论，但 evidence_ledger 没有 etsy_api 证据或 assumption 降级说明。`);
       }
       if (/Google|google/i.test(itemText) && !hasLedgerType(ledgerEntries, "google_search") && !hasAssumptionFallback(ledgerEntries, /Google/i)) {
@@ -575,13 +589,15 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
     if (!/竞品店铺|头部店铺|高排名店铺|高销店铺|best[-\s]?seller|top shop|同类高排名/i.test(combinedReportText)) {
       errors.push("店铺优化报告缺少同类高排名/高销竞品店铺的反向学习结论。必须搜索并对标 2-3 个头部店铺或高排名商品，再提炼其定位、调性、首图、标题和履约承诺。");
     }
-    if (/1\s*[-–—到至]\s*2\s*周内.*第三方海外仓|立即.*第三方海外仓|海外仓.*第一优先级|大额广告|广告放量/i.test(fullReportText) && !/成熟店|订单密度|库存周转|履约成本证据|etsy_api/i.test(fullReportText)) {
+    const hasPrematureScaleAdvice = /1\s*[-–—到至]\s*2\s*周内.*第三方海外仓|立即.*第三方海外仓|海外仓.*第一优先级|大额广告|广告放量/i.test(fullReportText);
+    const isWarningAgainstPrematureScale = /不建议[^。；\n]{0,24}(?:第三方海外仓|海外仓|大额广告|广告放量)|不得[^。；\n]{0,24}(?:第三方海外仓|海外仓|大额广告|广告放量)|避免[^。；\n]{0,24}(?:第三方海外仓|海外仓|大额广告|广告放量)/i.test(fullReportText);
+    if (hasPrematureScaleAdvice && !isWarningAgainstPrematureScale && !/成熟店|订单密度|库存周转|履约成本证据|etsy_api/i.test(fullReportText)) {
       errors.push("店铺优化报告把海外仓/广告放量作为过早动作，但缺少成熟店阶段、订单密度、库存和履约成本证据。新店应优先补信任资产、页面信息和小步实验。");
     }
     if (/获取首批?\s*\d+\s*[-–—到至]\s*\d+\s*个真实评价|获取\s*\d+\s*[-–—到至]\s*\d+\s*个评价|补充评价积累/i.test(fullReportText) && !/合规|真实订单|不得诱导|如实评价|post[-\s]?purchase|发货后礼貌提醒/i.test(fullReportText)) {
       errors.push("店铺优化报告不能把“获取 5-10 个评价”写成孤立目标。必须约束为 Etsy 合规的真实订单后评价提醒和信任资产建设，禁止诱导或刷评。");
     }
-    if (/CE\/CPC\/FDA|CE|CPC|FDA/i.test(fullReportText) && /手拿包|晚宴包|clutch|bag|purse/i.test(fullReportText) && !/非核心认证|通常不是|儿童|电子|电池|食品接触|待确认/i.test(fullReportText)) {
+    if (/\b(?:CE|CPC|FDA)\b|CE\/CPC\/FDA/i.test(fullReportText) && /手拿包|晚宴包|clutch|bag|purse/i.test(fullReportText) && !/非核心认证|通常不是|儿童|电子|电池|食品接触|待确认/i.test(fullReportText)) {
       errors.push("婚礼手拿包/晚宴包店铺不应把 CE/CPC/FDA 写成主要风险。除非有儿童/电子/电池/食品接触证据，否则应聚焦 IP、商标词、材质安全、天然材质来源、易碎包装和色差预期。");
     }
     const hasLogisticsClaim = /配送|物流|发货|运输|时效|工作日|delivery|shipping|transit|fulfillment/i.test(combinedReportText);

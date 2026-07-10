@@ -4,6 +4,7 @@ import path from "node:path";
 import vm from "node:vm";
 import { JSDOM } from "jsdom";
 import { sanitizeFinalReportForDelivery, validateReport } from "../modules/agentLoop.js";
+import { hasValidEtsySearchEvidence } from "../modules/toolRegistry.js";
 
 const wait = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 const root = process.cwd();
@@ -12,6 +13,7 @@ const js = fs.readFileSync(path.join(root, "dashboard.js"), "utf8");
 const sidepanelSource = fs.readFileSync(path.join(root, "sidepanel.js"), "utf8");
 const css = fs.readFileSync(path.join(root, "dashboard.css"), "utf8");
 const backgroundSource = fs.readFileSync(path.join(root, "background.js"), "utf8");
+const contentSource = fs.readFileSync(path.join(root, "content.js"), "utf8");
 const agentLoopSource = fs.readFileSync(path.join(root, "modules", "agentLoop.js"), "utf8");
 const toolRegistrySource = fs.readFileSync(path.join(root, "modules", "toolRegistry.js"), "utf8");
 const shopOptimizerSkillSource = fs.readFileSync(path.join(root, "skills", "etsy_global_shop_optimizer.skill.md"), "utf8");
@@ -37,6 +39,10 @@ assert.match(js, /interrupted:\s*"已保存断点"/, "dashboard should show inte
 assert.match(js, /后台连接中断，已保存断点，可再次运行继续。/, "dashboard disconnects should not be shown as ordinary failed runs");
 assert.match(toolRegistrySource, /closedTabId/, "browser search should report automatically closed temporary tabs");
 assert.match(toolRegistrySource, /shouldAutoCloseSearchTab[\s\S]*google_trends/, "Google and Trends search tabs should be auto-closed after evidence capture");
+assert.match(toolRegistrySource, /hasValidEtsySearchEvidence/, "Etsy search evidence should have a runtime validity gate");
+assert.match(toolRegistrySource, /\"google_trends\", \"bing\", \"etsy\"/, "Etsy search tabs should be auto-closed after evidence capture unless keepTab is set");
+assert.match(contentSource, /extractEtsySearchCards/, "content script should extract Etsy-specific listing cards");
+assert.match(contentSource, /pageHealth/, "content script should report page health for blocked or empty Etsy pages");
 assert.match(js, /<html lang="zh-CN" dir="ltr">/, "PDF print template should declare Chinese language and stable text direction");
 assert.match(js, /charset=UTF-8/, "PDF print template should force UTF-8 content type");
 assert.match(js, /PingFang SC[\s\S]*Microsoft YaHei[\s\S]*Noto Sans CJK SC/, "PDF print template should include a Chinese font fallback stack");
@@ -92,6 +98,110 @@ assert.doesNotMatch(
 );
 assert.equal(sanitizedJargonReport.parsed.output.data[0].source_ref, "read_current_page#1", "technical source refs should remain stable for evidence tracing");
 assert.deepEqual(validateReport(sanitizedJargonReport.parsed, "", "skills/etsy_product_opportunity_explorer.skill.md"), [], "sanitized final report should pass report validation without critic redo");
+
+const invalidEtsySearchResult = {
+  ok: true,
+  searchUrl: "https://www.etsy.com/search?q=wedding%20clutch",
+  pageData: {
+    url: "https://www.etsy.com/search?q=wedding%20clutch",
+    title: "etsy.com",
+    visibleText: "",
+    productCards: [],
+    productLinks: [],
+    pageHealth: {
+      platform: "etsy",
+      pageType: "etsy_search",
+      visibleTextLength: 0,
+      productEvidenceCount: 0,
+      hasMeaningfulDom: false,
+      isLikelyBlocked: true,
+      blockSignals: ["etsy_empty_shell"],
+    },
+  },
+};
+const validEtsySearchResult = {
+  ok: true,
+  searchUrl: "https://www.etsy.com/search?q=wedding%20clutch",
+  pageData: {
+    url: "https://www.etsy.com/search?q=wedding%20clutch",
+    title: "Wedding clutch - Etsy",
+    visibleText: "Wedding clutch results Bestseller FREE shipping $42.00 124 reviews Star Seller",
+    productCards: [{
+      href: "https://www.etsy.com/listing/123456789/personalized-wedding-clutch",
+      listingUrl: "https://www.etsy.com/listing/123456789/personalized-wedding-clutch",
+      title: "Personalized Wedding Clutch",
+      shopName: "TopBridalStudio",
+      price: "$42.00",
+      imageSrc: "https://i.etsystatic.com/mock.jpg",
+      reviewCount: "124 reviews",
+    }],
+    productLinks: [{ href: "https://www.etsy.com/listing/123456789/personalized-wedding-clutch", text: "Personalized Wedding Clutch" }],
+    pageHealth: {
+      platform: "etsy",
+      pageType: "etsy_search",
+      visibleTextLength: 84,
+      productEvidenceCount: 2,
+      hasMeaningfulDom: true,
+      isLikelyBlocked: false,
+      blockSignals: [],
+    },
+  },
+};
+assert.equal(hasValidEtsySearchEvidence(invalidEtsySearchResult), false, "empty or blocked Etsy pages should not count as valid search evidence");
+assert.equal(hasValidEtsySearchEvidence(validEtsySearchResult), true, "Etsy listing cards should count as valid search evidence");
+
+const shopOptimizerReportWithEtsyEvidence = {
+  type: "final",
+  output: {
+    overview: "## Etsy 店铺优化诊断\n目标市场为Etsy 主要欧美礼品市场，当前为 B 级低评价成长店，需要补齐信任资产。",
+    analysis: "已读取当前店铺页面文本和截图，并对标同类高排名竞品店铺。Google Search US 已验证 wedding clutch 站外表达。",
+    summary: "优先执行 B-1 婚礼场景首图与标题改版，7 天后复盘点击和加购。",
+    data: [{
+      plan_id: "B-1",
+      title: "婚礼场景首图与标题改版",
+      diagnosis_level: "B",
+      direction: "围绕 bride、bridesmaid 与 wedding guest 场景重做首图和标题。",
+      evidence: "当前店铺页面、截图、Etsy 搜索和 Google Search US 均支持先做信任资产改版。",
+      stage_fit: "低评价成长店应先补齐信任资产，不建议立即广告放量。",
+      buyer_scenario: "bride / bridesmaid / wedding guest",
+      evidence_ledger: [
+        { source_type: "page_dom", source_ref: "当前店铺页", observed_value: "店铺主营婚礼手拿包与伴娘礼品", used_for: "判断店铺定位", confidence: "high", limitation: "仅代表当前页面可见文本" },
+        { source_type: "screenshot_visual", source_ref: "当前店铺截图", observed_value: "首屏商品视觉统一但缺少尺寸/包装信任信息", used_for: "判断视觉整改", confidence: "medium", limitation: "截图不能替代完整详情页" },
+        { source_type: "etsy_search", source_ref: "Etsy search: wedding clutch", observed_value: "高排名竞品店铺使用婚礼场景图、评价背书和 free shipping 标签", used_for: "对标竞品店铺方法", confidence: "medium", limitation: "搜索结果第一页样本" },
+        { source_type: "google_search", source_ref: "Google Search US: wedding clutch", observed_value: "站外表达以 wedding clutch、bridesmaid gift clutch 为主", used_for: "验证标题词方向", confidence: "medium", limitation: "需要 Google Trends 二次确认季节性" },
+      ],
+      expected_impact: "提升点击率和加购信任。",
+      first_actions: ["重做首图", "重写标题前 60 字", "补包装和尺寸图"],
+      manual_confirmations: ["确认新首图已发布"],
+      review_window: "7 天",
+      risk_guard: "不得伪造评价或趋势数据。",
+    }],
+  },
+};
+const meaningfulPageContext = {
+  url: "https://www.etsy.com/shop/MidnightReveriee",
+  title: "MidnightReveriee - Etsy",
+  visibleText: "MidnightReveriee wedding clutch bridesmaid gifts",
+  screenshot: "data:image/jpeg;base64,mock",
+  pageHealth: { hasMeaningfulDom: true, isLikelyBlocked: false },
+};
+const googleSearchHistory = { tool: "search_in_browser", arguments: { engine: "google_us", query: "wedding clutch" }, result: { ok: true, pageData: { visibleText: "wedding clutch search results" } } };
+assert.notDeepEqual(
+  validateReport(shopOptimizerReportWithEtsyEvidence, "", "skills/etsy_global_shop_optimizer.skill.md", [
+    { tool: "search_in_browser", arguments: { engine: "etsy", query: "wedding clutch" }, result: invalidEtsySearchResult },
+    googleSearchHistory,
+  ], meaningfulPageContext),
+  [],
+  "shop optimizer critic should reject invalid or blocked Etsy search evidence"
+);
+assert.deepEqual(
+  validateReport(shopOptimizerReportWithEtsyEvidence, "", "skills/etsy_global_shop_optimizer.skill.md", [
+    { tool: "search_in_browser", arguments: { engine: "etsy", query: "wedding clutch" }, result: validEtsySearchResult },
+    googleSearchHistory,
+  ], meaningfulPageContext),
+  [],
+  "shop optimizer critic should accept valid Etsy listing/search evidence"
+);
 
 const dom = new JSDOM(html, {
   url: "chrome-extension://test/dashboard.html",

@@ -424,9 +424,111 @@
 
   function extractPriceFromText(text) {
     const value = String(text || "");
-    const match = value.match(/[¥￥]\s*\d+(?:\.\d+)?(?:\s*[-~至]\s*[¥￥]?\s*\d+(?:\.\d+)?)?/i) ||
+    const match = value.match(/(?:US)?\$\s*\d[\d,]*(?:\.\d{2})?(?:\s*[-~–—到至]\s*(?:US)?\$?\s*\d[\d,]*(?:\.\d{2})?)?/i) ||
+      value.match(/USD\s*\d[\d,]*(?:\.\d{2})?(?:\s*[-~–—到至]\s*(?:USD\s*)?\d[\d,]*(?:\.\d{2})?)?/i) ||
+      value.match(/[¥￥]\s*\d+(?:\.\d+)?(?:\s*[-~至]\s*[¥￥]?\s*\d+(?:\.\d+)?)?/i) ||
       value.match(/\d+(?:\.\d+)?\s*元(?:\s*[-~至]\s*\d+(?:\.\d+)?\s*元)?/i);
     return match ? normalizeText(match[0], 40) : "";
+  }
+
+  function extractReviewCountFromText(text) {
+    const value = String(text || "");
+    const match = value.match(/(\d[\d,]*)\s*(?:reviews?|ratings?)/i) ||
+      value.match(/(?:reviews?|ratings?)\s*(\d[\d,]*)/i);
+    return match ? normalizeText(match[0], 40) : "";
+  }
+
+  function extractRatingFromText(text) {
+    const value = String(text || "");
+    const match = value.match(/(?:rating\s*)?(\d(?:\.\d)?)\s*(?:out of 5|stars?)/i) ||
+      value.match(/\b([1-5](?:\.\d)?)\s*★/);
+    return match ? normalizeText(match[0], 40) : "";
+  }
+
+  function classifyPageHealth({ url = "", title = "", visibleText = "", productCards = [], productLinks = [] } = {}) {
+    const text = String(visibleText || "");
+    const blockSignals = [];
+    if (/please enable js|disable any ad blocker|captcha|verify you are human|access denied|blocked|unusual traffic|security check/i.test(`${text}\n${title}`)) {
+      blockSignals.push("blocked_or_verification_text");
+    }
+    if (String(title || "").toLowerCase() === "etsy.com" && text.trim().length < 80) {
+      blockSignals.push("etsy_empty_shell");
+    }
+    if (/geo\.captcha-delivery\.com|captcha-delivery/i.test(text)) {
+      blockSignals.push("captcha_delivery");
+    }
+    const hostname = (() => {
+      try { return new URL(url).hostname; } catch (_) { return ""; }
+    })();
+    const path = (() => {
+      try { return new URL(url).pathname; } catch (_) { return ""; }
+    })();
+    let pageType = "unknown";
+    if (/(^|\.)etsy\.com$/i.test(hostname)) {
+      if (/\/shop\//i.test(path)) pageType = "etsy_shop";
+      else if (/\/listing\//i.test(path)) pageType = "etsy_listing";
+      else if (/\/search/i.test(path) || /\/market\//i.test(path)) pageType = "etsy_search";
+      else pageType = "etsy_other";
+    }
+    const productEvidenceCount = (Array.isArray(productCards) ? productCards.length : 0) +
+      (Array.isArray(productLinks) ? productLinks.length : 0);
+    const hasMeaningfulDom = text.trim().length >= 120 || productEvidenceCount > 0 || Boolean(title && title !== "etsy.com");
+    return {
+      platform: hostname.includes("etsy.com") ? "etsy" : hostname,
+      pageType,
+      visibleTextLength: text.trim().length,
+      productEvidenceCount,
+      hasMeaningfulDom,
+      isLikelyBlocked: blockSignals.length > 0 || (!hasMeaningfulDom && hostname.includes("etsy.com")),
+      blockSignals,
+    };
+  }
+
+  function extractEtsySearchCards() {
+    if (!window.location.hostname.includes("etsy.com")) return [];
+    const cards = [];
+    const processed = new Set();
+    const listingAnchors = Array.from(document.querySelectorAll('a[href*="/listing/"]'));
+    for (const anchor of listingAnchors) {
+      const href = normalizeUrl(anchor.getAttribute("href") || anchor.href || "");
+      const listingIdMatch = href.match(/\/listing\/(\d+)/i);
+      if (!listingIdMatch || processed.has(listingIdMatch[1])) continue;
+      const container = pickLikelyCardContainer(anchor) || anchor.closest("li, article, div") || anchor;
+      const text = normalizeText(container?.innerText || anchor.innerText || anchor.getAttribute("aria-label") || "", 900);
+      const image = container ? getLargestProductImage(container) : null;
+      const shopAnchor = container ? Array.from(container.querySelectorAll('a[href*="/shop/"]')).find((a) => !/\/listing\//i.test(a.href)) : null;
+      const shopUrl = shopAnchor ? normalizeUrl(shopAnchor.getAttribute("href") || shopAnchor.href || "") : "";
+      const shopName = normalizeText(shopAnchor?.innerText || "", 80);
+      const title = normalizeText(anchor.getAttribute("title") || anchor.getAttribute("aria-label") || anchor.innerText || image?.alt || text.split("\n")[0] || "", 180);
+      const badges = [];
+      if (/bestseller/i.test(text)) badges.push("bestseller");
+      if (/star seller/i.test(text)) badges.push("star_seller");
+      if (/free shipping/i.test(text)) badges.push("free_shipping");
+      if (/\bsale\b|%\s*off/i.test(text)) badges.push("sale");
+      processed.add(listingIdMatch[1]);
+      cards.push({
+        index: cards.length + 1,
+        rank: cards.length + 1,
+        href,
+        listingUrl: href,
+        listingId: listingIdMatch[1],
+        title,
+        shopName,
+        shopUrl,
+        price: extractPriceFromText(text),
+        currency: /\$|USD/i.test(text) ? "USD" : "",
+        rating: extractRatingFromText(text),
+        reviewCount: extractReviewCountFromText(text),
+        badges,
+        shippingText: /free shipping/i.test(text) ? "FREE shipping" : "",
+        text,
+        imageSrc: image?.src || "",
+        imageAlt: image?.alt || "",
+        extractionConfidence: Math.min(100, 45 + (title ? 15 : 0) + (image?.src ? 15 : 0) + (extractPriceFromText(text) ? 15 : 0) + (shopName || shopUrl ? 10 : 0)),
+      });
+      if (cards.length >= 40) break;
+    }
+    return cards;
   }
 
   function pickLikelyCardContainer(anchor) {
@@ -1087,7 +1189,10 @@
       detailCreators = extractTikTokDetailCreators();
     }
 
-    if (cachedSelectors && (cachedSelectors.product_card || cachedSelectors.card)) {
+    if (window.location.hostname.includes("etsy.com")) {
+      const etsyCards = extractEtsySearchCards();
+      productCards = etsyCards.length > 0 ? etsyCards : extractProductCards();
+    } else if (cachedSelectors && (cachedSelectors.product_card || cachedSelectors.card)) {
       productCards = extractProductCardsWithMemory(cachedSelectors);
     } else if (window.location.hostname.includes("tiktok.com")) {
       productCards = extractTikTokProductCards();
@@ -1105,6 +1210,7 @@
         structuredData = JSON.parse(ldScript.innerText);
       }
     } catch (_) {}
+    const pageHealth = classifyPageHealth({ url, title, visibleText, productCards, productLinks });
 
     return {
       url,
@@ -1127,6 +1233,7 @@
       structuredData,
       productLinks,
       productCards,
+      pageHealth,
       creatorInfo,
       detailCreators
     };
