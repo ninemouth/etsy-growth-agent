@@ -119,25 +119,130 @@ export function hasValidEtsySearchEvidence(result = {}) {
     /etsy\.com\/listing\//i.test(String(card.href || card.listingUrl || "")) &&
     (card.title || card.imageSrc || card.price || card.shopName || card.reviewCount)
   );
+  const hasShopCards = cards.some((card) =>
+    /etsy\.com\/shop\//i.test(String(card.href || card.shopUrl || "")) &&
+    (card.title || card.shopName || card.text)
+  );
   const hasListingLinks = links.some((link) => /etsy\.com\/listing\//i.test(String(link.href || "")));
+  const hasShopLinks = links.some((link) => /etsy\.com\/shop\//i.test(String(link.href || "")));
   const visibleText = String(pageData.visibleText || "");
   const hasSearchText = /etsy/i.test(visibleText) && /(results|items|shops|reviews|free shipping|bestseller|star seller|\$)/i.test(visibleText);
-  return hasListingCards || hasListingLinks || (Number(pageHealth.productEvidenceCount || 0) > 0 && hasSearchText);
+  return hasListingCards || hasShopCards || hasListingLinks || hasShopLinks || (Number(pageHealth.productEvidenceCount || 0) > 0 && hasSearchText);
+}
+
+export function hasValidGoogleTrendsEvidence(result = {}) {
+  if (!result || result.ok === false || result.error || result.isCaptcha) return false;
+  const pageData = result.pageData || {};
+  const pageHealth = pageData.pageHealth || {};
+  const url = String(pageData.url || result.searchUrl || "");
+  if (!/trends\.google\./i.test(url)) return false;
+  if (pageHealth.isLikelyBlocked) return false;
+  const text = [
+    pageData.title,
+    pageData.h1,
+    pageData.visibleText,
+    pageData.metaDescription,
+  ].filter(Boolean).join("\n");
+  return /(google trends|interest over time|related queries|related topics|explore|趋势|热度|相关查询)/i.test(text) ||
+    String(pageData.visibleText || "").trim().length >= 180;
 }
 
 function withSearchEvidenceStatus(payload, engine) {
-  if (String(engine || "").toLowerCase() !== "etsy") return payload;
-  const evidenceOk = hasValidEtsySearchEvidence(payload);
+  const normalizedEngine = String(engine || "").toLowerCase();
+  if (normalizedEngine !== "etsy" && normalizedEngine !== "google_trends") return payload;
+  const evidenceOk = normalizedEngine === "etsy"
+    ? hasValidEtsySearchEvidence(payload)
+    : hasValidGoogleTrendsEvidence(payload);
   return {
     ...payload,
     ok: evidenceOk,
     evidenceOk,
-    evidenceType: "etsy_search",
+    evidenceType: normalizedEngine === "etsy" ? "etsy_search" : "google_trends",
     evidenceStatus: evidenceOk ? "valid" : "invalid_or_blocked",
     message: evidenceOk
-      ? (payload.message || "Valid Etsy search evidence captured.")
-      : (payload.message || "Etsy search did not return usable listing/shop evidence; page may be blocked, empty, or unreadable."),
+      ? (payload.message || (normalizedEngine === "etsy" ? "Valid Etsy search evidence captured." : "Valid Google Trends evidence captured."))
+      : (payload.message || (normalizedEngine === "etsy"
+        ? "Etsy search did not return usable listing/shop evidence; page may be blocked, empty, or unreadable."
+        : "Google Trends did not return usable trend evidence; page may still be loading, blocked, or unreadable.")),
   };
+}
+
+function normalizeSearchEngine(engine = "") {
+  return String(engine || "google").toLowerCase();
+}
+
+function buildSearchUrl(engine, targetQuery, searchType = "listing") {
+  const encodedQuery = encodeURIComponent(targetQuery);
+  const engines = {
+    google: `https://www.google.com/search?q=${encodedQuery}`,
+    google_us: `https://www.google.com/search?q=${encodedQuery}&hl=en&gl=us`,
+    google_ru: `https://www.google.com/search?q=${encodedQuery}&hl=ru&gl=ru`,
+    google_trends: `https://trends.google.com/trends/explore?date=today%2012-m&geo=US&q=${encodedQuery}`,
+    bing: `https://www.bing.com/search?q=${encodedQuery}`,
+    amazon: `https://www.amazon.com/s?k=${encodedQuery}`,
+    etsy: searchType === "shop"
+      ? `https://www.etsy.com/search/shops?search_query=${encodedQuery}`
+      : searchType === "market"
+      ? `https://www.etsy.com/market/${encodedQuery.replace(/%20/g, "_")}`
+      : `https://www.etsy.com/search?q=${encodedQuery}`,
+    taobao: `https://s.taobao.com/search?q=${encodedQuery}&_input_charset=utf-8`,
+    jd: `https://search.jd.com/Search?keyword=${encodedQuery}&enc=utf-8`,
+    pinduoduo: `https://mobile.yangkeduo.com/search_result.html?search_key=${encodedQuery}`,
+  };
+  return engines[engine] || engines.google;
+}
+
+function buildBrowserSearchAttempts(engine, targetQuery, searchType = "listing") {
+  const normalizedEngine = normalizeSearchEngine(engine);
+  const encodedQuery = encodeURIComponent(targetQuery);
+  if (normalizedEngine === "etsy") {
+    const attempts = [];
+    const push = (type, url, reason) => {
+      if (!attempts.some((attempt) => attempt.url === url)) attempts.push({ engine: normalizedEngine, searchType: type, url, reason });
+    };
+    if (searchType === "shop") {
+      push("shop", `https://www.etsy.com/search/shops?search_query=${encodedQuery}`, "etsy_shop_search");
+      push("listing", `https://www.etsy.com/search?q=${encodedQuery}`, "etsy_listing_fallback");
+      push("market", `https://www.etsy.com/market/${encodedQuery.replace(/%20/g, "_")}`, "etsy_market_fallback");
+    } else if (searchType === "market") {
+      push("market", `https://www.etsy.com/market/${encodedQuery.replace(/%20/g, "_")}`, "etsy_market_search");
+      push("listing", `https://www.etsy.com/search?q=${encodedQuery}`, "etsy_listing_fallback");
+      push("shop", `https://www.etsy.com/search/shops?search_query=${encodedQuery}`, "etsy_shop_fallback");
+    } else {
+      push("listing", `https://www.etsy.com/search?q=${encodedQuery}`, "etsy_listing_search");
+      push("market", `https://www.etsy.com/market/${encodedQuery.replace(/%20/g, "_")}`, "etsy_market_fallback");
+      push("shop", `https://www.etsy.com/search/shops?search_query=${encodedQuery}`, "etsy_shop_fallback");
+    }
+    return attempts;
+  }
+  if (normalizedEngine === "google_trends") {
+    return [
+      {
+        engine: normalizedEngine,
+        searchType,
+        url: `https://trends.google.com/trends/explore?date=today%2012-m&geo=US&q=${encodedQuery}`,
+        reason: "google_trends_12m_us",
+      },
+      {
+        engine: normalizedEngine,
+        searchType,
+        url: `https://trends.google.com/trends/explore?geo=US&q=${encodedQuery}`,
+        reason: "google_trends_us_no_date_fallback",
+      },
+    ];
+  }
+  return [{ engine: normalizedEngine, searchType, url: buildSearchUrl(normalizedEngine, targetQuery, searchType), reason: `${normalizedEngine}_search` }];
+}
+
+function searchEvidenceSatisfied(payload, engine) {
+  const normalizedEngine = normalizeSearchEngine(engine);
+  if (normalizedEngine === "etsy") return hasValidEtsySearchEvidence(payload);
+  if (normalizedEngine === "google_trends") return hasValidGoogleTrendsEvidence(payload);
+  const pageData = payload?.pageData || {};
+  const hasProducts = (Array.isArray(pageData.productLinks) && pageData.productLinks.length > 0) ||
+    (Array.isArray(pageData.productCards) && pageData.productCards.length > 0);
+  const visibleTextLength = String(pageData.visibleText || "").trim().length;
+  return hasProducts || visibleTextLength >= 120 || Boolean(pageData.title || pageData.h1);
 }
 
 async function closeTabQuietly(tabId) {
@@ -725,22 +830,6 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
       }
     }
 
-    const engines = {
-      google: `https://www.google.com/search?q=${encodeURIComponent(targetQuery)}`,
-      google_us: `https://www.google.com/search?q=${encodeURIComponent(targetQuery)}&hl=en&gl=us`,
-      google_ru: `https://www.google.com/search?q=${encodeURIComponent(targetQuery)}&hl=ru&gl=ru`,
-      google_trends: `https://trends.google.com/trends/explore?date=today%2012-m&geo=US&q=${encodeURIComponent(targetQuery)}`,
-      bing: `https://www.bing.com/search?q=${encodeURIComponent(targetQuery)}`,
-      amazon: `https://www.amazon.com/s?k=${encodeURIComponent(targetQuery)}`,
-      etsy: searchType === "shop"
-        ? `https://www.etsy.com/search/shops?search_query=${encodeURIComponent(targetQuery)}`
-        : searchType === "market"
-        ? `https://www.etsy.com/market/${encodeURIComponent(targetQuery).replace(/%20/g, "_")}`
-        : `https://www.etsy.com/search?q=${encodeURIComponent(targetQuery)}`,
-      taobao: `https://s.taobao.com/search?q=${encodeURIComponent(targetQuery)}&_input_charset=utf-8`,
-      jd: `https://search.jd.com/Search?keyword=${encodeURIComponent(targetQuery)}&enc=utf-8`,
-      pinduoduo: `https://mobile.yangkeduo.com/search_result.html?search_key=${encodeURIComponent(targetQuery)}`,
-    };
     if (engine === "1688") {
       const searchUrl = "https://s.1688.com/";
       return new Promise((resolve) => {
@@ -776,66 +865,112 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
       });
     }
 
-    const searchUrl = engines[engine] || engines.google;
-    const shouldAutoCloseSearchTab = !keepTab && ["google", "google_us", "google_ru", "google_trends", "bing", "etsy"].includes(String(engine).toLowerCase());
-    return new Promise((resolve) => {
-      chrome.tabs.create({ url: safeEncodeURI(searchUrl), active: true }, (newTab) => {
-        const resolveSearch = async (payload) => {
-          if (!shouldAutoCloseSearchTab) {
-            resolve(payload);
+    const normalizedEngine = normalizeSearchEngine(engine);
+    const searchAttempts = buildBrowserSearchAttempts(normalizedEngine, targetQuery, searchType);
+    const shouldAutoCloseSearchTab = !keepTab && ["google", "google_us", "google_ru", "google_trends", "bing", "etsy"].includes(normalizedEngine);
+    const maxPollAttempts = normalizedEngine === "google_trends" ? 44 : normalizedEngine === "etsy" ? 30 : 20;
+    const pollDelayMs = 500;
+
+    const runAttempt = (attempt, attemptIndex) => new Promise((resolve) => {
+      chrome.tabs.create({ url: safeEncodeURI(attempt.url), active: true }, (newTab) => {
+        let settled = false;
+        const finish = async (payload) => {
+          if (settled) return;
+          settled = true;
+          if (shouldAutoCloseSearchTab) {
+            const closed = await closeTabQuietly(newTab.id);
+            resolve({
+              ...payload,
+              tabClosed: closed,
+              closedTabId: closed ? newTab.id : undefined,
+              message: closed
+                ? (payload.message || "Search evidence captured and temporary search tab closed.")
+                : (payload.message || "Search evidence captured, but the temporary search tab could not be closed automatically."),
+            });
             return;
           }
-          const closed = await closeTabQuietly(newTab.id);
-          resolve({
-            ...payload,
-            tabClosed: closed,
-            closedTabId: closed ? newTab.id : undefined,
-            message: closed
-              ? "Search evidence captured and temporary search tab closed."
-              : "Search evidence captured, but the temporary search tab could not be closed automatically.",
-          });
+          resolve(payload);
         };
-        // Poll immediately for content script readiness and product links
-        let attempts = 0;
-        const maxAttempts = 20; // up to 10 seconds for new tab load
-        const checkLoad = setInterval(async () => {
-          attempts++;
+
+        let pollCount = 0;
+        const readResultPage = async () => {
+          pollCount++;
           try {
             const data = await sendToContentScript(newTab.id, { type: "READ_CURRENT_PAGE" });
             const pageData = data?.data || {};
-            const hasProducts = (pageData.productLinks && pageData.productLinks.length > 0) ||
-              (pageData.productCards && pageData.productCards.length > 0);
-            
-            if (hasProducts || attempts >= maxAttempts) {
+            const payload = withSearchEvidenceStatus({
+              ok: true,
+              tabId: newTab.id,
+              searchUrl: attempt.url,
+              queryOriginal: query,
+              queryUsed: targetQuery,
+              searchType: attempt.searchType || searchType,
+              searchAttempt: attemptIndex + 1,
+              searchAttemptReason: attempt.reason,
+              searchAttemptsTotal: searchAttempts.length,
+              pageData,
+            }, normalizedEngine);
+
+            if (searchEvidenceSatisfied(payload, normalizedEngine) || pollCount >= maxPollAttempts) {
               clearInterval(checkLoad);
-              resolveSearch(withSearchEvidenceStatus({
-                ok: true,
-                tabId: newTab.id,
-                searchUrl,
-                queryOriginal: query,
-                queryUsed: targetQuery,
-                searchType,
-                pageData
-              }, engine));
+              await finish(payload);
             }
-          } catch (_) {
-            if (attempts >= maxAttempts) {
+          } catch (err) {
+            if (pollCount >= maxPollAttempts) {
               clearInterval(checkLoad);
-              resolveSearch(withSearchEvidenceStatus({
+              await finish(withSearchEvidenceStatus({
                 ok: true,
                 tabId: newTab.id,
-                searchUrl,
+                searchUrl: attempt.url,
                 queryOriginal: query,
                 queryUsed: targetQuery,
-                searchType,
+                searchType: attempt.searchType || searchType,
+                searchAttempt: attemptIndex + 1,
+                searchAttemptReason: attempt.reason,
+                searchAttemptsTotal: searchAttempts.length,
                 pageData: {},
-                message: "Search completed but failed to read result page DOM."
-              }, engine));
+                message: `Search completed but failed to read result page DOM: ${err.message}`,
+              }, normalizedEngine));
             }
           }
-        }, 500);
+        };
+
+        const checkLoad = setInterval(readResultPage, pollDelayMs);
+        setTimeout(readResultPage, 900);
       });
     });
+
+    const failedAttempts = [];
+    for (let i = 0; i < searchAttempts.length; i++) {
+      const result = await runAttempt(searchAttempts[i], i);
+      if (searchEvidenceSatisfied(result, normalizedEngine)) {
+        return {
+          ...result,
+          ok: true,
+          evidenceOk: result.evidenceOk ?? true,
+          retryAttempts: failedAttempts,
+        };
+      }
+      failedAttempts.push({
+        searchUrl: result.searchUrl,
+        searchType: result.searchType,
+        evidenceStatus: result.evidenceStatus || "invalid_or_unreadable",
+        pageHealth: result.pageData?.pageHealth,
+        message: result.message,
+      });
+    }
+
+    const lastResult = failedAttempts.length > 0 ? failedAttempts[failedAttempts.length - 1] : {};
+    return withSearchEvidenceStatus({
+      ok: false,
+      searchUrl: lastResult.searchUrl || searchAttempts[0]?.url,
+      queryOriginal: query,
+      queryUsed: targetQuery,
+      searchType,
+      retryAttempts: failedAttempts,
+      pageData: {},
+      message: `${normalizedEngine} search failed after ${searchAttempts.length} attempt(s); no usable evidence was captured.`,
+    }, normalizedEngine);
   },
 
   input_text_and_search: async (args) => {

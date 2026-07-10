@@ -528,6 +528,39 @@
       });
       if (cards.length >= 40) break;
     }
+    if (cards.length === 0 && /\/search\/shops/i.test(window.location.pathname)) {
+      const shopAnchors = Array.from(document.querySelectorAll('a[href*="/shop/"]'));
+      for (const anchor of shopAnchors) {
+        const href = normalizeUrl(anchor.getAttribute("href") || anchor.href || "");
+        const shopMatch = href.match(/\/shop\/([^/?#]+)/i);
+        if (!shopMatch || processed.has(shopMatch[1])) continue;
+        const container = pickLikelyCardContainer(anchor) || anchor.closest("li, article, div") || anchor;
+        const text = normalizeText(container?.innerText || anchor.innerText || anchor.getAttribute("aria-label") || "", 900);
+        const image = container ? getLargestProductImage(container) : null;
+        const shopName = normalizeText(anchor.getAttribute("title") || anchor.getAttribute("aria-label") || anchor.innerText || shopMatch[1], 120);
+        if (!shopName && !text) continue;
+        processed.add(shopMatch[1]);
+        cards.push({
+          index: cards.length + 1,
+          rank: cards.length + 1,
+          href,
+          shopUrl: href,
+          shopName,
+          title: shopName,
+          price: "",
+          currency: "",
+          rating: extractRatingFromText(text),
+          reviewCount: extractReviewCountFromText(text),
+          badges: /star seller/i.test(text) ? ["star_seller"] : [],
+          shippingText: /free shipping/i.test(text) ? "FREE shipping" : "",
+          text,
+          imageSrc: image?.src || "",
+          imageAlt: image?.alt || "",
+          extractionConfidence: Math.min(100, 45 + (shopName ? 20 : 0) + (image?.src ? 15 : 0) + (extractReviewCountFromText(text) ? 15 : 0)),
+        });
+        if (cards.length >= 30) break;
+      }
+    }
     return cards;
   }
 

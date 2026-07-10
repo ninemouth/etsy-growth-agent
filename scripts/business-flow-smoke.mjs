@@ -9,7 +9,7 @@ import {
   sanitizeFinalReportForDelivery,
   validateReport,
 } from "../modules/agentLoop.js";
-import { hasValidEtsySearchEvidence } from "../modules/toolRegistry.js";
+import { hasValidEtsySearchEvidence, hasValidGoogleTrendsEvidence } from "../modules/toolRegistry.js";
 
 const wait = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 const root = process.cwd();
@@ -45,8 +45,11 @@ assert.match(js, /后台连接中断，已保存断点，可再次运行继续�
 assert.match(toolRegistrySource, /closedTabId/, "browser search should report automatically closed temporary tabs");
 assert.match(toolRegistrySource, /shouldAutoCloseSearchTab[\s\S]*google_trends/, "Google and Trends search tabs should be auto-closed after evidence capture");
 assert.match(toolRegistrySource, /hasValidEtsySearchEvidence/, "Etsy search evidence should have a runtime validity gate");
+assert.match(toolRegistrySource, /buildBrowserSearchAttempts[\s\S]*etsy_market_fallback[\s\S]*google_trends_us_no_date_fallback/, "Etsy and Google Trends browser searches should retry alternate evidence URLs");
+assert.match(toolRegistrySource, /hasValidGoogleTrendsEvidence/, "Google Trends search evidence should have a runtime validity gate");
 assert.match(toolRegistrySource, /\"google_trends\", \"bing\", \"etsy\"/, "Etsy search tabs should be auto-closed after evidence capture unless keepTab is set");
 assert.match(contentSource, /extractEtsySearchCards/, "content script should extract Etsy-specific listing cards");
+assert.match(contentSource, /search\\\/shops[\s\S]*shopUrl/, "content script should extract Etsy shop search cards");
 assert.match(contentSource, /pageHealth/, "content script should report page health for blocked or empty Etsy pages");
 assert.match(js, /<html lang="zh-CN" dir="ltr">/, "PDF print template should declare Chinese language and stable text direction");
 assert.match(js, /charset=UTF-8/, "PDF print template should force UTF-8 content type");
@@ -208,6 +211,51 @@ const validEtsySearchResult = {
 };
 assert.equal(hasValidEtsySearchEvidence(invalidEtsySearchResult), false, "empty or blocked Etsy pages should not count as valid search evidence");
 assert.equal(hasValidEtsySearchEvidence(validEtsySearchResult), true, "Etsy listing cards should count as valid search evidence");
+assert.equal(hasValidEtsySearchEvidence({
+  ok: true,
+  searchUrl: "https://www.etsy.com/search/shops?search_query=wedding%20clutch",
+  pageData: {
+    url: "https://www.etsy.com/search/shops?search_query=wedding%20clutch",
+    title: "Wedding clutch shops - Etsy",
+    visibleText: "Etsy shops results Star Seller 1,245 reviews handmade bridal clutch",
+    productCards: [{
+      href: "https://www.etsy.com/shop/TopBridalStudio",
+      shopUrl: "https://www.etsy.com/shop/TopBridalStudio",
+      shopName: "TopBridalStudio",
+      text: "Star Seller 1,245 reviews handmade bridal clutch",
+    }],
+    productLinks: [],
+    pageHealth: {
+      platform: "etsy",
+      pageType: "etsy_search",
+      visibleTextLength: 67,
+      productEvidenceCount: 1,
+      hasMeaningfulDom: true,
+      isLikelyBlocked: false,
+      blockSignals: [],
+    },
+  },
+}), true, "Etsy shop cards should count as valid search evidence");
+assert.equal(hasValidGoogleTrendsEvidence({
+  ok: true,
+  searchUrl: "https://trends.google.com/trends/explore?date=today%2012-m&geo=US&q=wedding%20clutch",
+  pageData: {
+    url: "https://trends.google.com/trends/explore?date=today%2012-m&geo=US&q=wedding%20clutch",
+    title: "Google Trends",
+    visibleText: "Google Trends Explore Interest over time Related queries wedding clutch bridal purse",
+    pageHealth: { isLikelyBlocked: false },
+  },
+}), true, "readable Google Trends pages should count as trend evidence");
+assert.equal(hasValidGoogleTrendsEvidence({
+  ok: true,
+  searchUrl: "https://trends.google.com/trends/explore?date=today%2012-m&geo=US&q=wedding%20clutch",
+  pageData: {
+    url: "https://trends.google.com/trends/explore?date=today%2012-m&geo=US&q=wedding%20clutch",
+    title: "Google Trends",
+    visibleText: "",
+    pageHealth: { isLikelyBlocked: true },
+  },
+}), false, "blocked or empty Google Trends pages should not count as trend evidence");
 
 const shopOptimizerReportWithEtsyEvidence = {
   type: "final",
