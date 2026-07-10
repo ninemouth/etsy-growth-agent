@@ -16,6 +16,10 @@ const toolRegistrySource = fs.readFileSync(path.join(root, "modules", "toolRegis
 assert.match(agentLoopSource, /type:\s*"tool_heartbeat"/, "long-running tool calls should emit heartbeat progress");
 assert.match(toolRegistrySource, /closedTabId/, "browser search should report automatically closed temporary tabs");
 assert.match(toolRegistrySource, /shouldAutoCloseSearchTab[\s\S]*google_trends/, "Google and Trends search tabs should be auto-closed after evidence capture");
+assert.match(js, /<html lang="zh-CN" dir="ltr">/, "PDF print template should declare Chinese language and stable text direction");
+assert.match(js, /charset=UTF-8/, "PDF print template should force UTF-8 content type");
+assert.match(js, /PingFang SC[\s\S]*Microsoft YaHei[\s\S]*Noto Sans CJK SC/, "PDF print template should include a Chinese font fallback stack");
+assert.doesNotMatch(js, /const bodyHtml = marked\.parse\(rep\.content \|\| ""\);/, "report center PDF export should use sanitized shared markdown rendering");
 
 const jargonReport = {
   type: "final",

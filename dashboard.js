@@ -1737,10 +1737,109 @@ function resultToReportMarkdown(result = {}) {
   return lines.filter(Boolean).join("\n\n") || "```json\n" + JSON.stringify(data, null, 2) + "\n```";
 }
 
+function renderSafeMarkdown(markdown = "") {
+  const source = String(markdown || "");
+  if (window.marked?.parse) {
+    const rendered = window.marked.parse(source);
+    return window.DOMPurify?.sanitize ? window.DOMPurify.sanitize(rendered) : rendered;
+  }
+  return escapeHtml(source).replace(/\n/g, "<br>");
+}
+
+function buildReportPrintHtml(rep, bodyHtml, dateStr) {
+  const safeTitle = escapeHtml(rep?.title || "Etsy Growth Report");
+  const safeTag = escapeHtml(rep?.tag || "AI 决策报告");
+  const safeDate = escapeHtml(rep?.date || dateStr);
+  return `<!DOCTYPE html>
+<html lang="zh-CN" dir="ltr">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${safeTitle}_${dateStr}</title>
+  <style>
+    :root {
+      --bg2: #f1f5f9;
+      --bg3: #f8fafc;
+      --text: #0f172a;
+      --text2: #475569;
+      --border: #cbd5e1;
+      --accent: #6366f1;
+      --accent2: #8b5cf6;
+    }
+
+    @page { size: A4 portrait; margin: 25mm 20mm; }
+    @page landscape-page { size: A4 landscape; margin: 20mm 25mm; }
+
+    html { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif; }
+    body { font-family: inherit; color: #1a202c; line-height: 1.7; background: #fff; margin: 0 !important; padding: 0 !important; text-align: left; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+
+    .print-banner { background: #eff6ff; color: #1d4ed8; padding: 15px; text-align: center; font-weight: bold; border-bottom: 1px solid #bfdbfe; margin-bottom: 20px; }
+    @media print {
+      .print-banner { display: none !important; }
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; margin: 0 !important; padding: 0 !important; }
+    }
+
+    .cover-page { padding-top: 60px; text-align: center !important; page-break-after: always; box-sizing: border-box; }
+    .cover-title { font-size: 2.4em; color: #1e3a8a; font-weight: 800; max-width: 84%; line-height: 1.35; margin: 40px auto 20px; text-align: center !important; }
+    .cover-subtitle { font-size: 1.05em; color: #64748b; margin-top: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; text-align: center !important; }
+    .cover-footer { margin-top: 160px; font-size: 1em; color: #94a3b8; text-align: center !important; }
+    .cover-page p, .cover-page div, .cover-page span { text-align: center !important; }
+
+    .report-container { max-width: 100%; font-size: 11pt; padding: 0 20px; text-align: left !important; word-break: break-word; overflow-wrap: anywhere; }
+    .report-container p, .report-container li, .report-container td, .report-container div { text-align: left !important; }
+
+    h1 { color: #0f172a; font-size: 22pt; border-bottom: 2px solid #1e3a8a; padding-bottom: 10px; margin-top: 30px; margin-bottom: 20px; text-align: center !important; }
+    h2 { color: #1e3a8a; font-size: 16pt; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; margin-top: 30px; margin-bottom: 15px; padding-top: 15px; page-break-after: avoid; text-align: left !important; }
+    h3 { color: #334155; font-size: 14pt; margin-top: 25px; margin-bottom: 10px; padding-top: 12px; page-break-after: avoid; text-align: left !important; }
+    p { margin-bottom: 15px; color: #334155; orphans: 3; widows: 3; }
+    strong { color: #0f172a; }
+
+    .report-section { margin-bottom: 30px; border: none !important; padding: 0 !important; background-color: transparent !important; text-align: left !important; page-break-inside: avoid; }
+    .data-card { page-break-inside: avoid !important; break-inside: avoid !important; margin-bottom: 25px; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; background-color: #f8fafc; text-align: left !important; }
+    .data-card td { padding: 8px 10px !important; font-size: 11px !important; }
+    .data-card td:first-child { width: 140px !important; }
+    .section-divider { page-break-before: always; }
+    .landscape-section { page: landscape-page; width: 100%; text-align: left !important; }
+
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; margin-bottom: 30px; page-break-inside: avoid; font-size: 10pt; text-align: left !important; }
+    th, td { border: 1px solid #cbd5e1 !important; padding: 12px !important; text-align: left !important; vertical-align: top; }
+    th { background-color: #f8fafc !important; color: #0f172a !important; font-weight: 700; text-transform: uppercase; font-size: 9pt; }
+    tr:nth-child(even) { background-color: #f8fafc; }
+
+    code { background: #f1f5f9; color: #b91c1c; padding: 2px 6px; border-radius: 4px; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 0.9em; text-align: left !important; }
+    pre { page-break-inside: avoid; text-align: left !important; }
+    pre code { display: block; background: #0f172a; color: #f8fafc; padding: 15px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word; text-align: left !important; }
+    ul, ol { margin-bottom: 15px; padding-left: 20px; text-align: left !important; }
+    li { margin-bottom: 8px; text-align: left !important; }
+    img { max-width: 100%; height: auto; border-radius: 6px; margin: 15px 0; }
+    a { color: #1e3a8a; text-decoration: none; border-bottom: 1px dashed #cbd5e1; }
+    .empty-text { display: none; }
+  </style>
+</head>
+<body>
+  <div class="print-banner">正在生成原生数字版 PDF。请在弹出的对话框中选择“另存为 PDF”。如未弹出，请按 Ctrl+P 或 Cmd+P。</div>
+  <div class="cover-page">
+    <div class="cover-subtitle">Etsy Growth Agent</div>
+    <div class="cover-title">${safeTitle}</div>
+    <div class="cover-subtitle">${safeTag}</div>
+    <div class="cover-footer">
+      <p>Report Date: ${safeDate}</p>
+      <p>UTF-8 Native Print Report</p>
+    </div>
+  </div>
+  <div class="report-container">
+    <h1>${safeTitle}</h1>
+    <p style="color:#64748b;font-size:12px;margin-bottom:20px;">${safeTag} · ${safeDate}</p>
+    ${bodyHtml}
+  </div>
+</body>
+</html>`;
+}
+
 function renderWorkflowReportHtml(report) {
   const markdown = workflowReportToMarkdown(report);
-  if (window.marked?.parse) return window.marked.parse(markdown);
-  return `<pre>${escapeHtml(markdown)}</pre>`;
+  return renderSafeMarkdown(markdown);
 }
 
 function openWorkflowPip({ rootId = "", taskId = "" } = {}) {
@@ -3235,7 +3334,7 @@ function renderReportsList(monitorReports = [], savedResults = []) {
         </div>
       </div>
       <div class="md-report">
-        ${marked.parse(rep.content)}
+        ${renderSafeMarkdown(rep.content)}
       </div>
     `;
     viewer.querySelector(".report-copy-current")?.addEventListener("click", () => copyReportContent(rep));
@@ -3311,33 +3410,8 @@ async function deleteReportEntry(rep) {
 function downloadReportPdf(rep) {
   if (!rep) return;
   const dateStr = new Date().toISOString().split("T")[0];
-  const bodyHtml = marked.parse(rep.content || "");
-  const printHtml = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>${escapeHtml(rep.title)}_${dateStr}</title>
-  <style>
-    @page { size: A4 portrait; margin: 20mm; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, "Microsoft YaHei", sans-serif; color:#111827; line-height:1.7; }
-    h1 { font-size: 24px; border-bottom: 2px solid #2563eb; padding-bottom: 10px; }
-    h2 { font-size: 18px; color:#1d4ed8; margin-top: 26px; }
-    h3 { font-size: 15px; color:#334155; margin-top: 20px; }
-    table { width:100%; border-collapse: collapse; margin:16px 0; font-size:12px; }
-    th, td { border:1px solid #cbd5e1; padding:8px; text-align:left; vertical-align:top; }
-    pre { white-space:pre-wrap; background:#0f172a; color:#f8fafc; padding:12px; border-radius:6px; }
-    .meta { color:#64748b; font-size:12px; margin-bottom:20px; }
-    .print-banner { background:#eff6ff; color:#1d4ed8; padding:10px; text-align:center; margin-bottom:18px; }
-    @media print { .print-banner { display:none; } }
-  </style>
-</head>
-<body>
-  <div class="print-banner">请选择“另存为 PDF”。如未弹出，请按 Ctrl+P 或 Cmd+P。</div>
-  <h1>${escapeHtml(rep.title)}</h1>
-  <div class="meta">${escapeHtml(rep.tag)} · ${escapeHtml(rep.date)}</div>
-  ${bodyHtml}
-</body>
-</html>`;
+  const bodyHtml = renderSafeMarkdown(rep.content || "");
+  const printHtml = buildReportPrintHtml(rep, bodyHtml, dateStr);
   chrome.storage.local.set({ printHtml }, () => {
     window.open(chrome.runtime.getURL("print.html"), "_blank");
   });
