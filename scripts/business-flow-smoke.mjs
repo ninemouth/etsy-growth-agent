@@ -3,7 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { JSDOM } from "jsdom";
-import { sanitizeFinalReportForDelivery, validateReport } from "../modules/agentLoop.js";
+import {
+  autoRepairFinalReportForDelivery,
+  extractJSONBlock,
+  sanitizeFinalReportForDelivery,
+  validateReport,
+} from "../modules/agentLoop.js";
 import { hasValidEtsySearchEvidence } from "../modules/toolRegistry.js";
 
 const wait = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -60,6 +65,22 @@ assert.match(agentLoopSource, /stage_fit/, "critic should require shop optimizer
 assert.match(agentLoopSource, /buyer_scenario/, "critic should require shop optimizer plans to name the buyer scenario");
 assert.match(sidepanelSource, /继续\|继续推进\|恢复\|resume\|continue/, "sidepanel should treat a plain continue message as a session resume request");
 
+const proseThenBareFinalJson = `The critic agent has identified several issues with my report.
+Let me create a corrected report.{
+  "type": "final",
+  "output": {
+    "overview": "Etsy 店铺优化诊断",
+    "analysis": "已经完成页面、搜索与竞品对标分析。",
+    "summary": "优先修复首图、标题和信任资产。",
+    "data": []
+  }
+}`;
+assert.equal(
+  extractJSONBlock(proseThenBareFinalJson)?.type,
+  "final",
+  "parser should extract a bare final JSON object after critic prose instead of returning text"
+);
+
 const jargonReport = {
   type: "final",
   output: {
@@ -98,6 +119,44 @@ assert.doesNotMatch(
 );
 assert.equal(sanitizedJargonReport.parsed.output.data[0].source_ref, "read_current_page#1", "technical source refs should remain stable for evidence tracing");
 assert.deepEqual(validateReport(sanitizedJargonReport.parsed, "", "skills/etsy_product_opportunity_explorer.skill.md"), [], "sanitized final report should pass report validation without critic redo");
+
+const apiAssumptionReport = {
+  type: "final",
+  output: {
+    overview: "Etsy 商品机会报告，目标销售市场为欧美礼品市场，目标客群为美国/欧洲节日礼品与个性化定制买家。",
+    analysis: "面向欧美礼品市场买家，在未绑定 Etsy API 的情况下，订单、流量与履约判断必须降级为待验证假设。",
+    summary: "先用页面和搜索证据做运营假设，授权后再用 API 复核。",
+    data: [
+      {
+        title: "API 数据复核与履约节奏假设",
+        evidence: "当前页面文本和搜索证据只能支持方向性判断，不能证明真实订单、Sessions 或履约成本。",
+        evidence_ledger: [
+          {
+            source_type: "page_dom",
+            source_ref: "当前 Etsy 页面",
+            observed_value: "页面可见商品标题和基础定位信息。",
+            used_for: "判断基础 Listing 优化方向。",
+            confidence: "medium",
+            limitation: "页面文本不能替代 Etsy API 的 Sessions、订单或转化数据。",
+          },
+        ],
+        recommendation: "待授权 Etsy API 后复核 Sessions、订单、履约成本和转化。",
+      },
+    ],
+  },
+};
+const basicEtsyPageContext = {
+  url: "https://www.etsy.com/listing/mock",
+  title: "Mock Etsy Listing",
+  visibleText: "Mock Etsy listing with meaningful title description category materials and seller details for page evidence.",
+  pageHealth: { hasMeaningfulDom: true, isLikelyBlocked: false },
+};
+const repairedApiAssumptionReport = autoRepairFinalReportForDelivery(apiAssumptionReport, {
+  skillId: "skills/etsy_product_opportunity_explorer.skill.md",
+  toolHistory: [],
+  pageContext: basicEtsyPageContext,
+});
+assert.equal(repairedApiAssumptionReport.changed, true, "API/order claims without API evidence should be downgraded automatically");
 
 const invalidEtsySearchResult = {
   ok: true,
@@ -201,6 +260,28 @@ assert.deepEqual(
   ], meaningfulPageContext),
   [],
   "shop optimizer critic should accept valid Etsy listing/search evidence"
+);
+const shopOptimizerReportWithApiClaims = globalThis.structuredClone(shopOptimizerReportWithEtsyEvidence);
+shopOptimizerReportWithApiClaims.output.data[0].recommendation = "待 Etsy API 复核 Sessions、订单、转化与 Etsy 自发货履约节奏后再扩大广告。";
+const validShopEvidenceHistory = [
+  { tool: "search_in_browser", arguments: { engine: "etsy", query: "wedding clutch" }, result: validEtsySearchResult },
+  googleSearchHistory,
+];
+assert.notDeepEqual(
+  validateReport(shopOptimizerReportWithApiClaims, "", "skills/etsy_global_shop_optimizer.skill.md", validShopEvidenceHistory, meaningfulPageContext),
+  [],
+  "shop optimizer reports with API/order/fulfillment claims should fail before assumption downgrade"
+);
+const repairedShopOptimizerApiClaims = autoRepairFinalReportForDelivery(shopOptimizerReportWithApiClaims, {
+  skillId: "skills/etsy_global_shop_optimizer.skill.md",
+  toolHistory: validShopEvidenceHistory,
+  pageContext: meaningfulPageContext,
+});
+assert.equal(repairedShopOptimizerApiClaims.changed, true, "shop optimizer API/order/fulfillment claims should be downgraded automatically when API evidence is absent");
+assert.deepEqual(
+  validateReport(repairedShopOptimizerApiClaims.parsed, "", "skills/etsy_global_shop_optimizer.skill.md", validShopEvidenceHistory, meaningfulPageContext),
+  [],
+  "auto-repaired shop optimizer API assumptions should pass validation without critic redo"
 );
 
 const dom = new JSDOM(html, {

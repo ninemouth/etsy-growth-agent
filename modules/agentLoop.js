@@ -457,6 +457,83 @@ export function sanitizeFinalReportForDelivery(parsed) {
   };
 }
 
+const ETSY_API_ASSUMPTION_RE = /API|Seller API|etsy_api|Sessions?|session|流量|会话|访问量|订单|交易|扣费|履约成本|第三方海外仓|Etsy 自发货|conversion|traffic|orders?|fulfillment/i;
+
+function cloneReport(parsed) {
+  if (typeof globalThis.structuredClone === "function") return globalThis.structuredClone(parsed);
+  return JSON.parse(JSON.stringify(parsed));
+}
+
+function ensureArrayField(object, key) {
+  if (!object || typeof object !== "object") return [];
+  if (!Array.isArray(object[key])) object[key] = [];
+  return object[key];
+}
+
+function buildAssumptionLedgerEntry({ sourceRef, observedValue, usedFor, limitation }) {
+  return {
+    source_type: "assumption",
+    source_ref: sourceRef,
+    observed_value: observedValue,
+    used_for: usedFor,
+    confidence: "low",
+    limitation,
+  };
+}
+
+export function autoRepairFinalReportForDelivery(parsed, {
+  skillId = "",
+  toolHistory = [],
+  pageContext = {},
+} = {}) {
+  if (!parsed || parsed.type !== "final" || !parsed.output || !Array.isArray(parsed.output.data)) {
+    return { parsed, changed: false, reasons: [] };
+  }
+
+  const repaired = cloneReport(parsed);
+  const reasons = [];
+  const hasEtsyApiEvidence = hasEvidenceSource(toolHistory, pageContext, "etsy_api");
+
+  repaired.output.data.forEach((item, idx) => {
+    if (!item || typeof item !== "object") return;
+    const ledger = ensureArrayField(item, "evidence_ledger");
+    let itemChanged = false;
+
+    ledger.forEach((entry) => {
+      if (!entry || typeof entry !== "object") return;
+      const sourceType = String(entry.source_type || "").toLowerCase();
+      if (sourceType !== "etsy_api" || hasEtsyApiEvidence) return;
+      entry.source_type = "assumption";
+      entry.confidence = entry.confidence || "low";
+      entry.limitation = entry.limitation
+        ? `${entry.limitation}；本轮未取得 Etsy 个人访问 API 的真实店铺流量/订单/履约数据，因此该 API 相关结论仅作为待验证假设。`
+        : "本轮未取得 Etsy 个人访问 API 的真实店铺流量/订单/履约数据，因此该 API 相关结论仅作为待验证假设。";
+      itemChanged = true;
+    });
+
+    const itemText = JSON.stringify(item);
+    if (isEtsyBusinessSkill(skillId) && ETSY_API_ASSUMPTION_RE.test(itemText) && !hasEtsyApiEvidence && !hasAssumptionFallback(ledger, ETSY_API_ASSUMPTION_RE)) {
+      ledger.push(buildAssumptionLedgerEntry({
+        sourceRef: "Etsy personal API access not available in this run",
+        observedValue: "本轮未取得 Etsy 个人访问 API 的真实 Sessions、订单、转化或履约成本数据。",
+        usedFor: "将流量、订单、转化、履约或海外仓相关判断降级为待验证假设，避免把模型推断写成已验证事实。",
+        limitation: "需要店主授权并同步 Etsy API 后，才能用真实 API 数据复核该项建议；当前不得作为已验证运营数据。",
+      }));
+      itemChanged = true;
+    }
+
+    if (itemChanged) {
+      reasons.push(`第 ${idx + 1} 项 API/订单/履约类证据已降级为待验证假设`);
+    }
+  });
+
+  return {
+    parsed: repaired,
+    changed: reasons.length > 0 || JSON.stringify(repaired.output.data) !== JSON.stringify(parsed.output.data),
+    reasons,
+  };
+}
+
 export function validateReport(parsed, userInstruction, skillId, toolHistory = [], pageContext = {}) {
   const errors = [];
   if (!parsed || parsed.type !== "final" || !parsed.output) {
@@ -1036,6 +1113,15 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
           message: "已自动将报告中的内部技术术语改写为业务语言，避免不必要的整稿重做。",
         });
       }
+      const autoRepairedFinal = autoRepairFinalReportForDelivery(parsed, { skillId, toolHistory, pageContext });
+      if (autoRepairedFinal.changed) {
+        parsed = autoRepairedFinal.parsed;
+        sendProgress({
+          type: "auto_fix",
+          step,
+          message: `已自动修正非质量类证据账本问题：${autoRepairedFinal.reasons.join("；")}。`,
+        });
+      }
       const validationErrors = validateReport(parsed, userInstruction, skillId, toolHistory, pageContext);
       if (validationErrors.length > 0) {
         const reflectionsCount = ctxForPrompt.__reflectionsCount || 0;
@@ -1389,7 +1475,48 @@ function tryParseJSON(str) {
   }
 }
 
-function extractJSONBlock(text) {
+function extractBalancedJSONCandidates(text = "") {
+  const candidates = [];
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") {
+      if (depth === 0) start = i;
+      depth++;
+      continue;
+    }
+    if (char === "}") {
+      if (depth > 0) depth--;
+      if (depth === 0 && start >= 0) {
+        candidates.push(text.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+
+  return candidates;
+}
+
+export function extractJSONBlock(text) {
   if (!text || typeof text !== "string") return null;
 
   // 1. Scan code blocks (from last to first to match the final output block after reflections)
@@ -1409,12 +1536,11 @@ function extractJSONBlock(text) {
     } catch (_) {}
   }
 
-  // 2. Fallback: Search for outer curly braces
-  const braceRegex = /(\{[\s\S]*\})/g;
-  const braceMatches = [];
-  while ((match = braceRegex.exec(text)) !== null) {
-    braceMatches.push(match[1].trim());
-  }
+  // 2. Fallback: scan balanced JSON objects in prose. This handles
+  // "critic notes ... { type: final ... }" without returning the prose as text.
+  const braceMatches = extractBalancedJSONCandidates(text)
+    .map((candidate) => candidate.trim())
+    .filter((candidate) => /"type"\s*:\s*"final"|"output"\s*:|"tool"\s*:/.test(candidate));
   for (let i = braceMatches.length - 1; i >= 0; i--) {
     try {
       const parsed = tryParseJSON(braceMatches[i]);
