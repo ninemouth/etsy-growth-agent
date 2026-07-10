@@ -342,6 +342,36 @@ function hasLedgerTypeTopic(ledger = [], sourceTypes = [], topicRegex) {
   });
 }
 
+function hasCompetitorVisualLedger(ledger = []) {
+  return ledger.some((entry) => {
+    if (String(entry?.source_type || "").toLowerCase() !== "screenshot_visual") return false;
+    const text = [
+      entry?.source_ref,
+      entry?.observed_value,
+      entry?.used_for,
+      entry?.limitation,
+    ].filter(Boolean).join(" ");
+    return /竞品|头部|高排名|高销|对标|benchmark|competitor|top shop|best[-\s]?seller|listing|shop|店铺详情|商品详情/i.test(text);
+  });
+}
+
+function hasOpenedEtsyCompetitorPage(toolHistory = [], currentUrl = "") {
+  const current = String(currentUrl || "");
+  return toolHistory.some((entry) => {
+    if (!["open_new_tab", "navigate_to"].includes(entry?.tool)) return false;
+    const urls = [
+      entry.arguments?.url,
+      entry.result?.url,
+      entry.result?.finalUrl,
+      entry.result?.pageData?.url,
+    ].filter(Boolean).map(String);
+    return urls.some((url) =>
+      /etsy\.com\/(?:shop|listing)\//i.test(url) &&
+      (!current || url !== current)
+    );
+  });
+}
+
 function hasAssumptionFallback(ledger = [], topicRegex) {
   return ledger.some((entry) => {
     const sourceType = String(entry?.source_type || "").toLowerCase();
@@ -650,6 +680,12 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
     }
     if (!hasLedgerType(allLedgerEntries, "screenshot_visual")) {
       errors.push("店铺优化报告缺少视觉截图证据。必须结合当前店铺截图或竞品截图判断调性、格调、首图卖点、视觉统一性，不能只看文本/API。");
+    }
+    if (!hasOpenedEtsyCompetitorPage(toolHistory, pageContext?.url)) {
+      errors.push("店铺优化报告缺少竞品店铺/商品详情页打开取证。不能只看 Etsy 搜索结果页；必须打开 2-3 个同类高排名店铺或商品详情页，读取页面并结合截图分析其首图、调性、标题、评价门槛和履约承诺。");
+    }
+    if (!hasCompetitorVisualLedger(allLedgerEntries)) {
+      errors.push("店铺优化报告缺少竞品店铺/商品详情页截图视觉证据。当前店铺截图不能替代竞品截图；必须在 evidence_ledger 的 screenshot_visual 中写明竞品店铺/商品详情截图观察到的首图卖点、视觉调性、包装/场景图或画廊结构。");
     }
     if (!hasLedgerType(allLedgerEntries, "etsy_search")) {
       errors.push("店铺优化报告缺少必须完成的 Etsy 站内搜索/热卖榜/高排名竞品店铺对标证据。该项不能降级为 assumption，请调用 search_in_browser(engine=etsy) 并学习同类高排名店铺/商品页面。");

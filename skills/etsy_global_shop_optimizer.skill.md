@@ -18,10 +18,11 @@
 1. 先读取当前 Etsy 店铺/商品页上下文：调用 `read_current_page`，结合截图判断页面类型、店铺视觉、商品结构、标题/描述/评论等真实信息。
 2. 如果用户已绑定 Etsy 个人访问 API，优先调用 `etsy_api_get_store_snapshot` 一次性获取店铺商品、流量与 发货资料 履约订单快照；必要时再调用 `etsy_api_get_products`、`etsy_api_get_analytics`、`etsy_api_get_transactions` 兼容工具补细节，但不得把已失效的 finance transaction 接口当作默认证据来源。
 3. 基于页面文本/API 先抽取店铺平台属性、主营类目、目标人群、价格带、视觉调性/格调、标题与 attributes 填写状态；**不能只凭截图做店铺诊断**。
-4. 必须调用 `search_in_browser` 且 `engine="etsy"`，围绕核心类目词访问 Etsy 站内搜索、market 或热卖页面，提取同类高排名商品/店铺的价格、评价门槛、首图卖点、标题词、店铺定位与履约承诺。建议先用 `searchType="listing"` 获取高排名 listing，再用 `searchType="shop"` 或打开 listing 对应店铺页学习 2-3 个同类店铺。图中这类“Etsy 站内搜索/热卖榜未直接访问”不允许作为最终交付。
-5. 必须调用 `search_in_browser` 且 `engine="google_us"` 或 `engine="google_trends"`，验证欧美站外需求表达、Google Trends US 近 12 个月方向或相关 Google 结果。图中这类“Google Trends US 未直接访问，来自行业报告摘要”不允许作为最终交付。
-6. 如果报告涉及配送/物流/时效/工作日，必须额外调用 `search_in_browser` 且 `engine="google_us"`，用 “Etsy international shipping delivery time + 发货地/目的地/品类/承运商” 等关键词做实时物流研究。国际物流因地区、发货地、承运商、季节和清关差异很大，禁止凭模型常识写“香港发货 7-12 工作日”这类确定承诺；没有实时证据时只能写成待确认区间和人工确认点。
-7. 在没有完成店铺健康度评级前，严禁把工作流切到 1688/采购/货源推荐。
+4. 必须调用 `search_in_browser` 且 `engine="etsy"`，围绕核心类目词访问 Etsy 站内搜索、market 或热卖页面，提取同类高排名商品/店铺的价格、评价门槛、首图卖点、标题词、店铺定位与履约承诺。建议先用 `searchType="listing"` 获取高排名 listing，再用 `searchType="shop"` 筛出店铺。
+5. 必须在 Etsy 搜索后用 `open_new_tab` 打开 2-3 个同类高排名竞品店铺或商品详情页，读取页面并结合打开后的实时截图做视觉分析；`evidence_ledger` 中必须至少有一条 `screenshot_visual` 明确写明“竞品店铺/商品详情截图”的首图卖点、视觉调性、包装/场景图或画廊结构。只看搜索结果页截图、Google 摘要或当前自营店铺截图，不得声称“已完成头部店铺反向工程”。图中这类“Etsy 站内搜索/热卖榜未直接访问”不允许作为最终交付。
+6. 必须调用 `search_in_browser` 且 `engine="google_us"` 或 `engine="google_trends"`，验证欧美站外需求表达、Google Trends US 近 12 个月方向或相关 Google 结果。图中这类“Google Trends US 未直接访问，来自行业报告摘要”不允许作为最终交付。
+7. 如果报告涉及配送/物流/时效/工作日，必须额外调用 `search_in_browser` 且 `engine="google_us"`，用 “Etsy international shipping delivery time + 发货地/目的地/品类/承运商” 等关键词做实时物流研究。国际物流因地区、发货地、承运商、季节和清关差异很大，禁止凭模型常识写“香港发货 7-12 工作日”这类确定承诺；没有实时证据时只能写成待确认区间和人工确认点。
+8. 在没有完成店铺健康度评级前，严禁把工作流切到 1688/采购/货源推荐。
 
 ### 严禁行为
 - 严禁在报告开头输出“货源 #1 / 推荐对齐货源 / 采购直达链接”。
@@ -60,7 +61,8 @@
 
 ### 竞品学习必须从“店铺”上升到“方法”
 - 至少对标 2-3 个同类高排名商品或店铺，并提炼方法而不是只罗列名字：首图是否有文字、评价门槛、价格带、个性化选项、包装承诺、标题前 60 字、店铺垂直度、促销标签、发货地/预计送达表达。
-- 如果只看到 Etsy 搜索结果页，没有打开/读取竞品店铺或商品详情页，不得声称“已完成头部店铺反向工程”；只能写“已完成搜索结果初筛，仍需打开竞品详情页确认”。`search_in_browser(engine="etsy", searchType="shop")` 可用于店铺搜索，但仍必须确认结果页返回了真实 listing/shop 文本、价格/评价/店铺链接或可见卡片，不能把空白页/阻断页当成证据。
+- 如果只看到 Etsy 搜索结果页，没有打开/读取竞品店铺或商品详情页并取得竞品截图，不得声称“已完成头部店铺反向工程”；只能写“已完成搜索结果初筛，仍需打开竞品详情页确认”。`search_in_browser(engine="etsy", searchType="shop")` 可用于店铺搜索，但仍必须确认结果页返回了真实 listing/shop 文本、价格/评价/店铺链接或可见卡片，不能把空白页/阻断页当成证据。
+- 竞品视觉学习必须写成可审计证据：`source_type="screenshot_visual"`，`source_ref` 写明竞品店铺/商品 URL 或截图区域，`observed_value` 写具体看到的首图文案、场景图、模特手持、包装图、画廊结构、风格统一度，不得用“竞品视觉较好”这类空话。
 
 ---
 
@@ -196,7 +198,7 @@
 
 - `source_type` 允许值：
     - `page_dom`: 当前页面真实文本、商品标题、价格、评论数、店铺类目等。
-    - `screenshot_visual`: 当前截图中的视觉陈列、主图质量、首屏信息密度、英文卖点图等。
+    - `screenshot_visual`: 当前店铺截图或竞品店铺/商品详情页截图中的视觉陈列、主图质量、首屏信息密度、英文卖点图、画廊结构、包装/场景图等。店铺优化报告必须至少包含一条明确来自竞品截图的 `screenshot_visual`。
   - `etsy_api`: `etsy_api_get_store_snapshot` / `etsy_api_get_products` / `etsy_api_get_analytics` / `etsy_api_get_transactions` 兼容工具返回的自营 Etsy 个人访问 API 值，其中订单应来自 发货资料 posting，不能声称来自已失效的 finance transaction 默认接口。
   - `etsy_search`: Etsy 站内搜索或榜单页面返回值。
   - `google_search`: Google Search US 搜索返回值。
