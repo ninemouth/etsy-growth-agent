@@ -1,0 +1,77 @@
+{
+  "extName": {
+    "message": "Etsy Growth Agent",
+    "description": "Chrome extension name"
+  },
+  "extDescription": {
+    "message": "专为 Etsy 卖家打造的 AI 运营与选品增长引擎。支持多维选品、竞品对比、1688 寻源套利计算、英文 SEO Listing 生成与多阶段运营指标追踪。",
+    "description": "Chrome extension description"
+  },
+  "actionTitle": {
+    "message": "打开 Etsy Growth Agent",
+    "description": "Toolbar action title"
+  },
+  "chooseSkill": {
+    "message": "选择 Skill"
+  },
+  "userInstruction": {
+    "message": "用户指令"
+  },
+  "optional": {
+    "message": "可选"
+  },
+  "advancedTips": {
+    "message": "高级玩法"
+  },
+  "advancedTipsTitle": {
+    "message": "指令高级玩法"
+  },
+  "runSkill": {
+    "message": "执行 Skill"
+  },
+  "progressTitle": {
+    "message": "Agent 运行中"
+  },
+  "cancel": {
+    "message": "取消"
+  },
+  "resultTitle": {
+    "message": "执行结果"
+  },
+  "report": {
+    "message": "报告"
+  },
+  "dataView": {
+    "message": "数据视图"
+  },
+  "downloadPdf": {
+    "message": "下载报告 (PDF)"
+  },
+  "exportMarkdown": {
+    "message": "导出 Markdown"
+  },
+  "exportExcel": {
+    "message": "导出 Excel"
+  },
+  "copy": {
+    "message": "复制"
+  },
+  "save": {
+    "message": "保存"
+  },
+  "clear": {
+    "message": "清除"
+  },
+  "settingsTitle": {
+    "message": "LLM 配置"
+  },
+  "libraryTitle": {
+    "message": "结果库"
+  },
+  "exportJson": {
+    "message": "导出 JSON"
+  },
+  "back": {
+    "message": "返回"
+  }
+}

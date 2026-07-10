@@ -1,0 +1,35 @@
+{
+  "name": "etsy-growth-agent",
+  "version": "1.0.0",
+  "description": "An Etsy-focused AI Chrome Extension for shop optimization, product discovery, competitor analysis, sourcing, and SEO listing generation.",
+  "main": "background.js",
+  "type": "module",
+  "scripts": {
+    "lint": "eslint .",
+    "test:security": "node scripts/security-smoke.mjs",
+    "test:business": "node scripts/business-flow-smoke.mjs",
+    "test:sourcing": "node scripts/sourcing-workflow-guard-smoke.mjs",
+    "format": "prettier --write ."
+  },
+  "keywords": [
+    "chrome-extension",
+    "ai-agent",
+    "llm",
+    "e-commerce",
+    "dropshipping",
+    "selection",
+    "etsy",
+    "etsy-shop",
+    "etsy-seller"
+  ],
+  "author": "Etsy Growth Agent Contributors",
+  "license": "MIT",
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "jsdom": "^26.1.0",
+    "prettier": "^3.2.5"
+  },
+  "dependencies": {
+    "dompurify": "^3.4.11"
+  }
+}

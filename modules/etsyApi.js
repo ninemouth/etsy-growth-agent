@@ -1,0 +1,393 @@
+// modules/etsyApi.js - Etsy Open API compatibility adapter
+
+const ETSY_API_BASE = "https://openapi.etsy.com/v3/application";
+const ETSY_MIN_REQUEST_INTERVAL_MS = 1100;
+const ETSY_RATE_LIMIT_RETRY_MS = 1600;
+
+let lastEtsyRequestAt = 0;
+let etsyRequestQueue = Promise.resolve();
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function toDateString(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function toUnixDayStart(dateString) {
+  return Math.floor(new Date(`${dateString}T00:00:00Z`).getTime() / 1000);
+}
+
+function toUnixDayEnd(dateString) {
+  return Math.floor(new Date(`${dateString}T23:59:59Z`).getTime() / 1000);
+}
+
+export function getDefaultEtsyDateRange(days = 14) {
+  const to = new Date();
+  const from = new Date(to);
+  from.setDate(from.getDate() - Math.max(1, days));
+  return {
+    dateFrom: toDateString(from),
+    dateTo: toDateString(to),
+  };
+}
+
+export async function getEtsySettings(explicitShopId = null) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(
+      [
+        "etsyShops",
+        "activeShopId",
+        "etsyApiKey",
+        "etsyOAuthToken",
+        "etsyShopId",
+        "etsyWarehouseType",
+      ],
+      (data) => {
+        const shops = data.etsyShops || [];
+        const activeId = explicitShopId || data.activeShopId;
+        let activeShop = shops.find((shop) => shop.id === activeId || shop.shopId === activeId);
+        if (!activeShop && shops.length > 0) activeShop = shops.find((shop) => shop.isDefault) || shops[0];
+
+        resolve({
+          apiKey: activeShop?.apiKey || data.etsyApiKey || "",
+          oauthToken: activeShop?.oauthToken || data.etsyOAuthToken || "",
+          shopId: activeShop?.shopId || activeShop?.id || data.etsyShopId || "",
+          shopName: activeShop?.name || "Etsy Shop",
+          warehouseType: activeShop?.warehouseType || data.etsyWarehouseType || "Etsy seller-fulfilled",
+        });
+      }
+    );
+  });
+}
+
+export async function saveEtsySettings(apiKey, oauthToken = "", shopId = "", shopName = "Etsy Shop") {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(["etsyShops"], (data) => {
+      const shops = data.etsyShops || [];
+      const newShop = {
+        id: shopId || `shop_${Date.now()}`,
+        shopId,
+        name: shopName,
+        apiKey,
+        oauthToken,
+        warehouseType: "Etsy seller-fulfilled",
+        isDefault: shops.length === 0,
+      };
+      shops.push(newShop);
+      chrome.storage.local.set(
+        {
+          etsyShops: shops,
+          activeShopId: newShop.id,
+          etsyApiKey: apiKey,
+          etsyOAuthToken: oauthToken,
+          etsyShopId: shopId,
+        },
+        () => resolve(true)
+      );
+    });
+  });
+}
+
+async function waitForEtsyRateSlot() {
+  const elapsed = Date.now() - lastEtsyRequestAt;
+  if (elapsed < ETSY_MIN_REQUEST_INTERVAL_MS) {
+    await sleep(ETSY_MIN_REQUEST_INTERVAL_MS - elapsed);
+  }
+  lastEtsyRequestAt = Date.now();
+}
+
+function parseEtsyError(responseText) {
+  try {
+    const parsed = JSON.parse(responseText);
+    return parsed.error || parsed.message || JSON.stringify(parsed);
+  } catch (_) {
+    return responseText || "Empty error response";
+  }
+}
+
+function buildQuery(params = {}) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    query.set(key, String(value));
+  });
+  const text = query.toString();
+  return text ? `?${text}` : "";
+}
+
+async function makeQueuedEtsyRequest(endpoint, { query = {}, method = "GET", body = null, requireOAuth = false } = {}, attempt = 0) {
+  const { apiKey, oauthToken } = await getEtsySettings();
+  if (!apiKey) {
+    throw new Error("未配置 Etsy API Key，请在店铺配置中填写 Etsy Open API Key。");
+  }
+  if (requireOAuth && !oauthToken) {
+    throw new Error("该 Etsy 数据需要 OAuth Token 授权；请在店铺配置中补充 OAuth Token。");
+  }
+
+  await waitForEtsyRateSlot();
+  const url = `${ETSY_API_BASE}${endpoint}${buildQuery(query)}`;
+  const headers = {
+    "x-api-key": apiKey,
+    "Content-Type": "application/json",
+  };
+  if (oauthToken) headers.Authorization = `Bearer ${oauthToken}`;
+
+  const response = await fetch(url, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : null,
+  });
+
+  const responseText = await response.text();
+  if (!response.ok) {
+    const errorText = parseEtsyError(responseText);
+    if (response.status === 429 && attempt < 2) {
+      const retryDelay = ETSY_RATE_LIMIT_RETRY_MS * (attempt + 1);
+      console.warn(`[Etsy API Rate Limit] ${endpoint} hit 429, retrying in ${retryDelay}ms...`);
+      await sleep(retryDelay);
+      return makeQueuedEtsyRequest(endpoint, { query, method, body, requireOAuth }, attempt + 1);
+    }
+    throw new Error(`Etsy API 请求失败 (${response.status}): ${errorText}`);
+  }
+
+  return responseText ? JSON.parse(responseText) : {};
+}
+
+async function makeEtsyRequest(endpoint, options = {}) {
+  const run = () => makeQueuedEtsyRequest(endpoint, options);
+  const queued = etsyRequestQueue.then(run, run);
+  etsyRequestQueue = queued.catch(() => {});
+  return queued;
+}
+
+function normalizeListing(listing = {}) {
+  const image = listing.images?.[0]?.url_fullxfull || listing.images?.[0]?.url_570xN || "";
+  return {
+    product_id: listing.listing_id,
+    offer_id: listing.sku?.[0] || String(listing.listing_id || ""),
+    sku: listing.sku?.[0] || String(listing.listing_id || ""),
+    title: listing.title || "Etsy Listing",
+    name: listing.title || "Etsy Listing",
+    visibility: listing.state || "active",
+    price: listing.price?.amount ? Number(listing.price.amount) / Number(listing.price.divisor || 100) : Number(listing.price || 0),
+    currency_code: listing.price?.currency_code || listing.currency_code || "USD",
+    quantity: Number(listing.quantity || 0),
+    url: listing.url || "",
+    image,
+    raw: listing,
+  };
+}
+
+function normalizeReceipt(receipt = {}) {
+  const firstTransaction = receipt.transactions?.[0] || {};
+  const orderTotal = receipt.grandtotal?.amount
+    ? Number(receipt.grandtotal.amount) / Number(receipt.grandtotal.divisor || 100)
+    : Number(receipt.total_price || receipt.order_total || 0);
+  return {
+    orderId: receipt.receipt_id || receipt.order_id || "--",
+    sku: firstTransaction.sku || String(firstTransaction.listing_id || "--"),
+    cat: firstTransaction.title || receipt.name || "Etsy Order",
+    qty: Number(firstTransaction.quantity || receipt.transactions?.length || 1),
+    price: Number.isFinite(orderTotal) ? orderTotal : 0,
+    logisticsType: receipt.shipping_carrier || "Etsy seller-fulfilled",
+    status: receipt.status || (receipt.was_shipped ? "shipped" : "open"),
+    countdown: receipt.expected_ship_date
+      ? new Date(Number(receipt.expected_ship_date) * 1000).toLocaleString()
+      : "--",
+    raw: receipt,
+  };
+}
+
+export async function etsyGetProductList(limit = 100, offset = 0) {
+  const { shopId } = await getEtsySettings();
+  if (!shopId) {
+    throw new Error("未配置 Etsy Shop ID，无法同步店铺 listings。");
+  }
+
+  const res = await makeEtsyRequest(`/shops/${encodeURIComponent(shopId)}/listings/active`, {
+    query: {
+      limit: Math.min(Number(limit || 100), 100),
+      offset: Number(offset || 0),
+      includes: "Images",
+    },
+  });
+  const listings = res.results || [];
+  return {
+    items: listings.map(normalizeListing),
+    total: Number(res.count || listings.length),
+    last_id: String(Number(offset || 0) + listings.length),
+    raw: res,
+  };
+}
+
+export async function etsyGetProductInfo(productIds = [], skus = []) {
+  const ids = Array.isArray(productIds) ? productIds.filter(Boolean) : [];
+  if (!ids.length && Array.isArray(skus) && skus.length) {
+    const list = await etsyGetProductList(100, 0);
+    return {
+      items: list.items.filter((item) => skus.includes(item.sku)),
+      raw: list.raw,
+    };
+  }
+  if (!ids.length) return { items: [] };
+
+  const settled = await Promise.allSettled(
+    ids.slice(0, 20).map((id) =>
+      makeEtsyRequest(`/listings/${encodeURIComponent(id)}`, {
+        query: { includes: "Images" },
+      })
+    )
+  );
+
+  return {
+    items: settled
+      .filter((result) => result.status === "fulfilled")
+      .map((result) => normalizeListing(result.value)),
+    failures: settled
+      .filter((result) => result.status === "rejected")
+      .map((result) => result.reason?.message || String(result.reason)),
+  };
+}
+
+export async function etsyGetAnalyticsData(dateFrom, dateTo, dimension = ["sku"], metrics = ["sessions", "orders", "revenue"]) {
+  const range = dateFrom && dateTo ? { dateFrom, dateTo } : getDefaultEtsyDateRange(14);
+  const receipts = await etsyGetReceipts(range.dateFrom, range.dateTo, 0, 100);
+  const bySku = new Map();
+
+  receipts.receipts.forEach((receipt) => {
+    const row = normalizeReceipt(receipt);
+    const key = row.sku || "unknown";
+    const current = bySku.get(key) || {
+      dimensions: [{ id: key, name: key }],
+      metrics: Array(metrics.length).fill(0),
+      sku: key,
+      orderedUnits: 0,
+      revenue: 0,
+    };
+    current.orderedUnits += row.qty;
+    current.revenue += row.price;
+    metrics.forEach((metric, idx) => {
+      if (/order|unit/i.test(metric)) current.metrics[idx] += row.qty;
+      else if (/revenue|sales|amount|price/i.test(metric)) current.metrics[idx] += row.price;
+      else current.metrics[idx] += 0;
+    });
+    bySku.set(key, current);
+  });
+
+  return {
+    data: [...bySku.values()],
+    metrics,
+    dimension,
+    dateFrom: range.dateFrom,
+    dateTo: range.dateTo,
+    note: "Etsy Open API does not expose the same Etsy funnel metrics here; rows are synthesized from authorized receipts when available.",
+  };
+}
+
+export async function etsyGetReceipts(dateFrom, dateTo, offset = 0, limit = 50) {
+  const { shopId } = await getEtsySettings();
+  if (!shopId) {
+    throw new Error("未配置 Etsy Shop ID，无法同步订单 receipts。");
+  }
+  const res = await makeEtsyRequest(`/shops/${encodeURIComponent(shopId)}/receipts`, {
+    requireOAuth: true,
+    query: {
+      limit: Math.min(Number(limit || 50), 100),
+      offset: Number(offset || 0),
+      min_created: toUnixDayStart(dateFrom),
+      max_created: toUnixDayEnd(dateTo),
+    },
+  });
+  const receipts = res.results || [];
+  return {
+    receipts,
+    count: Number(res.count || receipts.length),
+    orders: receipts.map(normalizeReceipt),
+    raw: res,
+  };
+}
+
+export async function etsyGetFbsPostingList(dateFrom, dateTo, offset = 0, limit = 50) {
+  return etsyGetReceipts(dateFrom, dateTo, offset, limit);
+}
+
+export async function etsyGetFboPostingList() {
+  return {
+    receipts: [],
+    postings: [],
+    count: 0,
+    note: "Etsy has no native platform-fulfilled warehouse equivalent in this adapter; use receipts and seller-fulfilled shipping evidence.",
+  };
+}
+
+function sumMetricRows(rows = [], metricNames = []) {
+  const totals = Object.fromEntries(metricNames.map((name) => [name, 0]));
+  rows.forEach((row) => {
+    metricNames.forEach((metric, idx) => {
+      const value = Number(row.metrics?.[idx] ?? row[metric] ?? 0);
+      if (Number.isFinite(value)) totals[metric] += value;
+    });
+  });
+  return totals;
+}
+
+export async function etsyGetStoreSnapshot(args = {}) {
+  const { dateFrom, dateTo } = args.dateFrom && args.dateTo
+    ? args
+    : getDefaultEtsyDateRange(args.days || 14);
+  const metrics = args.metrics || ["sessions", "ordered_units", "revenue"];
+
+  const runSettled = async (fn) => {
+    try {
+      return { status: "fulfilled", value: await fn() };
+    } catch (reason) {
+      return { status: "rejected", reason };
+    }
+  };
+
+  const products = await runSettled(() => etsyGetProductList(args.productLimit || 100, args.offset || 0));
+  const analytics = await runSettled(() => etsyGetAnalyticsData(dateFrom, dateTo, args.dimension || ["sku"], metrics));
+  const receipts = await runSettled(() => etsyGetReceipts(dateFrom, dateTo, args.offset || 0, args.pageSize || 20));
+
+  const failures = [];
+  const result = {
+    ok: true,
+    source: "etsy_open_api",
+    dateFrom,
+    dateTo,
+    products: { items: [], total: 0 },
+    analytics: { data: [], totals: {}, metrics },
+    postings: { fbs: [], fbo: [], count: 0 },
+    receipts: [],
+    orders: [],
+    failures,
+  };
+
+  if (products.status === "fulfilled") {
+    result.products = products.value;
+  } else {
+    failures.push({ endpoint: "etsyGetProductList", error: products.reason?.message || String(products.reason) });
+  }
+
+  if (analytics.status === "fulfilled") {
+    result.analytics.data = analytics.value.data || [];
+    result.analytics.totals = sumMetricRows(result.analytics.data, metrics);
+    result.analytics.note = analytics.value.note;
+  } else {
+    failures.push({ endpoint: "etsyGetAnalyticsData", error: analytics.reason?.message || String(analytics.reason) });
+  }
+
+  if (receipts.status === "fulfilled") {
+    result.receipts = receipts.value.receipts || [];
+    result.orders = receipts.value.orders || [];
+    result.postings.fbs = result.receipts;
+    result.postings.count = result.receipts.length;
+  } else {
+    failures.push({ endpoint: "etsyGetReceipts", error: receipts.reason?.message || String(receipts.reason) });
+  }
+
+  result.ok = failures.length === 0;
+  return result;
+}
