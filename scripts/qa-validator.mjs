@@ -68,8 +68,8 @@ const mockValidShopOptimizerReport = {
   type: "final",
   output: {
     overview: "## Etsy 店铺诊断\n目标市场为Etsy 主要欧美礼品市场，本轮判定为 B 级系统化整改。",
-    analysis: "以 Etsy 页面视觉、Seller API 流量和Etsy 欧美站外趋势为基础，输出 ABC 分级优化候选方案，所有金额均以 $ / USD 表示。",
-    summary: "第一优先级执行 B-1 主图英文卖点改版，随后验证加购率变化。",
+    analysis: "以 Etsy 页面文本、店铺截图、Seller API 流量、Etsy 站内高排名竞品店铺、Google Search US 与 Google Trends US 真实搜索证据为基础，输出 ABC 分级优化候选方案，所有金额均以 $ / USD 表示。配送时效需要按目的地和承运商做实时搜索确认。",
+    summary: "第一优先级执行 B-1 主图英文卖点改版；如需更新配送文案，必须先完成国际物流实时研究和承运商确认。",
     data: [
       {
         plan_id: "B-1",
@@ -87,12 +87,36 @@ const mockValidShopOptimizerReport = {
             limitation: "仅基于当前页面上下文"
           },
           {
-            source_type: "assumption",
-    source_ref: "Google Trends US 待验证",
-            observed_value: "站外趋势尚未取得真实工具结果",
-            used_for: "趋势判断仅列为待验证假设",
-            confidence: "low",
-            limitation: "趋势工具未访问，不得写成已验证事实"
+            source_type: "screenshot_visual",
+            source_ref: "当前店铺首屏截图",
+            observed_value: "首图缺少英文卖点层级，视觉调性与礼品场景不够统一",
+            used_for: "判断 B 级视觉整改",
+            confidence: "medium",
+            limitation: "截图只能判断视觉格调，不能替代页面文本和竞品搜索"
+          },
+          {
+            source_type: "etsy_search",
+            source_ref: "Etsy search: personalized gift top shops",
+            observed_value: "同类高排名店铺普遍使用统一礼品场景主图、清晰标题词和评价背书",
+            used_for: "支撑竞品店铺反向学习和主图改版方向",
+            confidence: "medium",
+            limitation: "仅覆盖搜索结果第一页和 2-3 个头部样本"
+          },
+          {
+            source_type: "google_search",
+            source_ref: "Google Search US: Etsy international shipping delivery time US handmade gifts",
+            observed_value: "国际配送承诺随发货地、目的地、承运商和清关变化，不能用固定 7-12 工作日承诺",
+            used_for: "约束配送文案必须先做目的地/承运商确认",
+            confidence: "medium",
+            limitation: "需要结合店铺实际发货地和 Etsy shipping profile 二次确认"
+          },
+          {
+            source_type: "google_trends",
+            source_ref: "Google Trends US: personalized gift",
+            observed_value: "站外需求方向已通过 Google Trends US 页面验证",
+            used_for: "支撑站外需求与季节性窗口判断",
+            confidence: "medium",
+            limitation: "趋势图需人工复核具体数值，不输出 YoY/QoQ"
           }
         ],
         expected_impact: "提升点击后的加购率和详情页停留信任。",
@@ -140,7 +164,7 @@ function runValidation(report, userInstruction, isEtsySpecific = true) {
   // 2. Etsy Specific checks
   if (isEtsySpecific) {
     // Target Market Check
-    if (!combinedText.includes("欧美") && !combinedText.includes("欧美礼品市场") && !combinedText.includes("CIS")) {
+    if (!combinedText.includes("欧美") && !combinedText.includes("欧美礼品市场")) {
       errors.push("未在全局概述或分析中明确判定目标销售目的地市场为“Etsy 主要欧美礼品市场”！");
     }
 
@@ -232,6 +256,22 @@ function runShopOptimizerValidation(report) {
       errors.push(`第 ${idx + 1} 项 (${title}) 缺少 evidence_ledger。`);
     }
   });
+  const ledgers = out.data.flatMap((item) => Array.isArray(item.evidence_ledger) ? item.evidence_ledger : []);
+  const hasType = (type) => ledgers.some((entry) => String(entry.source_type || "").toLowerCase() === type);
+  const hasTopic = (type, regex) => ledgers.some((entry) => {
+    if (String(entry.source_type || "").toLowerCase() !== type) return false;
+    return regex.test(`${entry.source_ref || ""} ${entry.observed_value || ""} ${entry.used_for || ""} ${entry.limitation || ""}`);
+  });
+  if (!hasType("page_dom")) errors.push("店铺优化报告必须包含 page_dom 页面文本证据，不能只凭截图。");
+  if (!hasType("screenshot_visual")) errors.push("店铺优化报告必须包含 screenshot_visual 视觉截图证据。");
+  if (!hasType("etsy_search")) errors.push("店铺优化报告必须包含真实 Etsy 站内搜索/热卖榜/高排名竞品证据，不能降级为 assumption。");
+  if (!hasType("google_search") && !hasType("google_trends")) errors.push("店铺优化报告必须包含真实 Google Search US 或 Google Trends US 证据，不能降级为 assumption。");
+  if (/配送|物流|时效|工作日|shipping|delivery/i.test(combinedText) && !hasTopic("google_search", /配送|物流|时效|shipping|delivery|transit|fulfillment|承运商/i)) {
+    errors.push("涉及配送/物流/时效的店铺优化报告必须包含物流主题 google_search 实时证据。");
+  }
+  if (/(无法直接访问|未直接访问).*(etsy|trends|Google Trends)|行业报告摘要|Google 搜索摘要/i.test(combinedText)) {
+    errors.push("店铺优化报告不得用未直接访问或摘要替代 Etsy/Google 必做取证。");
+  }
   return errors;
 }
 

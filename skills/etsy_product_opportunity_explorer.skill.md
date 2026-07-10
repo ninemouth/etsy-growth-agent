@@ -37,7 +37,7 @@
 
 `data` 数组中的每个机会评分卡必须包含 `evidence_ledger`，每条证据包含：
 
-- `source_type`: 允许 `page_dom`、`screenshot_visual`、`etsy_search`、`google_search`、`google_search`、`google_trends`、`etsy_api`、`assumption`。
+- `source_type`: 允许 `page_dom`、`screenshot_visual`、`etsy_search`、`google_search`、`google_trends`、`etsy_api`、`assumption`。
 - `source_ref`: 当前页面 URL、Etsy 搜索词、Google/Google/Google Trends 查询词、API 工具名或“待验证假设”。
 - `observed_value`: 具体观察值，例如价格带、评价数、搜索结果方向、评论痛点、合规疑点。
 - `used_for`: 说明该证据支撑需求评分、竞争评分、物流风险、合规风险或产品改良机会。

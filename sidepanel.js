@@ -37,7 +37,7 @@ const GROWTH_ACTIONS = {
   diagnose_store_growth: {
     label: "全店体检",
     skillId: "etsy_global_shop_optimizer",
-    instruction: "一键体检当前 Etsy 店铺增长瓶颈。请按曝光、点击、加购、付款、利润、履约、评分和商品结构输出优先级行动清单；必须区分真实页面/API证据、AI推断和待验证假设。",
+    instruction: "一键体检当前 Etsy 店铺增长瓶颈。必须先读取页面文本/API，判断店铺平台属性、定位、目标人群、价格带和视觉调性；再实际访问 Etsy 站内搜索/热卖榜学习同类高排名店铺和商品；再访问 Google Search US / Google Trends US 验证站外需求。若涉及配送时效，必须实时搜索 Etsy 国际物流/目的地/承运商现状，禁止凭常识写 7-12 工作日。请按曝光、点击、加购、付款、利润、履约、评分和商品结构输出优先级行动清单；必须区分真实页面/API证据、搜索证据、AI推断和待验证假设。",
   },
   diagnose_sku_funnel: {
     label: "SKU 漏斗诊断",

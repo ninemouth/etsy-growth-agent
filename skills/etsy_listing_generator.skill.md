@@ -21,7 +21,7 @@
 
 `data` 数组中的每个标题、关键词、属性或描述方案必须包含 `evidence_ledger`，每条证据包含：
 
-- `source_type`: 允许 `page_dom`、`screenshot_visual`、`etsy_search`、`google_search`、`google_search`、`google_trends`、`supplier_page`、`assumption`。
+- `source_type`: 允许 `page_dom`、`screenshot_visual`、`etsy_search`、`google_search`、`google_trends`、`supplier_page`、`assumption`。
 - `source_ref`: 当前 Etsy URL、竞品搜索词、Google/Google 查询词、供应商页面 URL 或“待验证假设”。
 - `observed_value`: 具体观察值，例如原始标题、竞品高频词、英文买家痛点、规格参数、禁用/敏感表达。
 - `used_for`: 说明该证据支撑标题公式、关键词选择、属性填充、描述段落或合规避坑。

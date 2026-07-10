@@ -36,7 +36,7 @@
 
 - 不得把单一指标变化直接归因于某个动作。必须说明是否存在价格调整、广告活动、库存断货、促销标签、评价变化、季节性或履约方式变化等干扰项。
 - `data` 数组中的每个阶段或行动建议必须包含 `evidence_ledger`，每条证据包含：
-  - `source_type`: 允许 `etsy_api`、`page_dom`、`screenshot_visual`、`etsy_search`、`google_search`、`google_search`、`google_trends`、`assumption`。
+  - `source_type`: 允许 `etsy_api`、`page_dom`、`screenshot_visual`、`etsy_search`、`google_search`、`google_trends`、`assumption`。
   - `source_ref`: API 工具名、日期范围、当前页面 URL、搜索词或“待验证假设”。
   - `observed_value`: 具体指标或观察值，例如 Sessions、加购率、订单数、发货资料 履约、价格变化、评论变化。
   - `used_for`: 说明该证据支撑哪个阶段判断或下一步动作。

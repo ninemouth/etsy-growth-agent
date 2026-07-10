@@ -192,11 +192,6 @@ function hasEvidenceSource(toolHistory = [], pageContext = {}, sourceType = "") 
     );
   }
   if (normalized === "google_search") {
-    return hasSuccessfulToolCall(toolHistory, (entry) =>
-      entry.tool === "search_in_browser" && String(entry.arguments?.engine || "").toLowerCase() === "google"
-    );
-  }
-  if (normalized === "google_search") {
     return hasSuccessfulToolCall(toolHistory, (entry) => {
       const engine = String(entry.arguments?.engine || "").toLowerCase();
       return entry.tool === "search_in_browser" && (engine === "google" || engine === "google_us");
@@ -234,6 +229,21 @@ function hasAnyLedgerType(ledger = [], sourceTypes = []) {
   return ledger.some((entry) => normalizedTypes.includes(String(entry?.source_type || "").toLowerCase()));
 }
 
+function hasLedgerTypeTopic(ledger = [], sourceTypes = [], topicRegex) {
+  const normalizedTypes = sourceTypes.map((type) => String(type || "").toLowerCase());
+  return ledger.some((entry) => {
+    const sourceType = String(entry?.source_type || "").toLowerCase();
+    if (!normalizedTypes.includes(sourceType)) return false;
+    const text = [
+      entry?.source_ref,
+      entry?.observed_value,
+      entry?.used_for,
+      entry?.limitation,
+    ].filter(Boolean).join(" ");
+    return topicRegex.test(text);
+  });
+}
+
 function hasAssumptionFallback(ledger = [], topicRegex) {
   return ledger.some((entry) => {
     const sourceType = String(entry?.source_type || "").toLowerCase();
@@ -253,7 +263,7 @@ function validateEvidenceLedgerEntries({
   label,
   toolHistory,
   pageContext,
-  allowedTypes = ["page_dom", "screenshot_visual", "etsy_api", "etsy_search", "google_search", "google_search", "google_trends", "sourcing_search", "supplier_page", "user_input", "assumption"],
+  allowedTypes = ["page_dom", "screenshot_visual", "etsy_api", "etsy_search", "google_search", "google_trends", "sourcing_search", "supplier_page", "user_input", "assumption"],
 }) {
   const errors = [];
   if (!Array.isArray(entries) || entries.length === 0) {
@@ -406,7 +416,7 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
 
       const ledgerEntries = Array.isArray(item.evidence_ledger) ? item.evidence_ledger : [];
       if (ledgerEntries.length === 0) {
-        errors.push(`店铺优化方案第 ${idx + 1} 项 (${title}) 缺少 evidence_ledger 结构化证据账本。每个方案必须拆分 page_dom / screenshot_visual / etsy_api / etsy_search / google_search / google_search / google_trends / assumption 等来源。`);
+        errors.push(`店铺优化方案第 ${idx + 1} 项 (${title}) 缺少 evidence_ledger 结构化证据账本。每个方案必须拆分 page_dom / screenshot_visual / etsy_api / etsy_search / google_search / google_trends / assumption 等来源。`);
       }
 
       ledgerEntries.forEach((entry, ledgerIdx) => {
@@ -416,7 +426,7 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
         const observedValue = entry?.observed_value;
         const usedFor = entry?.used_for;
         const limitation = entry?.limitation;
-        const allowedTypes = ["page_dom", "screenshot_visual", "etsy_api", "etsy_search", "google_search", "google_search", "google_trends", "assumption"];
+        const allowedTypes = ["page_dom", "screenshot_visual", "etsy_api", "etsy_search", "google_search", "google_trends", "assumption"];
         if (!allowedTypes.includes(sourceType)) {
           errors.push(`${prefix} 的 source_type 无效，必须是 ${allowedTypes.join(" / ")}。`);
         }
@@ -435,8 +445,8 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
       if (/Google|google/i.test(itemText) && !hasLedgerType(ledgerEntries, "google_search") && !hasAssumptionFallback(ledgerEntries, /Google/i)) {
         errors.push(`店铺优化方案第 ${idx + 1} 项 (${title}) 使用了 Google/站外需求结论，但 evidence_ledger 没有 google_search 证据或 assumption 降级说明。`);
       }
-      if (/站外|搜索指数|外部流量|季节性/i.test(itemText) && !hasAnyLedgerType(ledgerEntries, ["google_search", "google_search", "google_trends"]) && !hasAssumptionFallback(ledgerEntries, /Google|Google|谷歌|站外|搜索指数|外部流量|季节|趋势/i)) {
-        errors.push(`店铺优化方案第 ${idx + 1} 项 (${title}) 使用了站外需求/季节性结论，但 evidence_ledger 没有 google_search / google_search / google_trends 证据或 assumption 降级说明。`);
+      if (/站外|搜索指数|外部流量|季节性/i.test(itemText) && !hasAnyLedgerType(ledgerEntries, ["google_search", "google_trends"]) && !hasAssumptionFallback(ledgerEntries, /Google|谷歌|站外|搜索指数|外部流量|季节|趋势/i)) {
+        errors.push(`店铺优化方案第 ${idx + 1} 项 (${title}) 使用了站外需求/季节性结论，但 evidence_ledger 没有 google_search / google_trends 证据或 assumption 降级说明。`);
       }
       if (/Google|Google Trends|谷歌趋势|搜索趋势|年度趋势|季度趋势|YoY|QoQ|季节性增长|需求趋势/i.test(itemText) && !hasAnyLedgerType(ledgerEntries, ["google_search", "google_trends"]) && !hasAssumptionFallback(ledgerEntries, /Google|谷歌|趋势|YoY|QoQ|季节/i)) {
         errors.push(`店铺优化方案第 ${idx + 1} 项 (${title}) 使用了 Google/趋势/季节性增长结论，但 evidence_ledger 没有 google_search / google_trends 证据或 assumption 降级说明。`);
@@ -447,14 +457,35 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
     });
 
     const allLedgerEntries = out.data.flatMap((item) => Array.isArray(item.evidence_ledger) ? item.evidence_ledger : []);
-    if (!hasLedgerType(allLedgerEntries, "etsy_search") && !hasAssumptionFallback(allLedgerEntries, /Etsy|站内|热卖榜|竞品|榜单/i)) {
-      errors.push("店铺优化报告缺少 Etsy 站内搜索/热卖榜对标证据。请调用 Etsy 搜索/榜单，或用 assumption 明确说明当前无法访问并列为待验证。");
+    if (!hasLedgerType(allLedgerEntries, "page_dom")) {
+      errors.push("店铺优化报告缺少当前店铺/商品页真实文本证据。不能只凭截图诊断，必须先读取 Etsy 页面文本、店铺定位、类目属性、标题/描述/attributes 后再分析。");
     }
-    if (!hasAnyLedgerType(allLedgerEntries, ["google_search", "google_search", "google_trends"]) && !hasAssumptionFallback(allLedgerEntries, /Google|Google|谷歌|站外|趋势|季节|需求/i)) {
-      errors.push("店铺优化报告缺少欧美站外需求趋势证据。请至少使用 Google Trends US、Google Trends US 或 Google Trends US 之一，或用 assumption 明确说明工具/网络不可用并列为待验证。");
+    if (!hasLedgerType(allLedgerEntries, "screenshot_visual")) {
+      errors.push("店铺优化报告缺少视觉截图证据。必须结合当前店铺截图或竞品截图判断调性、格调、首图卖点、视觉统一性，不能只看文本/API。");
     }
-    if (!hasAnyLedgerType(allLedgerEntries, ["google_search", "google_search", "google_trends"]) && hasAssumptionFallback(allLedgerEntries, /Google|Google|谷歌|站外|趋势|季节|需求/i) && /呈现|显示|证明|同比|环比|增长|下降|热度高|趋势上升/i.test(combinedReportText)) {
+    if (!hasLedgerType(allLedgerEntries, "etsy_search")) {
+      errors.push("店铺优化报告缺少必须完成的 Etsy 站内搜索/热卖榜/高排名竞品店铺对标证据。该项不能降级为 assumption，请调用 search_in_browser(engine=etsy) 并学习同类高排名店铺/商品页面。");
+    }
+    if (!hasAnyLedgerType(allLedgerEntries, ["google_search", "google_trends"])) {
+      errors.push("店铺优化报告缺少必须完成的 Google Trends US / Google Search 站外需求证据。该项不能降级为 assumption，请调用 search_in_browser(engine=google_us 或 google_trends) 获取真实检索/趋势证据。");
+    }
+    if (!hasAnyLedgerType(allLedgerEntries, ["google_search", "google_trends"]) && hasAssumptionFallback(allLedgerEntries, /Google|谷歌|站外|趋势|季节|需求/i) && /呈现|显示|证明|同比|环比|增长|下降|热度高|趋势上升/i.test(combinedReportText)) {
       errors.push("店铺优化报告的站外趋势只有 assumption，正文不能写成已验证事实。请把趋势判断降级为待验证假设，或先调用 Google Trends / Etsy 搜索 获取真实证据。");
+    }
+    if (/(无法直接访问|未直接访问).*(etsy|Etsy|trends\.google|Google Trends)|行业报告摘要|Google 搜索摘要/i.test(combinedReportText)) {
+      errors.push("店铺优化报告不得把 Etsy 站内/热卖榜或 Google Trends 关键证据写成“未直接访问/来自摘要”。这两项是本流程必须完成的浏览器取证任务，请实际访问后再输出 final。");
+    }
+    if (!/竞品店铺|头部店铺|高排名店铺|高销店铺|best[-\s]?seller|top shop|同类高排名/i.test(combinedReportText)) {
+      errors.push("店铺优化报告缺少同类高排名/高销竞品店铺的反向学习结论。必须搜索并对标 2-3 个头部店铺或高排名商品，再提炼其定位、调性、首图、标题和履约承诺。");
+    }
+    const hasLogisticsClaim = /配送|物流|发货|运输|时效|工作日|delivery|shipping|transit|fulfillment/i.test(combinedReportText);
+    const hasExactTransitPromise = /\b\d+\s*[-–—到至]\s*\d+\s*(个)?\s*(工作日|日|天|business days?|days?)\b/i.test(combinedReportText);
+    const hasShippingResearch = hasLedgerTypeTopic(allLedgerEntries, ["google_search"], /配送|物流|发货|运输|时效|delivery|shipping|transit|fulfillment|USPS|DHL|FedEx|UPS|postal/i);
+    if (hasLogisticsClaim && !hasShippingResearch) {
+      errors.push("店铺优化报告涉及配送/物流/时效判断，但缺少实时物流主题 google_search 证据。Etsy 国际物流因发货地、目的地、承运商和季节差异很大，必须先做实时搜索研究。");
+    }
+    if (hasExactTransitPromise && !hasShippingResearch) {
+      errors.push("店铺优化报告输出了具体配送时效区间，但没有实时物流搜索证据支撑。禁止凭模型常识写 7-12 工作日等确定承诺。");
     }
   }
 
@@ -470,10 +501,10 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
       }));
 
       const itemText = JSON.stringify(item);
-      if (/蓝海|爆品|高增长|低竞争|趋势|季节|搜索热度|YoY|QoQ/i.test(itemText) && !hasAnyLedgerType(ledgerEntries, ["etsy_search", "google_search", "google_search", "google_trends"]) && !hasAssumptionFallback(ledgerEntries, /Etsy|Google|Google|谷歌|趋势|季节|需求|竞争|搜索/i)) {
+      if (/蓝海|爆品|高增长|低竞争|趋势|季节|搜索热度|YoY|QoQ/i.test(itemText) && !hasAnyLedgerType(ledgerEntries, ["etsy_search", "google_search", "google_trends"]) && !hasAssumptionFallback(ledgerEntries, /Etsy|Google|谷歌|趋势|季节|需求|竞争|搜索/i)) {
         errors.push(`Etsy 业务报告第 ${idx + 1} 项 (${title}) 使用了市场机会/趋势/竞争结论，但 evidence_ledger 没有 Etsy/Google/Google/Google Trends 证据或主题相关 assumption。`);
       }
-      if (/SEO|关键词|搜索词|高频词|标题公式|Listing|листинг/i.test(itemText) && !hasAnyLedgerType(ledgerEntries, ["page_dom", "etsy_search", "google_search", "google_search", "google_trends"]) && !hasAssumptionFallback(ledgerEntries, /SEO|关键词|搜索词|标题|Listing/i)) {
+      if (/SEO|关键词|搜索词|高频词|标题公式|Listing|листинг/i.test(itemText) && !hasAnyLedgerType(ledgerEntries, ["page_dom", "etsy_search", "google_search", "google_trends"]) && !hasAssumptionFallback(ledgerEntries, /SEO|关键词|搜索词|标题|Listing/i)) {
         errors.push(`Etsy 业务报告第 ${idx + 1} 项 (${title}) 使用了 SEO/关键词/Listing 结论，但 evidence_ledger 没有页面或搜索证据，也没有降级为待验证假设。`);
       }
       if (/评论|差评|Отзывы|отзыв|买家反馈|退货|破损|不符|Не работает/i.test(itemText) && !hasAnyLedgerType(ledgerEntries, ["page_dom", "screenshot_visual", "etsy_search"]) && !hasAssumptionFallback(ledgerEntries, /评论|差评|Отзывы|买家反馈|退货|破损|不符/i)) {
