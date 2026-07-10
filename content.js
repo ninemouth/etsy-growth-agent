@@ -3448,6 +3448,8 @@
               } else {
                 log(`🕵️ ${msg}`);
               }
+            } else if (data.type === "checkpoint_restored") {
+              log(`↩ ${data.message || "已恢复上次中断的 workflow"}`);
             } else if (data.type === "tool_call") {
               log(`⚙️ 调用指令: ${data.toolName}`);
             } else if (data.type === "tool_heartbeat") {
@@ -3475,6 +3477,9 @@
             sendBtn.disabled = false;
             inputEl.disabled = false;
             log(`❌ 执行失败: ${message.error}`);
+            if (message.resumable && message.resumeHint) {
+              log(`↩ ${message.resumeHint}`);
+            }
             finishGrowthRun("failed", message.error || "unknown error").catch((err) => console.warn("Failed to finish growth run:", err.message));
           }
         });

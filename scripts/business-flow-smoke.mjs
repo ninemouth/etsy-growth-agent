@@ -9,12 +9,16 @@ const wait = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 const root = process.cwd();
 const html = fs.readFileSync(path.join(root, "dashboard.html"), "utf8");
 const js = fs.readFileSync(path.join(root, "dashboard.js"), "utf8");
+const sidepanelSource = fs.readFileSync(path.join(root, "sidepanel.js"), "utf8");
 const css = fs.readFileSync(path.join(root, "dashboard.css"), "utf8");
 const agentLoopSource = fs.readFileSync(path.join(root, "modules", "agentLoop.js"), "utf8");
 const toolRegistrySource = fs.readFileSync(path.join(root, "modules", "toolRegistry.js"), "utf8");
 const shopOptimizerSkillSource = fs.readFileSync(path.join(root, "skills", "etsy_global_shop_optimizer.skill.md"), "utf8");
 
 assert.match(agentLoopSource, /type:\s*"tool_heartbeat"/, "long-running tool calls should emit heartbeat progress");
+assert.match(agentLoopSource, /etsyAgentCheckpoint:/, "agent loop should persist resumable workflow checkpoints");
+assert.match(agentLoopSource, /CHECKPOINT_IMAGE_PLACEHOLDER/, "persisted checkpoints should omit base64 screenshot payloads");
+assert.match(agentLoopSource, /type:\s*"checkpoint_restored"/, "agent loop should notify the UI when a checkpoint is restored");
 assert.match(toolRegistrySource, /closedTabId/, "browser search should report automatically closed temporary tabs");
 assert.match(toolRegistrySource, /shouldAutoCloseSearchTab[\s\S]*google_trends/, "Google and Trends search tabs should be auto-closed after evidence capture");
 assert.match(js, /<html lang="zh-CN" dir="ltr">/, "PDF print template should declare Chinese language and stable text direction");
@@ -26,6 +30,7 @@ assert.match(shopOptimizerSkillSource, /engine="google_us"[\s\S]*engine="google_
 assert.match(shopOptimizerSkillSource, /Etsy international shipping delivery time[\s\S]*禁止凭模型常识写“香港发货 7-12 工作日”/, "shop optimizer should require realtime logistics research before delivery-time claims");
 assert.match(agentLoopSource, /Etsy 站内搜索\/热卖榜\/高排名竞品店铺对标证据。该项不能降级为 assumption/, "critic should reject shop optimizer reports without real Etsy ranking evidence");
 assert.match(agentLoopSource, /涉及配送\/物流\/时效判断，但缺少实时物流主题 google_search 证据/, "critic should reject logistics claims without realtime logistics search evidence");
+assert.match(sidepanelSource, /继续\|继续推进\|恢复\|resume\|continue/, "sidepanel should treat a plain continue message as a session resume request");
 
 const jargonReport = {
   type: "final",

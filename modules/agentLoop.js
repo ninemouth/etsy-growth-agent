@@ -4,6 +4,90 @@ import { callLLM, getSettings } from './llmClient.js';
 import { tools } from './toolRegistry.js';
 
 const globalSessionCache = {};
+const CHECKPOINT_PREFIX = "etsyAgentCheckpoint:";
+const CHECKPOINT_LATEST_KEY = "etsyAgentCheckpointLatest";
+const CHECKPOINT_IMAGE_PLACEHOLDER = "__CHECKPOINT_IMAGE_OMITTED__";
+
+function checkpointStorageAvailable() {
+  return typeof chrome !== "undefined" && chrome.storage?.local;
+}
+
+function checkpointKey(sessionKey) {
+  return `${CHECKPOINT_PREFIX}${sessionKey}`;
+}
+
+function stripCheckpointImages(content) {
+  if (Array.isArray(content)) {
+    return content.map((part) => {
+      if (part?.type === "image_url") {
+        return {
+          ...part,
+          image_url: {
+            ...(part.image_url || {}),
+            url: CHECKPOINT_IMAGE_PLACEHOLDER,
+          },
+        };
+      }
+      return part;
+    });
+  }
+  return content;
+}
+
+function restoreCheckpointContent(content) {
+  if (!Array.isArray(content)) return content;
+  return content.filter((part) => part?.type !== "image_url" || part?.image_url?.url !== CHECKPOINT_IMAGE_PLACEHOLDER);
+}
+
+function serializeMessagesForCheckpoint(messages = []) {
+  return messages.map((message) => ({
+    ...message,
+    content: stripCheckpointImages(message.content),
+  }));
+}
+
+function hydrateMessagesFromCheckpoint(messages = []) {
+  return messages.map((message) => ({
+    ...message,
+    content: restoreCheckpointContent(message.content),
+  }));
+}
+
+async function saveAgentCheckpoint(sessionKey, checkpoint = {}) {
+  if (!checkpointStorageAvailable()) return;
+  const payload = {
+    ...checkpoint,
+    sessionKey,
+    updatedAt: new Date().toISOString(),
+    messages: serializeMessagesForCheckpoint(checkpoint.messages || []),
+  };
+  await new Promise((resolve) => {
+    chrome.storage.local.set({
+      [checkpointKey(sessionKey)]: payload,
+      [CHECKPOINT_LATEST_KEY]: payload,
+    }, resolve);
+  });
+}
+
+async function loadAgentCheckpoint(sessionKey) {
+  if (!checkpointStorageAvailable()) return null;
+  const data = await new Promise((resolve) => {
+    chrome.storage.local.get([checkpointKey(sessionKey), CHECKPOINT_LATEST_KEY], resolve);
+  });
+  const checkpoint = data[checkpointKey(sessionKey)] || data[CHECKPOINT_LATEST_KEY] || null;
+  if (!checkpoint) return null;
+  return {
+    ...checkpoint,
+    messages: hydrateMessagesFromCheckpoint(checkpoint.messages || []),
+  };
+}
+
+async function clearAgentCheckpoint(sessionKey) {
+  if (!checkpointStorageAvailable()) return;
+  await new Promise((resolve) => {
+    chrome.storage.local.remove([checkpointKey(sessionKey), CHECKPOINT_LATEST_KEY], resolve);
+  });
+}
 
 function hasConcreteVisualTerms(text) {
   return /颜色|配色|材质|金属|铁艺|铜|铝|钢|塑料|木|硅胶|玻璃|陶瓷|布|皮革|亚克力|轮廓|造型|形状|结构|弧形|圆形|方形|边缘|纹理|表面|光泽|磨砂|透明|图案|花纹|主体|比例|开孔|把手|支架|外观|细节|同模|相似|差异/i.test(String(text || ""));
@@ -659,6 +743,9 @@ export function clearSessionCache(tabId) {
   if (globalSessionCache[sessionKey]) {
     delete globalSessionCache[sessionKey];
   }
+  clearAgentCheckpoint(sessionKey).catch((err) => {
+    console.warn("Failed to clear persisted agent checkpoint:", err.message);
+  });
 }
 
 function buildPromptContext(pageContext = {}) {
@@ -692,7 +779,7 @@ export async function runAgentLoop({ tabId, skillId, skillMarkdown, userInstruct
     return true;
   });
   const availableTools = filteredToolList.join(", ");
-  const toolHistory = [];
+  let toolHistory = [];
 
   const actualTargetImageUrl = pageContext?.targetImageUrl || "";
   const ctxForPrompt = buildPromptContext(pageContext);
@@ -750,9 +837,56 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
 
   let messages = [];
   const sessionKey = `${tabId}`;
+  const saveCheckpoint = async (patch = {}) => {
+    const ctxState = {
+      __reflectionsCount: ctxForPrompt.__reflectionsCount || 0,
+      __hasDeepReflected: Boolean(ctxForPrompt.__hasDeepReflected),
+    };
+    globalSessionCache[sessionKey] = { messages, toolHistory, ctxState };
+    try {
+      await saveAgentCheckpoint(sessionKey, {
+        status: "running",
+        skillId,
+        userInstruction,
+        pageUrl: pageContext?.url || "",
+        pageTitle: pageContext?.title || "",
+        messages,
+        toolHistory,
+        ctxState,
+        ...patch,
+      });
+    } catch (err) {
+      console.warn("Failed to persist agent checkpoint:", err.message);
+    }
+  };
 
-  if (continueSession && globalSessionCache[sessionKey]) {
-    messages = globalSessionCache[sessionKey];
+  let restoredCheckpoint = null;
+  if (continueSession) {
+    const cached = globalSessionCache[sessionKey];
+    if (Array.isArray(cached)) {
+      restoredCheckpoint = { messages: cached, toolHistory: [], ctxState: {} };
+    } else if (cached?.messages) {
+      restoredCheckpoint = cached;
+    } else {
+      restoredCheckpoint = await loadAgentCheckpoint(sessionKey);
+    }
+    if (restoredCheckpoint?.skillId && restoredCheckpoint.skillId !== skillId) {
+      restoredCheckpoint = null;
+    }
+  }
+
+  if (continueSession && restoredCheckpoint?.messages?.length) {
+    messages = restoredCheckpoint.messages;
+    toolHistory = Array.isArray(restoredCheckpoint.toolHistory) ? restoredCheckpoint.toolHistory : [];
+    if (restoredCheckpoint.ctxState) {
+      ctxForPrompt.__reflectionsCount = restoredCheckpoint.ctxState.__reflectionsCount || 0;
+      ctxForPrompt.__hasDeepReflected = Boolean(restoredCheckpoint.ctxState.__hasDeepReflected);
+    }
+    sendProgress({
+      type: "checkpoint_restored",
+      step: restoredCheckpoint.step || 0,
+      message: `已恢复上次中断的 workflow：${toolHistory.length} 个工具节点，继续从下一步推进。`,
+    });
     if (messages.length > 0 && messages[0].role === "system") {
       messages[0].content = systemPrompt;
     }
@@ -785,7 +919,9 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       role: "user",
       content: newUserContent
     });
+    await saveCheckpoint({ status: "resumed", step: restoredCheckpoint.step || 0, lastNode: "resume_context_appended" });
   } else {
+    await clearAgentCheckpoint(sessionKey);
     messages = [
       {
         role: "system",
@@ -796,12 +932,14 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         content: userContent,
       },
     ];
+    await saveCheckpoint({ status: "started", step: 0, lastNode: "initial_prompt_created" });
   }
 
   sendProgress({ type: "start", step: 0, maxSteps });
 
   for (let step = 1; step <= maxSteps; step++) {
     sendProgress({ type: "thinking", step, maxSteps });
+    await saveCheckpoint({ status: "running", step, lastNode: "llm_call_started" });
 
     let assistantContent = "";
     assistantContent = await callLLM(messages, ({ chunk, fullText, isReasoning }) => {
@@ -813,6 +951,9 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     let parsed = extractJSONBlock(assistantContent);
 
     if (!parsed) {
+      messages.push({ role: "assistant", content: assistantContent });
+      globalSessionCache[sessionKey] = { messages, toolHistory, ctxState: {} };
+      await clearAgentCheckpoint(sessionKey);
       return {
         ok: true,
         type: "text",
@@ -844,6 +985,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
             role: "user",
             content: `【Critic Agent 报告质量审计拒绝】\n你的报告未能通过系统的自动合规自检，发现了以下问题：\n${validationErrors.map((err, i) => `${i + 1}. ${err}`).join("\n")}\n\n${domesticVisualActive ? "【非标视觉寻源硬约束】本轮已经启动目标主图/以图搜图路径。请继续基于图片搜索结果页 productCards 和截图做视觉相似度修正，补齐 candidate_image_url、list_page_visual_score、visual_match_evidence；严禁回到 1688/淘宝文本框关键词搜索来凑结果。\n\n" : ""}请严格对照系统提示词规范，在脑海中进行深度反思（如补充筛选数量、使用真实详情单页链接、清除技术黑话等），并重新调用工具或重新输出一份完美修正了以上所有问题的 \`{"type":"final", "output": {...}}\` 报告！`
           });
+          await saveCheckpoint({ status: "critic_retry", step, lastNode: "report_validation_retry", validationErrors });
           continue;
         }
       }
@@ -857,10 +999,12 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
           role: "user",
           content: `【Critic Agent 报告质量审计与反思】\n请根据本会话系统提示词（System Prompt）头部的【报告设计审计与规划基座 Skill】中的质量审计检查单（Auditor Checklist），对你刚才生成的最终报告进行最严苛的自检审查：\n1. 结构完整性：是否严格包含并对齐了该 Skill 要求的分析模块（如概述、推演、数据结构化卡片）？\n2. 深度审计：内容是否流于表面？是否对消费者痛点、产品改良策略或运营动作进行了多维度的场景化推演？\n3. 格式规范性：数据视图（data 数组）中的键名和键值是否合规（无 [object Object] 等序列化错误，且已翻译为中文）？\n\n【重要要求】在输出优化后的 JSON 时，严禁在 output 内部的字段（如 overview, analysis, summary）中写入任何有关 AI 自我审计、自检表格或自评文字。报告正文必须纯净、专业，不留任何自检草稿痕迹，直接呈现面向 Etsy 卖家的运营/商业诊断方案。\n\n如果你发现可以改进的地方，请进行深度反思，并输出优化后的 \`{"type":"final", "output": {...}}\`。\n如果你确信当前版本已经完美无缺，请直接原样再次输出 \`{"type":"final", "output": {...}}\` 即可通过审查。`
         });
+        await saveCheckpoint({ status: "critic_deep_reflection", step, lastNode: "deep_reflection_retry" });
         continue;
       } else {
         messages.push({ role: "assistant", content: assistantContent });
-        globalSessionCache[sessionKey] = messages;
+        globalSessionCache[sessionKey] = { messages, toolHistory, ctxState: {} };
+        await clearAgentCheckpoint(sessionKey);
         return {
           ok: true,
           type: "final",
@@ -1033,6 +1177,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       toolHistory.push({ tool: toolName, arguments: toolArgs, result: toolResult });
 
       sendProgress({ type: "tool_result", step, toolName, toolResult });
+      await saveCheckpoint({ status: "tool_completed", step, lastNode: "tool_result", toolName });
 
       if (toolResult && toolResult.isCaptcha) {
         sendProgress({
@@ -1093,12 +1238,14 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         role: "user",
         content: userMsgContent,
       });
+      await saveCheckpoint({ status: "tool_context_appended", step, lastNode: "tool_result_context", toolName });
 
       continue;
     }
 
     messages.push({ role: "assistant", content: assistantContent });
-    globalSessionCache[sessionKey] = messages;
+    globalSessionCache[sessionKey] = { messages, toolHistory, ctxState: {} };
+    await clearAgentCheckpoint(sessionKey);
     return {
       ok: true,
       type: "json",

@@ -378,6 +378,9 @@ chrome.runtime.onConnect.addListener((port) => {
             port.postMessage({ type: "PROGRESS", data: progressData });
           };
 
+          const shouldContinueSession = Boolean(message.continueSession) ||
+            /^(继续|继续推进|恢复|resume|continue)$/i.test(String(message.userInstruction || "").trim());
+
           const result = await runAgentLoop({
             tabId: tab.id,
             skillId: matchedSkills.join("+"),
@@ -385,7 +388,7 @@ chrome.runtime.onConnect.addListener((port) => {
             userInstruction: message.userInstruction,
             pageContext,
             sendProgress,
-            continueSession: message.continueSession,
+            continueSession: shouldContinueSession,
             highRandomness: message.highRandomness,
             negativeFilter: message.negativeFilter
           });
@@ -430,7 +433,12 @@ chrome.runtime.onConnect.addListener((port) => {
           }
         } catch (err) {
           if (!isCancelled) {
-            port.postMessage({ type: "ERROR", error: err.message });
+            port.postMessage({
+              type: "ERROR",
+              error: err.message,
+              resumable: true,
+              resumeHint: "本次 workflow 已尽量保存断点。可输入“继续”恢复上次中断节点。",
+            });
           }
         }
       }

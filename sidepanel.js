@@ -490,6 +490,8 @@ async function runSkill() {
         if (msg) {
           if (msg.type === "tool_call") {
             addLog("info", "⚙️", `调用工具: ${msg.toolName}`);
+          } else if (msg.type === "checkpoint_restored") {
+            addLog("info", "↩", msg.message || "已恢复上次中断的 workflow");
           } else if (msg.type === "tool_heartbeat") {
             addLog("info", "⏱", msg.message || `${msg.toolName || "工具"} 仍在执行`);
           } else if (msg.type === "auto_fix") {
@@ -523,6 +525,9 @@ async function runSkill() {
       } else if (message.type === "ERROR") {
         if (typeof removeCaptchaAlertBanner === "function") removeCaptchaAlertBanner();
         addLog("error", "❌", `错误: ${message.error}`);
+        if (message.resumable && message.resumeHint) {
+          addLog("info", "↩", message.resumeHint);
+        }
         showError(message.error);
         cleanupPort();
       }
@@ -560,13 +565,15 @@ async function runSkill() {
 
     const targetImageUrl = await getTargetImageUrlForRun();
 
+    const shouldContinueSession = $("continueSessionCheckbox").checked || /^(继续|继续推进|恢复|resume|continue)$/i.test(userInstruction.trim());
+
     activePort.postMessage({
       type: "RUN_SKILL",
       skillPath: selectedSkill.path,
       growthActionId: activeGrowthAction?.id || "",
       userInstruction: userInstruction,
       targetImageUrl,
-      continueSession: $("continueSessionCheckbox").checked,
+      continueSession: shouldContinueSession,
       highRandomness: $("highRandomnessCheckbox").checked,
       negativeFilter: $("negativeFilterCheckbox").checked,
     });
