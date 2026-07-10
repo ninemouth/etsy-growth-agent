@@ -3,12 +3,52 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { JSDOM } from "jsdom";
+import { sanitizeFinalReportForDelivery, validateReport } from "../modules/agentLoop.js";
 
 const wait = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 const root = process.cwd();
 const html = fs.readFileSync(path.join(root, "dashboard.html"), "utf8");
 const js = fs.readFileSync(path.join(root, "dashboard.js"), "utf8");
 const css = fs.readFileSync(path.join(root, "dashboard.css"), "utf8");
+
+const jargonReport = {
+  type: "final",
+  output: {
+    overview: "已通过 DOM 和 read_current_page 完成 Etsy 商品页审计，目标定位为欧美礼品市场。",
+    analysis: "需要继续使用 xpath 线索和 open_new_tab 进入候选详情页。",
+    summary: "agentic_web_search 已补充店铺资料，但不能把内部流程写给卖家。",
+    data: [
+      {
+        evidence: "click_by_selector 后确认候选页面存在平台访问限制，当前结论仅用于说明页面访问状态，不作为已验证销售判断。",
+        source_ref: "read_current_page#1",
+        evidence_ledger: [
+          {
+            source_type: "assumption",
+            source_ref: "read_current_page#1",
+            observed_value: "DOM、xpath 与 open_new_tab 等内部术语需要在交付前转为业务语言。",
+            used_for: "验证最终报告交付前的语言净化不会触发不必要重做。",
+            confidence: "medium",
+            limitation: "这是 smoke 测试样例，不声明真实 Etsy 页面或 API 证据。",
+          },
+        ],
+      },
+    ],
+  },
+};
+const sanitizedJargonReport = sanitizeFinalReportForDelivery(jargonReport);
+assert.equal(sanitizedJargonReport.changed, true, "final reports with internal jargon should be sanitized before validation");
+assert.doesNotMatch(
+  [
+    sanitizedJargonReport.parsed.output.overview,
+    sanitizedJargonReport.parsed.output.analysis,
+    sanitizedJargonReport.parsed.output.summary,
+    sanitizedJargonReport.parsed.output.data[0].evidence,
+  ].join("\n"),
+  /read_current_page|open_new_tab|click_by_selector|agentic_web_search|DOM|xpath/i,
+  "sanitized report body should not expose internal tool or parser terms"
+);
+assert.equal(sanitizedJargonReport.parsed.output.data[0].source_ref, "read_current_page#1", "technical source refs should remain stable for evidence tracing");
+assert.deepEqual(validateReport(sanitizedJargonReport.parsed, "", "skills/etsy_product_opportunity_explorer.skill.md"), [], "sanitized final report should pass report validation without critic redo");
 
 const dom = new JSDOM(html, {
   url: "chrome-extension://test/dashboard.html",

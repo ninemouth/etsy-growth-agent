@@ -285,7 +285,71 @@ function domesticVisualRouteActive(skillId, pageContext, toolHistory) {
   return hasImageSearchAttempt(toolHistory) || hasPreparedCleanImageAttempt(toolHistory);
 }
 
-function validateReport(parsed, userInstruction, skillId, toolHistory = [], pageContext = {}) {
+const REPORT_JARGON_REPLACEMENTS = [
+  [/read_current_page/gi, "页面信息读取"],
+  [/open_new_tab/gi, "打开候选详情页取证"],
+  [/close_tab/gi, "关闭已完成取证的页面"],
+  [/click_by_text|click_by_selector/gi, "页面交互"],
+  [/input_text_and_search/gi, "站内搜索"],
+  [/agentic_web_search/gi, "后台资料检索"],
+  [/\bDOM\b/g, "页面文本"],
+  [/xpath/gi, "页面定位线索"],
+  [/GBK\s*编码|UTF-8/gi, "页面编码"],
+  [/自愈程序|爬虫/gi, "自动化取证流程"],
+  [/人机拦截|验证码/gi, "平台访问限制"],
+];
+
+const REPORT_JARGON_PROTECTED_KEYS = new Set([
+  "source_type",
+  "source_ref",
+  "product_link",
+  "link",
+  "url",
+  "candidate_image_url",
+  "source_candidate_image",
+  "image",
+  "imageUrl",
+  "image_url",
+]);
+
+function sanitizeBusinessReportText(text = "") {
+  if (typeof text !== "string") return text;
+  return REPORT_JARGON_REPLACEMENTS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), text);
+}
+
+function sanitizeReportObjectForDelivery(value, key = "") {
+  if (typeof value === "string") {
+    return REPORT_JARGON_PROTECTED_KEYS.has(key) ? value : sanitizeBusinessReportText(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeReportObjectForDelivery(item, key));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([childKey, childValue]) => [
+        childKey,
+        sanitizeReportObjectForDelivery(childValue, childKey),
+      ])
+    );
+  }
+  return value;
+}
+
+export function sanitizeFinalReportForDelivery(parsed) {
+  if (!parsed || parsed.type !== "final" || !parsed.output) {
+    return { parsed, changed: false };
+  }
+  const sanitized = {
+    ...parsed,
+    output: sanitizeReportObjectForDelivery(parsed.output),
+  };
+  return {
+    parsed: sanitized,
+    changed: JSON.stringify(sanitized.output) !== JSON.stringify(parsed.output),
+  };
+}
+
+export function validateReport(parsed, userInstruction, skillId, toolHistory = [], pageContext = {}) {
   const errors = [];
   if (!parsed || parsed.type !== "final" || !parsed.output) {
     errors.push("未输出符合格式的 final 报告 JSON 结构");
@@ -675,6 +739,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     }
 
     instructionText += `\n\n【极其重要：强制输出格式】\n无论你进行了多少轮推演，**你最后一次的输出必须，且只能是如下 JSON 格式**（请包裹在 \`\`\`json 中）：\n\`\`\`json\n{\n  "type": "final",\n  "output": {\n    "overview": "...",\n    "analysis": "...",\n    "summary": "...",\n    "data": [] \n  }\n}\n\`\`\`\n严禁把上述指令文字直接暴露在最终报告中！`;
+    instructionText += `\n\n【最终报告语言净化要求】工具名、函数名、页面解析术语和内部执行细节只允许出现在工具调用中，严禁写入最终报告正文。最终报告必须面向 Etsy 卖家，用“页面文本取证、候选详情页核验、后台资料检索、平台访问限制”等业务语言表达，不得出现 DOM、xpath、read_current_page、open_new_tab、close_tab、agentic_web_search 等内部技术词。`;
     instructionText += `\n\n【注意：以下是你当前所处的最新页面上下文数据】\n${ctxString}`;
 
     let newUserContent = instructionText;
@@ -714,7 +779,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
 
     sendProgress({ type: "llm_done", step, content: assistantContent });
 
-    const parsed = extractJSONBlock(assistantContent);
+    let parsed = extractJSONBlock(assistantContent);
 
     if (!parsed) {
       return {
@@ -726,6 +791,15 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     }
 
     if (parsed.type === "final") {
+      const sanitizedFinal = sanitizeFinalReportForDelivery(parsed);
+      if (sanitizedFinal.changed) {
+        parsed = sanitizedFinal.parsed;
+        sendProgress({
+          type: "auto_fix",
+          step,
+          message: "已自动将报告中的内部技术术语改写为业务语言，避免不必要的整稿重做。",
+        });
+      }
       const validationErrors = validateReport(parsed, userInstruction, skillId, toolHistory, pageContext);
       if (validationErrors.length > 0) {
         const reflectionsCount = ctxForPrompt.__reflectionsCount || 0;
