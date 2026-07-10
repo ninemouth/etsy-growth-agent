@@ -355,6 +355,19 @@ function hasCompetitorVisualLedger(ledger = []) {
   });
 }
 
+function hasTrendsVisualLedger(ledger = []) {
+  return ledger.some((entry) => {
+    if (String(entry?.source_type || "").toLowerCase() !== "screenshot_visual") return false;
+    const text = [
+      entry?.source_ref,
+      entry?.observed_value,
+      entry?.used_for,
+      entry?.limitation,
+    ].filter(Boolean).join(" ");
+    return /Google Trends|trends\.google|趋势图|Interest over time|related queries|related topics|季节|搜索热度|需求曲线|trend chart/i.test(text);
+  });
+}
+
 function hasOpenedEtsyCompetitorPage(toolHistory = [], currentUrl = "") {
   const current = String(currentUrl || "");
   return toolHistory.some((entry) => {
@@ -692,6 +705,10 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
     }
     if (!hasAnyLedgerType(allLedgerEntries, ["google_search", "google_trends"])) {
       errors.push("店铺优化报告缺少必须完成的 Google Trends US / Google Search 站外需求证据。该项不能降级为 assumption，请调用 search_in_browser(engine=google_us 或 google_trends) 获取真实检索/趋势证据。");
+    }
+    const hasTrendInterpretation = /Google Trends|谷歌趋势|趋势图|搜索趋势|搜索热度|年度趋势|季度趋势|近\s*12\s*个月|YoY|QoQ|季节性|需求曲线|Interest over time|related queries|related topics/i.test(fullReportText);
+    if ((hasLedgerType(allLedgerEntries, "google_trends") || hasTrendInterpretation) && !hasTrendsVisualLedger(allLedgerEntries)) {
+      errors.push("店铺优化报告缺少 Google Trends 截图视觉解读证据。趋势图属于可视化数据，若使用 Google Trends 或输出趋势/季节性/热度方向，必须在 evidence_ledger 的 screenshot_visual 中写明 Trends 图表截图观察到的时间范围、需求曲线方向、季节峰值或 related queries；否则只能写“趋势图待人工确认”。");
     }
     if (!hasAnyLedgerType(allLedgerEntries, ["google_search", "google_trends"]) && hasAssumptionFallback(allLedgerEntries, /Google|谷歌|站外|趋势|季节|需求/i) && /呈现|显示|证明|同比|环比|增长|下降|热度高|趋势上升/i.test(combinedReportText)) {
       errors.push("店铺优化报告的站外趋势只有 assumption，正文不能写成已验证事实。请把趋势判断降级为待验证假设，或先调用 Google Trends / Etsy 搜索 获取真实证据。");

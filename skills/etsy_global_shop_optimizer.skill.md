@@ -20,7 +20,7 @@
 3. 基于页面文本/API 先抽取店铺平台属性、主营类目、目标人群、价格带、视觉调性/格调、标题与 attributes 填写状态；**不能只凭截图做店铺诊断**。
 4. 必须调用 `search_in_browser` 且 `engine="etsy"`，围绕核心类目词访问 Etsy 站内搜索、market 或热卖页面，提取同类高排名商品/店铺的价格、评价门槛、首图卖点、标题词、店铺定位与履约承诺。建议先用 `searchType="listing"` 获取高排名 listing，再用 `searchType="shop"` 筛出店铺。
 5. 必须在 Etsy 搜索后用 `open_new_tab` 打开 2-3 个同类高排名竞品店铺或商品详情页，读取页面并结合打开后的实时截图做视觉分析；`evidence_ledger` 中必须至少有一条 `screenshot_visual` 明确写明“竞品店铺/商品详情截图”的首图卖点、视觉调性、包装/场景图或画廊结构。只看搜索结果页截图、Google 摘要或当前自营店铺截图，不得声称“已完成头部店铺反向工程”。图中这类“Etsy 站内搜索/热卖榜未直接访问”不允许作为最终交付。
-6. 必须调用 `search_in_browser` 且 `engine="google_us"` 或 `engine="google_trends"`，验证欧美站外需求表达、Google Trends US 近 12 个月方向或相关 Google 结果。图中这类“Google Trends US 未直接访问，来自行业报告摘要”不允许作为最终交付。
+6. 必须调用 `search_in_browser` 且 `engine="google_us"` 或 `engine="google_trends"`，验证欧美站外需求表达、Google Trends US 近 12 个月方向或相关 Google 结果。若使用 `engine="google_trends"` 或报告正文输出趋势/季节性/搜索热度方向，必须结合 Google Trends 页面截图解读趋势图；`evidence_ledger` 中必须至少有一条 `screenshot_visual` 明确写明 “Google Trends / trends.google.com / 趋势图截图” 中观察到的时间范围、需求曲线方向、季节峰值或 related queries。图中这类“Google Trends US 未直接访问，来自行业报告摘要”不允许作为最终交付。
 7. 如果报告涉及配送/物流/时效/工作日，必须额外调用 `search_in_browser` 且 `engine="google_us"`，用 “Etsy international shipping delivery time + 发货地/目的地/品类/承运商” 等关键词做实时物流研究。国际物流因地区、发货地、承运商、季节和清关差异很大，禁止凭模型常识写“香港发货 7-12 工作日”这类确定承诺；没有实时证据时只能写成待确认区间和人工确认点。
 8. 在没有完成店铺健康度评级前，严禁把工作流切到 1688/采购/货源推荐。
 
@@ -101,7 +101,7 @@
    - **证据链**：
      - **Google Search US**：欧美本地搜索结果、站外竞品分布、内容入口和本地常用词。
      - **Google Search US + Etsy 关键词**：Etsy 相关 Google 搜索结果，用于交叉验证关键词表达和站外内容竞争。
-     - **Google Trends US**：年度/季度/近 12 个月趋势方向；无法读取图表时必须继续访问或写成“趋势图待人工确认”，不得输出具体 YoY/QoQ 数字。
+     - **Google Trends US**：年度/季度/近 12 个月趋势方向；必须基于 Trends 截图解读 `Interest over time` 曲线、季节峰值和 related queries。无法读取或截图无法判断图表时必须继续访问或写成“趋势图待人工确认”，不得输出具体 YoY/QoQ 数字或确定的上升/下降结论。
 4. **第四层：高销竞品店铺反向工程 (Competitor Reverse Engineering)**
    - **逻辑**：对 2-3 个 Etsy 高销相似竞品或头部店铺做页面级对标，而不是只看单个商品卡。
    - **证据链**：竞品标题结构、英文 SEO 长尾词、首图卖点文案占比、评价数量门槛、价格带、履约承诺、促销标签和店铺垂直度。
@@ -199,6 +199,7 @@
 - `source_type` 允许值：
     - `page_dom`: 当前页面真实文本、商品标题、价格、评论数、店铺类目等。
     - `screenshot_visual`: 当前店铺截图或竞品店铺/商品详情页截图中的视觉陈列、主图质量、首屏信息密度、英文卖点图、画廊结构、包装/场景图等。店铺优化报告必须至少包含一条明确来自竞品截图的 `screenshot_visual`。
+      如果使用 Google Trends 或输出趋势/季节性判断，也必须包含一条明确来自 Google Trends 图表截图的 `screenshot_visual`，说明时间范围、曲线方向、峰值月份或 related queries。
   - `etsy_api`: `etsy_api_get_store_snapshot` / `etsy_api_get_products` / `etsy_api_get_analytics` / `etsy_api_get_transactions` 兼容工具返回的自营 Etsy 个人访问 API 值，其中订单应来自 发货资料 posting，不能声称来自已失效的 finance transaction 默认接口。
   - `etsy_search`: Etsy 站内搜索或榜单页面返回值。
   - `google_search`: Google Search US 搜索返回值。
