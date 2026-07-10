@@ -44,6 +44,13 @@ let growthRuntimeState = {
   opportunities: [],
 };
 
+function isStoreApiSurfaceActive() {
+  return Boolean(
+    document.querySelector('.nav-menu button[data-tab="store"]')?.classList.contains("active") ||
+    document.querySelector('.nav-menu button[data-tab="orders"]')?.classList.contains("active")
+  );
+}
+
 const GROWTH_ACTIONS = {
   diagnose_store_growth: {
     title: "全店增长体检",
@@ -183,7 +190,7 @@ function initTabs() {
         renderExperimentBoard();
       } else if (tabId === "tracker") {
         renderTrackerTab();
-      } else if (tabId === "store") {
+      } else if (tabId === "store" || tabId === "orders") {
         renderStoreTab();
       }
     });
@@ -194,7 +201,7 @@ function initTabs() {
 function bindEvents() {
   document.getElementById("refresh-all-btn").addEventListener("click", async () => {
     await refreshAllData();
-    if (document.querySelector(".nav-menu button[data-tab='store']").classList.contains("active")) {
+    if (isStoreApiSurfaceActive()) {
       renderStoreTab();
     }
   });
@@ -366,57 +373,6 @@ function bindEvents() {
     });
   }
 
-  // Handle Add Shop Form Submit
-  const addShopForm = document.getElementById("add-shop-form");
-  if (addShopForm) {
-    const newForm = addShopForm.cloneNode(true);
-    addShopForm.parentNode.replaceChild(newForm, addShopForm);
-    
-    newForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const name = document.getElementById("new-shop-name").value.trim();
-      const shopId = document.getElementById("new-shop-client-id").value.trim();
-      const apiKey = document.getElementById("new-shop-api-key").value.trim();
-      const warehouseType = document.getElementById("new-shop-warehouse").value;
-
-      if (!name || !shopId || !apiKey) {
-        alert("请填写完整的店铺信息！");
-        return;
-      }
-
-      const storage = await new Promise(r => chrome.storage.local.get(["etsyShops"], r));
-      const shops = storage.etsyShops || [];
-
-      if (shops.some(s => s.shopId === shopId || s.id === shopId)) {
-        alert("此 Etsy Shop ID 已经绑定过，请勿重复添加！");
-        return;
-      }
-
-      const newShop = {
-        id: shopId,
-        shopId,
-        name,
-        apiKey,
-        warehouseType,
-        isDefault: shops.length === 0
-      };
-
-      shops.push(newShop);
-      await new Promise(r => chrome.storage.local.set({
-        etsyShops: shops,
-        activeShopId: newShop.id
-      }, r));
-
-      newForm.reset();
-      alert(`店铺 [${name}] 绑定与授权成功！`);
-      await refreshAllData();
-      drawMockTrackerCharts();
-      if (document.querySelector(".nav-menu button[data-tab='store']").classList.contains("active")) {
-        renderStoreTab();
-      }
-    });
-  }
-
   // Handle Global Shop Selector Switch
   const globalShopSelector = document.getElementById("global-shop-selector");
   if (globalShopSelector) {
@@ -429,7 +385,7 @@ function bindEvents() {
         await new Promise(r => chrome.storage.local.set({ activeShopId: selectedId }, r));
         await refreshAllData();
         drawMockTrackerCharts();
-        if (document.querySelector(".nav-menu button[data-tab='store']").classList.contains("active")) {
+        if (isStoreApiSurfaceActive()) {
           renderStoreTab();
         }
       }
@@ -541,7 +497,7 @@ async function refreshAllData() {
           await new Promise(r => chrome.storage.local.set({ activeShopId: shopId }, r));
           await refreshAllData();
           drawMockTrackerCharts();
-          if (document.querySelector(".nav-menu button[data-tab='store']").classList.contains("active")) {
+          if (isStoreApiSurfaceActive()) {
             renderStoreTab();
           }
         });
@@ -565,7 +521,7 @@ async function refreshAllData() {
             }, r));
             await refreshAllData();
             drawMockTrackerCharts();
-            if (document.querySelector(".nav-menu button[data-tab='store']").classList.contains("active")) {
+            if (isStoreApiSurfaceActive()) {
               renderStoreTab();
             }
           }
@@ -2039,7 +1995,7 @@ function getEndpointAuditSummary() {
       name: "Seller API 店铺快照",
       status: "真实端点",
       evidence: "GET_ETSY_STORE_SNAPSHOT 调用 etsy_api_get_store_snapshot，成功后缓存到 etsyStoreSnapshotCache。",
-      action: "保留在 API 数据页；画布只引用它作为经营证据。",
+      action: "保留在 API 概览；画布只引用它作为经营证据。",
     },
     {
       name: "Seller API SKU analytics",
@@ -2938,23 +2894,23 @@ async function maybeAutoRefreshSellerApiCache() {
 }
 
 function ensureStoreApiStatusNode() {
+  const nodes = [...document.querySelectorAll(".store-api-source-status")];
+  if (nodes.length) return nodes;
   const cardHeader = document.querySelector("#view-store .grid-card .card-header");
-  if (!cardHeader) return null;
-  let statusNode = document.getElementById("store-api-source-status");
-  if (!statusNode) {
-    statusNode = document.createElement("div");
-    statusNode.id = "store-api-source-status";
-    statusNode.style.cssText = "font-size:11px; color:var(--text-secondary); flex-basis:100%; min-width:0; line-height:1.5; word-break:break-word;";
-    cardHeader.appendChild(statusNode);
-  }
-  return statusNode;
+  if (!cardHeader) return [];
+  const statusNode = document.createElement("div");
+  statusNode.className = "store-api-source-status";
+  cardHeader.appendChild(statusNode);
+  return [statusNode];
 }
 
 function setStoreApiStatus(kind, message) {
-  const node = ensureStoreApiStatusNode();
-  if (!node) return;
+  const nodes = ensureStoreApiStatusNode();
+  if (!nodes.length) return;
   const color = kind === "live" ? "#10b981" : kind === "partial" ? "#f59e0b" : "#ef4444";
-  node.innerHTML = `<span style="color:${color}; font-weight:600;">● ${escapeHtml(message)}</span>`;
+  nodes.forEach((node) => {
+    node.innerHTML = `<span style="color:${color}; font-weight:600;">● ${escapeHtml(message)}</span>`;
+  });
 }
 
 function formatStoreApiFailure(failure = {}) {

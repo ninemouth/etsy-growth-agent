@@ -23,7 +23,13 @@
           <span class="nav-icon">🧩</span> 增长工作流
         </button>
         <button class="nav-item" data-tab="store">
-          <span class="nav-icon">🏪</span> API 数据
+          <span class="nav-icon">📊</span> API 概览
+        </button>
+        <button class="nav-item" data-tab="orders">
+          <span class="nav-icon">📦</span> 订单履约
+        </button>
+        <button class="nav-item" data-tab="sku">
+          <span class="nav-icon">🧾</span> Listing / SKU
         </button>
         <button class="nav-item" data-tab="reports">
           <span class="nav-icon">📝</span> 报告中心
@@ -240,8 +246,8 @@
       <section id="view-sku" class="view-pane">
         <div class="workbench-toolbar">
           <div>
-            <h2>SKU 作战台</h2>
-            <p>把商品从“列表”升级成按销售瓶颈排序的运营队列。</p>
+            <h2>Listing / SKU 作战台</h2>
+            <p>把 Etsy listings 从“商品列表”升级成按销售瓶颈排序的运营队列。</p>
           </div>
           <div class="toolbar-actions">
             <select id="sku-filter" class="form-select">
@@ -404,7 +410,7 @@
                 <h3>📊 卖家 API 多阶段数据对比 (曝光/转化/销量)</h3>
                 <div style="display:flex; justify-content:space-between; margin-bottom:12px; gap:8px;">
                   <span class="chart-tip">折线时间轴将自动合并您的运营阶段标记，评估边际增长</span>
-                  <button class="btn btn-outline btn-xs" id="mock-api-data-btn">✨ 录入/更新 API 数据</button>
+                  <button class="btn btn-outline btn-xs" id="mock-api-data-btn">✨ 录入/更新 API 快照</button>
                 </div>
                 <div class="chart-container-row">
                   <div class="chart-box">
@@ -432,11 +438,10 @@
       <!-- View: Store Performance (Etsy Seller API) -->
       <section id="view-store" class="view-pane">
         <div class="store-grid">
-          <!-- Left side Store Stats -->
           <div class="store-main-column col-span-2">
             <div class="grid-card" style="margin-bottom:20px;">
               <div class="card-header">
-                <h3>📦 卖家订单待履约雷达 (自发货 / 第三方海外仓)</h3>
+                <h3>📊 Etsy API 店铺经营概览</h3>
                 <div class="store-date-toolbar">
                   <label>查询日期</label>
                   <input type="date" id="store-api-date-from" class="form-input">
@@ -444,34 +449,7 @@
                   <input type="date" id="store-api-date-to" class="form-input">
                   <button id="store-api-query-btn" class="btn btn-outline">查询</button>
                 </div>
-              </div>
-              <div class="card-body store-orders-body">
-                <table class="data-table store-orders-table">
-                  <thead>
-                    <tr>
-                      <th>订单号</th>
-                      <th>商品 SKU</th>
-                      <th>数量</th>
-                      <th>支付金额 (USD)</th>
-                      <th>物流方式</th>
-                      <th>订单状态</th>
-                      <th>发货倒计时</th>
-                    </tr>
-                  </thead>
-                  <tbody id="store-orders-table">
-                    <tr>
-                      <td colspan="7" class="empty-cell">
-                        <div class="empty-state">暂无待发货订单，请绑定 Etsy 官方卖家 API 凭证以同步实时订单。</div>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-            
-            <div class="grid-card" style="margin-bottom:20px;">
-              <div class="card-header">
-                <h3>📊 官方 API 店铺流量与加购转化看板 (Real-time Analytics)</h3>
+                <div class="store-api-source-status"></div>
               </div>
               <div class="card-body">
                 <div class="stats-row" style="display:flex; justify-content:space-around; gap:15px; flex-wrap:wrap; padding:5px 0;">
@@ -518,50 +496,37 @@
               </div>
             </div>
           </div>
+        </div>
+      </section>
 
-          <!-- Right side Store API Credentials Info -->
-          <div class="store-sidebar-column">
-            <div class="grid-card" style="margin-bottom:20px;">
-              <div class="card-header">
-                <h3>🏢 Etsy 已绑定店铺列表</h3>
-              </div>
-              <div class="card-body scrollable" style="max-height: 220px; padding: 10px;">
-                <div id="dashboard-shop-list" style="display:flex; flex-direction:column; gap:8px;">
-                  <!-- Shop list items populated dynamically -->
-                  <div class="empty-state" style="padding:15px 0;">暂无绑定店铺，请在下方录入。</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="grid-card">
-              <div class="card-header">
-                <h3>➕ 添加绑定新店铺 API</h3>
-              </div>
-              <div class="card-body" style="padding: 12px;">
-                <form id="add-shop-form" style="display:flex; flex-direction:column; gap:10px;">
-                  <div>
-                    <label style="font-size:11px; color:var(--text-secondary); display:block; margin-bottom:4px;">店铺自定义名称</label>
-                    <input type="text" id="new-shop-name" placeholder="如: Handmade Gift Shop" required style="width:100%; font-size:12px; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--bg-input); color:var(--text-primary);">
-                  </div>
-                  <div>
-                    <label style="font-size:11px; color:var(--text-secondary); display:block; margin-bottom:4px;">Etsy Shop ID</label>
-                    <input type="text" id="new-shop-client-id" placeholder="Etsy Shop ID" required style="width:100%; font-size:12px; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--bg-input); color:var(--text-primary);">
-                  </div>
-                  <div>
-                    <label style="font-size:11px; color:var(--text-secondary); display:block; margin-bottom:4px;">API Key</label>
-                    <input type="password" id="new-shop-api-key" placeholder="Etsy API Key" required style="width:100%; font-size:12px; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--bg-input); color:var(--text-primary);">
-                  </div>
-                  <div>
-                    <label style="font-size:11px; color:var(--text-secondary); display:block; margin-bottom:4px;">发货时效履约模式</label>
-                    <select id="new-shop-warehouse" style="width:100%; font-size:12px; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--bg-input); color:var(--text-primary);">
-                      <option value="Etsy 自发货">Etsy 自发货 (跨境直邮/自发货模式)</option>
-                      <option value="第三方海外仓">第三方海外仓 (欧美本土仓模式)</option>
-                    </select>
-                  </div>
-                  <button type="submit" class="btn btn-primary btn-block" style="font-size:12px; padding:8px;">➕ 绑定该店铺</button>
-                </form>
-              </div>
-            </div>
+      <!-- View: Orders and Fulfillment -->
+      <section id="view-orders" class="view-pane">
+        <div class="grid-card">
+          <div class="card-header">
+            <h3>📦 卖家订单待履约雷达 (自发货 / 第三方海外仓)</h3>
+            <div class="store-api-source-status"></div>
+          </div>
+          <div class="card-body store-orders-body">
+            <table class="data-table store-orders-table">
+              <thead>
+                <tr>
+                  <th>订单号</th>
+                  <th>商品 SKU</th>
+                  <th>数量</th>
+                  <th>支付金额 (USD)</th>
+                  <th>物流方式</th>
+                  <th>订单状态</th>
+                  <th>发货倒计时</th>
+                </tr>
+              </thead>
+              <tbody id="store-orders-table">
+                <tr>
+                  <td colspan="7" class="empty-cell">
+                    <div class="empty-state">暂无待发货订单，请先在系统设置中绑定 Etsy API，并在 API 概览中查询同步。</div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </section>
@@ -666,7 +631,7 @@
             <p>这里只保留影响插件运行的系统级配置。经营动作、报告、商品、竞品和实验都应回到增长工作流画布中推进。</p>
           </div>
           <div class="toolbar-actions">
-            <button class="btn btn-outline" id="settings-open-store">管理 API 数据</button>
+            <button class="btn btn-outline" id="settings-open-store">查看 API 概览</button>
             <button class="btn btn-danger" id="settings-reset-all">重置本地数据</button>
           </div>
         </div>
@@ -685,7 +650,7 @@
             </div>
             <div class="card-body">
               <div class="empty-state" style="text-align:left; align-items:flex-start;">
-                左侧保留：增长工作流、API 数据、报告中心、系统任务。系统设置通过悬浮按钮打开。商品体检、机会雷达、执行复盘、竞品事件和利润线都应作为画布案件、任务或证据进入。
+                左侧保留：增长工作流、API 概览、订单履约、Listing / SKU、报告中心、系统任务。系统设置通过悬浮按钮打开，API 绑定不再放在数据页内。商品体检、机会雷达、执行复盘、竞品事件和利润线都应作为画布案件、任务或证据进入。
               </div>
             </div>
           </div>

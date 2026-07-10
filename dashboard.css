@@ -1304,6 +1304,14 @@ body {
   font-size: 11px;
   white-space: nowrap;
 }
+.store-api-source-status {
+  flex-basis: 100%;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+  word-break: break-word;
+}
 .store-orders-body {
   overflow: visible;
 }
