@@ -48,6 +48,9 @@ assert.match(toolRegistrySource, /hasValidEtsySearchEvidence/, "Etsy search evid
 assert.match(toolRegistrySource, /buildBrowserSearchAttempts[\s\S]*etsy_market_fallback[\s\S]*google_trends_us_no_date_fallback/, "Etsy and Google Trends browser searches should retry alternate evidence URLs");
 assert.match(toolRegistrySource, /hasValidGoogleTrendsEvidence/, "Google Trends search evidence should have a runtime validity gate");
 assert.match(toolRegistrySource, /\"google_trends\", \"bing\", \"etsy\"/, "Etsy search tabs should be auto-closed after evidence capture unless keepTab is set");
+assert.match(toolRegistrySource, /collect_etsy_shop_pages/, "tool registry should expose a traditional Etsy shop pagination collection loop");
+assert.match(toolRegistrySource, /screenshotCaptured[\s\S]*screenshotRef[\s\S]*completedFullCrawl/, "Etsy shop collection loop should capture per-page screenshot evidence without returning raw base64 in checkpoints");
+assert.match(toolRegistrySource, /currentSessionData\.products\.set/, "Etsy shop collection loop should accumulate visible product cards while reading pages");
 assert.match(contentSource, /extractEtsySearchCards/, "content script should extract Etsy-specific listing cards");
 assert.match(contentSource, /search\\\/shops[\s\S]*shopUrl/, "content script should extract Etsy shop search cards");
 assert.match(contentSource, /visibleOrderRank/, "content script should expose visible product order rank for competitor storefront interpretation");
@@ -66,7 +69,9 @@ assert.match(backgroundSource, /etsy\\.com\\\/shop\\\//, "Etsy shop pages should
 assert.match(agentLoopSource, /Etsy 站内搜索\/热卖榜\/高排名竞品店铺对标证据。该项不能降级为 assumption/, "critic should reject shop optimizer reports without real Etsy ranking evidence");
 assert.match(agentLoopSource, /竞品店铺\/商品详情页截图视觉证据/, "critic should require competitor screenshot evidence for shop optimizer reports");
 assert.match(agentLoopSource, /competitor_benchmarks/, "critic should require structured competitor benchmark data");
+assert.match(agentLoopSource, /collect_etsy_shop_pages[\s\S]*completedFullCrawl/, "critic should recognize completed Etsy shop pagination crawl evidence for full-shop coverage claims");
 assert.match(shopOptimizerSkillSource, /open_new_tab[\s\S]*竞品店铺\/商品详情截图/, "shop optimizer should require opening competitor pages and analyzing competitor screenshots");
+assert.match(shopOptimizerSkillSource, /collect_etsy_shop_pages[\s\S]*边读 DOM 边累积商品卡片/, "shop optimizer should require browser pagination collection when competitor shop API data is unavailable");
 assert.match(shopOptimizerSkillSource, /competitor_benchmarks[\s\S]*listing_order_insight/, "shop optimizer should require per-competitor product structure and visible order analysis");
 assert.match(agentLoopSource, /Google Trends 截图视觉解读证据/, "critic should require Google Trends screenshot interpretation when trends are used");
 assert.match(shopOptimizerSkillSource, /Google Trends 页面截图解读趋势图/, "shop optimizer should require screenshot-based Google Trends interpretation");
@@ -386,6 +391,92 @@ const competitorOpenHistory2 = {
   arguments: { url: "https://www.etsy.com/shop/BellaOliviaGifts" },
   result: { ok: true, tabId: 10, pageData: { url: "https://www.etsy.com/shop/BellaOliviaGifts", visibleText: "BellaOliviaGifts personalized photo clutch wedding party gifts" } },
 };
+const competitorCrawlHistory = {
+  tool: "collect_etsy_shop_pages",
+  arguments: { url: "https://www.etsy.com/shop/TopBridalStudio", maxPages: 2 },
+  result: {
+    ok: true,
+    sourceUrl: "https://www.etsy.com/shop/TopBridalStudio",
+    pagesCollected: 2,
+    completedFullCrawl: false,
+    stoppedReason: "max_pages_reached",
+    totalVisibleProductCards: 48,
+    uniqueListingCount: 48,
+    pages: [
+      {
+        pageIndex: 1,
+        url: "https://www.etsy.com/shop/TopBridalStudio",
+        sortLabel: "Most Recent",
+        productCardsVisible: 24,
+        screenshotCaptured: true,
+        screenshotRef: "__ETSY_SHOP_CRAWL_SCREENSHOT_mock_1__",
+        pagination: { hasPagination: true, hasNextPage: true, nextPageUrl: "https://www.etsy.com/shop/TopBridalStudio?page=2" },
+      },
+      {
+        pageIndex: 2,
+        url: "https://www.etsy.com/shop/TopBridalStudio?page=2",
+        sortLabel: "Most Recent",
+        productCardsVisible: 24,
+        screenshotCaptured: true,
+        screenshotRef: "__ETSY_SHOP_CRAWL_SCREENSHOT_mock_2__",
+        pagination: { hasPagination: true, hasNextPage: true, nextPageUrl: "https://www.etsy.com/shop/TopBridalStudio?page=3" },
+      },
+    ],
+  },
+};
+const completedCompetitorCrawlHistory = {
+  ...competitorCrawlHistory,
+  result: {
+    ...competitorCrawlHistory.result,
+    completedFullCrawl: true,
+    stoppedReason: "no_next_page",
+    pages: [
+      ...competitorCrawlHistory.result.pages,
+      {
+        pageIndex: 3,
+        url: "https://www.etsy.com/shop/TopBridalStudio?page=3",
+        sortLabel: "Most Recent",
+        productCardsVisible: 8,
+        screenshotCaptured: true,
+        screenshotRef: "__ETSY_SHOP_CRAWL_SCREENSHOT_mock_3__",
+        pagination: { hasPagination: true, hasNextPage: false, nextPageUrl: "" },
+      },
+    ],
+  },
+};
+const completedCurrentShopCrawlHistory = {
+  tool: "collect_etsy_shop_pages",
+  arguments: { url: "https://www.etsy.com/shop/MidnightReveriee", maxPages: 2 },
+  result: {
+    ok: true,
+    sourceUrl: "https://www.etsy.com/shop/MidnightReveriee",
+    pagesCollected: 2,
+    completedFullCrawl: true,
+    stoppedReason: "no_next_page",
+    totalVisibleProductCards: 32,
+    uniqueListingCount: 32,
+    pages: [
+      {
+        pageIndex: 1,
+        url: "https://www.etsy.com/shop/MidnightReveriee",
+        sortLabel: "Most Recent",
+        productCardsVisible: 24,
+        screenshotCaptured: true,
+        screenshotRef: "__ETSY_SHOP_CRAWL_SCREENSHOT_current_1__",
+        pagination: { hasPagination: true, hasNextPage: true, nextPageUrl: "https://www.etsy.com/shop/MidnightReveriee?page=2" },
+      },
+      {
+        pageIndex: 2,
+        url: "https://www.etsy.com/shop/MidnightReveriee?page=2",
+        sortLabel: "Most Recent",
+        productCardsVisible: 8,
+        screenshotCaptured: true,
+        screenshotRef: "__ETSY_SHOP_CRAWL_SCREENSHOT_current_2__",
+        pagination: { hasPagination: true, hasNextPage: false, nextPageUrl: "" },
+      },
+    ],
+  },
+};
 assert.notDeepEqual(
   validateReport(shopOptimizerReportWithEtsyEvidence, "", "skills/etsy_global_shop_optimizer.skill.md", [
     { tool: "search_in_browser", arguments: { engine: "etsy", query: "wedding clutch" }, result: invalidEtsySearchResult },
@@ -407,6 +498,17 @@ assert.deepEqual(
   ], meaningfulPageContext),
   [],
   "shop optimizer critic should accept valid Etsy listing/search evidence"
+);
+assert.deepEqual(
+  validateReport(shopOptimizerReportWithEtsyEvidence, "", "skills/etsy_global_shop_optimizer.skill.md", [
+    { tool: "search_in_browser", arguments: { engine: "etsy", query: "wedding clutch" }, result: validEtsySearchResult },
+    googleSearchHistory,
+    googleTrendsHistory,
+    competitorCrawlHistory,
+    competitorOpenHistory2,
+  ], meaningfulPageContext),
+  [],
+  "shop optimizer critic should accept collect_etsy_shop_pages as opened/read competitor shop evidence"
 );
 const shallowCompetitorReport = globalThis.structuredClone(shopOptimizerReportWithEtsyEvidence);
 delete shallowCompetitorReport.output.competitor_benchmarks;
@@ -433,6 +535,18 @@ assert.notDeepEqual(
   ], meaningfulPageContext),
   [],
   "shop optimizer critic should reject full-shop product coverage claims without API or pagination crawl evidence"
+);
+assert.deepEqual(
+  validateReport(falseFullCoverageReport, "", "skills/etsy_global_shop_optimizer.skill.md", [
+    { tool: "search_in_browser", arguments: { engine: "etsy", query: "wedding clutch" }, result: validEtsySearchResult },
+    googleSearchHistory,
+    googleTrendsHistory,
+    completedCurrentShopCrawlHistory,
+    completedCompetitorCrawlHistory,
+    competitorOpenHistory2,
+  ], meaningfulPageContext),
+  [],
+  "shop optimizer critic should allow full-shop coverage claims only after a completed pagination crawl"
 );
 const shopOptimizerReportWithApiClaims = globalThis.structuredClone(shopOptimizerReportWithEtsyEvidence);
 shopOptimizerReportWithApiClaims.output.data[0].recommendation = "待 Etsy API 复核 Sessions、订单、转化与 Etsy 自发货履约节奏后再扩大广告。";

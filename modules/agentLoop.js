@@ -370,13 +370,22 @@ function getOpenedEtsyCompetitorUrls(toolHistory = [], currentUrl = "") {
   const current = normalizeEtsyCompetitorUrl(currentUrl);
   const urls = new Set();
   toolHistory.forEach((entry) => {
-    if (!["open_new_tab", "navigate_to"].includes(entry?.tool)) return;
-    [
-      entry.arguments?.url,
-      entry.result?.url,
-      entry.result?.finalUrl,
-      entry.result?.pageData?.url,
-    ].filter(Boolean).map(normalizeEtsyCompetitorUrl).forEach((url) => {
+    const candidateUrls = [];
+    if (["open_new_tab", "navigate_to"].includes(entry?.tool)) {
+      candidateUrls.push(
+        entry.arguments?.url,
+        entry.result?.url,
+        entry.result?.finalUrl,
+        entry.result?.pageData?.url,
+      );
+    }
+    if (entry?.tool === "collect_etsy_shop_pages") {
+      candidateUrls.push(entry.arguments?.url, entry.result?.sourceUrl);
+      if (Array.isArray(entry.result?.pages)) {
+        entry.result.pages.forEach((page) => candidateUrls.push(page?.url));
+      }
+    }
+    candidateUrls.filter(Boolean).map(normalizeEtsyCompetitorUrl).forEach((url) => {
       if (url && (!current || url !== current)) urls.add(url);
     });
   });
@@ -434,7 +443,7 @@ function validateCompetitorBenchmarks(out, toolHistory = [], pageContext = {}) {
     if (!normalizedUrl) {
       errors.push(`${label} 缺少有效 Etsy competitor_url / shop_url / listing_url。`);
     } else if (openedUrls.size > 0 && !openedUrls.has(normalizedUrl)) {
-      errors.push(`${label} 的 URL 未出现在本轮 open_new_tab/navigate_to 已打开竞品页证据中，不能把未打开页面写入竞品深度分析。`);
+      errors.push(`${label} 的 URL 未出现在本轮 open_new_tab/navigate_to/collect_etsy_shop_pages 已打开或分页读取的竞品页证据中，不能把未打开页面写入竞品深度分析。`);
     }
     const productSamples = benchmark?.product_samples || benchmark?.sample_products || benchmark?.visible_products;
     if (!Array.isArray(productSamples) || productSamples.length < 2) {
@@ -476,6 +485,19 @@ function validateCompetitorBenchmarks(out, toolHistory = [], pageContext = {}) {
 
 function hasFullShopProductCrawlEvidence(toolHistory = [], pageContext = {}) {
   if (hasEvidenceSource(toolHistory, pageContext, "etsy_api")) return true;
+  const currentShopUrl = normalizeEtsyCompetitorUrl(pageContext?.url || pageContext?.etsyShopProductContext?.currentPageUrl || "");
+  if (toolHistory.some((entry) => {
+    if (entry?.tool !== "collect_etsy_shop_pages" || entry?.result?.completedFullCrawl !== true || Number(entry?.result?.pagesCollected || 0) < 1) return false;
+    if (!currentShopUrl) return true;
+    const crawlUrls = [
+      entry.arguments?.url,
+      entry.result?.sourceUrl,
+      ...(Array.isArray(entry.result?.pages) ? entry.result.pages.map((page) => page?.url) : []),
+    ].filter(Boolean).map(normalizeEtsyCompetitorUrl);
+    return crawlUrls.includes(currentShopUrl);
+  })) {
+    return true;
+  }
   const urls = new Set();
   toolHistory.forEach((entry) => {
     if (!["open_new_tab", "navigate_to", "read_current_page"].includes(entry?.tool)) return;
@@ -1548,7 +1570,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       }
 
       let nextScreenshot = null;
-      const pageModifyingTools = ["open_new_tab", "navigate_to", "search_in_browser", "click_by_text", "input_text_and_search", "click_by_selector", "image_search_1688", "image_search_taobao", "image_search_in_browser", "click_by_coordinate"];
+      const pageModifyingTools = ["open_new_tab", "navigate_to", "search_in_browser", "collect_etsy_shop_pages", "click_by_text", "input_text_and_search", "click_by_selector", "image_search_1688", "image_search_taobao", "image_search_in_browser", "click_by_coordinate"];
       if (pageModifyingTools.includes(toolName)) {
         try {
           const tId = (toolResult && toolResult.tabId) ? toolResult.tabId : tabId;

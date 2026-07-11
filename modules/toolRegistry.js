@@ -4,6 +4,7 @@ import { callLLM, getSettings, prepareCleanProductImage } from './llmClient.js';
 import { etsyGetProductList, etsyGetProductInfo, etsyGetAnalyticsData, etsyGetFbsPostingList, etsyGetFboPostingList, etsyGetStoreSnapshot } from './etsyApi.js';
 
 const preparedImageCache = new Map();
+const etsyShopCrawlScreenshotCache = new Map();
 
 export let currentSessionData = {
   products: new Map(),
@@ -17,6 +18,7 @@ export function resetSessionData() {
     creatorInfo: null,
     detailCreators: []
   };
+  etsyShopCrawlScreenshotCache.clear();
 }
 
 export function getAccumulatedSessionData() {
@@ -40,6 +42,17 @@ function cachePreparedImage(dataUrl) {
 
 function resolvePreparedImageUrl(imageUrl) {
   return preparedImageCache.get(imageUrl) || imageUrl;
+}
+
+function cacheEtsyShopCrawlScreenshot(dataUrl, pageIndex = 0) {
+  if (!dataUrl) return null;
+  const ref = `__ETSY_SHOP_CRAWL_SCREENSHOT_${Date.now()}_${pageIndex}_${Math.random().toString(36).slice(2, 8)}__`;
+  etsyShopCrawlScreenshotCache.set(ref, dataUrl);
+  return ref;
+}
+
+function delay(ms = 0) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function checkTabUrl(url) {
@@ -318,6 +331,89 @@ async function _captureTabScreenshot(tabId) {
   });
 }
 
+async function waitForTabLoad(tabId, maxAttempts = 24, intervalMs = 500) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const tab = await new Promise((resolve) => {
+      chrome.tabs.get(tabId, (t) => {
+        if (chrome.runtime.lastError || !t) resolve(null);
+        else resolve(t);
+      });
+    });
+    if (!tab) return null;
+    if (tab.status === "complete") return tab;
+    await delay(intervalMs);
+  }
+  return await new Promise((resolve) => {
+    chrome.tabs.get(tabId, (t) => {
+      if (chrome.runtime.lastError || !t) resolve(null);
+      else resolve(t);
+    });
+  });
+}
+
+async function focusTab(tabId) {
+  const tab = await chrome.tabs.get(tabId);
+  if (tab?.windowId) {
+    await new Promise((resolve) => chrome.windows.update(tab.windowId, { focused: true }, () => resolve()));
+  }
+  await new Promise((resolve) => chrome.tabs.update(tabId, { active: true }, () => resolve()));
+  return tab;
+}
+
+async function readPageDataFromTab(tabId) {
+  const result = await sendToContentScript(tabId, { type: "READ_CURRENT_PAGE" });
+  if (!result?.ok) throw new Error(result?.error || "Failed to read page");
+  const pageData = result.data || {};
+  if (Array.isArray(pageData.productCards)) {
+    for (const card of pageData.productCards) {
+      if (card.href && card.title) {
+        currentSessionData.products.set(card.href, {
+          ...card,
+          captured_at: new Date().toISOString()
+        });
+      }
+    }
+  }
+  if (pageData.creatorInfo) currentSessionData.creatorInfo = pageData.creatorInfo;
+  if (Array.isArray(pageData.detailCreators)) {
+    for (const dc of pageData.detailCreators) {
+      if (dc.username && !currentSessionData.detailCreators.some(x => x.username === dc.username)) {
+        currentSessionData.detailCreators.push(dc);
+      }
+    }
+  }
+  return pageData;
+}
+
+function summarizeVisibleText(text = "", maxLength = 1600) {
+  return String(text || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function summarizeEtsyProductCard(card = {}, index = 0) {
+  return {
+    visibleOrderRank: card.visibleOrderRank ?? index + 1,
+    title: card.title || card.name || "",
+    price: card.price || "",
+    href: card.href || card.listingUrl || card.url || "",
+    shopName: card.shopName || "",
+    rating: card.rating || "",
+    reviewCount: card.reviewCount || card.reviews || "",
+    badges: card.badges || card.labels || [],
+    shippingText: card.shippingText || card.shipping || "",
+    promotionText: card.promotionText || card.discountText || card.saleText || "",
+    imageSrc: card.imageSrc || card.image || "",
+  };
+}
+
+function normalizeNextEtsyPageUrl(nextPageUrl = "", currentUrl = "") {
+  if (!nextPageUrl) return "";
+  try {
+    return new URL(nextPageUrl, currentUrl || "https://www.etsy.com").toString();
+  } catch (_) {
+    return "";
+  }
+}
+
 function isWarmCtaPixel(r, g, b, a) {
   return a > 180 && r >= 210 && g >= 50 && g <= 190 && b <= 125 && r > g + 35;
 }
@@ -509,6 +605,161 @@ export const tools = {
     }
 
     return pageData;
+  },
+
+  collect_etsy_shop_pages: async (args = {}) => {
+    const {
+      url = "",
+      tabId = null,
+      maxPages = 3,
+      keepTab = false,
+      delayMs = 900,
+      maxProductsPerPage = 40,
+    } = args;
+    const pageLimit = Math.max(1, Math.min(Number(maxPages) || 3, 10));
+    const productLimit = Math.max(2, Math.min(Number(maxProductsPerPage) || 40, 80));
+    let targetTabId = tabId ? parseInt(tabId) : null;
+    let openedByTool = false;
+    let sourceUrl = url;
+
+    if (!targetTabId) {
+      if (url) {
+        const created = await new Promise((resolve, reject) => {
+          chrome.tabs.create({ url: safeEncodeURI(url), active: true }, (tab) => {
+            if (chrome.runtime.lastError || !tab) reject(new Error(chrome.runtime.lastError?.message || "Failed to open Etsy shop tab"));
+            else resolve(tab);
+          });
+        });
+        targetTabId = created.id;
+        openedByTool = true;
+      } else {
+        const current = await getCurrentTab();
+        if (!current) throw new Error("No active tab found");
+        targetTabId = current.id;
+        sourceUrl = current.url || "";
+      }
+    }
+
+    if (!/etsy\.com\/shop\//i.test(String(sourceUrl || ""))) {
+      const tab = await chrome.tabs.get(targetTabId);
+      sourceUrl = tab?.url || sourceUrl;
+    }
+    if (!/etsy\.com\/shop\//i.test(String(sourceUrl || ""))) {
+      throw new Error("collect_etsy_shop_pages requires an Etsy shop URL or an active Etsy shop tab.");
+    }
+
+    const pages = [];
+    const seenUrls = new Set();
+    const uniqueListings = new Set();
+    let stoppedReason = "max_pages_reached";
+    let completedFullCrawl = false;
+
+    try {
+      for (let pageIndex = 1; pageIndex <= pageLimit; pageIndex++) {
+        await focusTab(targetTabId);
+        const tab = await waitForTabLoad(targetTabId);
+        await delay(Math.max(250, Number(delayMs) || 900));
+        const currentUrl = tab?.url || "";
+        if (seenUrls.has(currentUrl)) {
+          stoppedReason = "duplicate_page_url";
+          break;
+        }
+        seenUrls.add(currentUrl);
+
+        let pageData = {};
+        let readError = "";
+        try {
+          pageData = await readPageDataFromTab(targetTabId);
+        } catch (err) {
+          readError = err.message;
+        }
+
+        let screenshotRef = null;
+        let screenshotBytes = 0;
+        let screenshotError = "";
+        try {
+          const screenshotDataUrl = await _captureTabScreenshot(targetTabId);
+          screenshotBytes = screenshotDataUrl.length;
+          screenshotRef = cacheEtsyShopCrawlScreenshot(screenshotDataUrl, pageIndex);
+        } catch (err) {
+          screenshotError = err.message;
+        }
+
+        const shopContext = pageData.etsyShopProductContext || {};
+        const productCards = Array.isArray(pageData.productCards) ? pageData.productCards : [];
+        productCards.forEach((card) => {
+          const listingUrl = card.href || card.listingUrl || card.url;
+          if (listingUrl) uniqueListings.add(String(listingUrl).split("?")[0]);
+        });
+
+        const nextPageUrl = normalizeNextEtsyPageUrl(
+          shopContext?.pagination?.nextPageUrl,
+          pageData.url || currentUrl
+        );
+        const hasNextPage = Boolean(shopContext?.pagination?.hasNextPage && nextPageUrl);
+        pages.push({
+          pageIndex,
+          url: pageData.url || currentUrl,
+          title: pageData.title || "",
+          shopName: pageData.shopName || pageData.h1 || "",
+          sortLabel: shopContext.sortLabel || "",
+          sortControlText: shopContext.sortControlText || "",
+          visibleProductOrderBasis: shopContext.visibleProductOrderBasis || "",
+          pagination: {
+            hasPagination: Boolean(shopContext?.pagination?.hasPagination),
+            hasNextPage,
+            nextPageUrl,
+            pageLinks: Array.isArray(shopContext?.pagination?.pageLinks)
+              ? shopContext.pagination.pageLinks.slice(0, 12)
+              : [],
+          },
+          productCards: productCards.slice(0, productLimit).map(summarizeEtsyProductCard),
+          productCardsVisible: productCards.length,
+          visibleTextSnippet: summarizeVisibleText(pageData.visibleText),
+          pageHealth: pageData.pageHealth || {},
+          readError,
+          screenshotCaptured: Boolean(screenshotRef),
+          screenshotRef,
+          screenshotBytes,
+          screenshotNote: screenshotRef
+            ? "Screenshot is cached by reference for visual evidence; full base64 is intentionally omitted from tool history/checkpoints."
+            : "",
+          screenshotError,
+        });
+
+        if (!hasNextPage) {
+          stoppedReason = "no_next_page";
+          completedFullCrawl = productCards.length > 0;
+          break;
+        }
+        if (pageIndex >= pageLimit) break;
+        await new Promise((resolve, reject) => {
+          chrome.tabs.update(targetTabId, { url: safeEncodeURI(nextPageUrl), active: true }, (updatedTab) => {
+            if (chrome.runtime.lastError || !updatedTab) reject(new Error(chrome.runtime.lastError?.message || "Failed to navigate to next Etsy shop page"));
+            else resolve(updatedTab);
+          });
+        });
+      }
+
+      return {
+        ok: pages.length > 0,
+        tool: "collect_etsy_shop_pages",
+        sourceUrl,
+        tabId: targetTabId,
+        openedByTool,
+        pagesCollected: pages.length,
+        maxPages: pageLimit,
+        completedFullCrawl,
+        stoppedReason,
+        totalVisibleProductCards: pages.reduce((sum, page) => sum + Number(page.productCardsVisible || 0), 0),
+        uniqueListingCount: uniqueListings.size,
+        sortLabels: Array.from(new Set(pages.map((page) => page.sortLabel).filter(Boolean))),
+        screenshotPolicy: "Per-page screenshots are captured and cached by reference; full base64 payloads are omitted to keep checkpoints resumable.",
+        pages,
+      };
+    } finally {
+      if (openedByTool && !keepTab) await closeTabQuietly(targetTabId);
+    }
   },
 
   extract_product_info: async () => {
