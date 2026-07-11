@@ -63,6 +63,8 @@
 - 至少对标 2-3 个同类高排名商品或店铺，并提炼方法而不是只罗列名字：首图是否有文字、评价门槛、价格带、个性化选项、包装承诺、标题前 60 字、店铺垂直度、促销标签、发货地/预计送达表达。
 - 如果只看到 Etsy 搜索结果页，没有打开/读取竞品店铺或商品详情页并取得竞品截图，不得声称“已完成头部店铺反向工程”；只能写“已完成搜索结果初筛，仍需打开竞品详情页确认”。`search_in_browser(engine="etsy", searchType="shop")` 可用于店铺搜索，但仍必须确认结果页返回了真实 listing/shop 文本、价格/评价/店铺链接或可见卡片，不能把空白页/阻断页当成证据。
 - 竞品视觉学习必须写成可审计证据：`source_type="screenshot_visual"`，`source_ref` 写明竞品店铺/商品 URL 或截图区域，`observed_value` 写具体看到的首图文案、场景图、模特手持、包装图、画廊结构、风格统一度，不得用“竞品视觉较好”这类空话。
+- 竞品商品结构必须逐店铺输出，而不是只在正文里泛泛描述。每个竞品至少抽样 2 个可见商品，输出价格分布、商品类别/场景结构、可见 SKU 数量估计、促销/信任标签、店铺评论评分和商品展示顺序解读。
+- Etsy 店铺内商品的“上架顺序/展示顺序”只能作为可见陈列信号解读：例如店主主推款、第一屏价格梯度、婚礼场景优先级、促销款是否前置。除非页面明确显示排序条件、上架日期或 newest/recent 标签，不得把可见顺序直接推断成真实上架时间、真实销量或完整 SKU 排序。
 
 ---
 
@@ -171,6 +173,7 @@
      1. Etsy 站内搜索/热卖榜/高排名竞品店铺对标已经访问的查询词和页面。
      2. Google Search US / Google Trends US 已访问的查询词和页面。
      3. 如涉及配送时效，国际物流实时研究的查询词、目的地、承运商或平台说明来源。
+   - 必须包含“竞品店铺商品结构解析”小节，逐店铺对应 `competitor_benchmarks` 中的结构化数据；正文展示的数据必须与 `competitor_benchmarks` 数组一致，不能正文写 3 家而结构化只给 1 家。
 3. **summary (下一步决策)**：
    - 明确推荐其中一个候选方向，并给出前 3 步最紧迫的落地执行动作。
    - 前 3 步必须区分“已经可执行”和“必须先确认”的动作。若物流时效没有实时证据，不得写“添加配送 7-12 工作日”；只能写“完成目的地/承运商时效确认后，再更新商品描述或店铺公告”。
@@ -191,6 +194,23 @@
      - `risk_guard`: 需要避免的风险和需要补充验证的数据。
      - `stage_fit`: 说明该方案为什么适合当前店铺阶段，例如“新店冷启动优先补信任资产，不建议立即广告放量”。
      - `buyer_scenario`: 对应的欧美买家场景，例如 bride、bridesmaid、wedding guest、evening party 或 destination wedding。
+
+5. **competitor_benchmarks (竞品店铺商品结构解析，必须逐店铺输出)**：
+   - 顶层字段 `competitor_benchmarks` 必须是数组，默认至少 2 个竞品对象；若只有 1 个，必须在正文和对象中说明 Etsy 页面阻断、验证码、空白页或可访问竞品不足的原因。
+   - 每个对象必须包含：
+     - `competitor_name`: 竞品店铺或商品名。
+     - `competitor_url`: 已通过 `open_new_tab` 打开的 Etsy 店铺或商品详情 URL。
+     - `page_type`: `shop` 或 `listing`。
+     - `sampled_products_count`: 本轮实际分析的可见商品样本数。
+     - `visible_sku_count_estimate`: 页面可见 SKU / listing 数量估计与口径，例如“首屏 12 个可见商品”。
+     - `category_mix`: 商品类别或场景结构，例如 bridal clutch、bridesmaid gift、evening bag、photo clutch。
+     - `product_samples`: 至少 2 个可见商品样本，每个样本包含 `title`、`price`、`category_or_scenario`、`promotion_signal`、`visible_order_rank`。
+     - `price_distribution`: 必须包含 `min`、`max`、`main_band`，可补充 `premium_band` 或 `entry_band`。
+     - `promotion_signals`: 促销和信任标签，例如 sale、free shipping、bestseller、star seller、coupon；没有看到也写 `none_visible`。
+     - `shop_review_signal`: 必须包含可见 `rating` 和 `review_count`；若只读到商品评论而非店铺总评论，需要说明口径。
+     - `listing_order_insight`: 必须包含 `visible_sort_order`、`observed_order_basis`、`interpretation_limit`。只能解读可见展示顺序与陈列策略，不得把顺序直接当成真实上架时间或销量。
+     - `visual_method`、`seo_method`、`fulfillment_signal`：分别总结视觉方法、标题/关键词方法、履约/配送承诺。
+     - `evidence_refs` 或 `evidence_ledger_refs`: 指向 `etsy_search`、`page_dom`、`screenshot_visual` 等证据来源。
 
 ## 🔐 结构化证据账本硬规则
 

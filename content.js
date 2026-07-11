@@ -509,6 +509,7 @@
       cards.push({
         index: cards.length + 1,
         rank: cards.length + 1,
+        visibleOrderRank: cards.length + 1,
         href,
         listingUrl: href,
         listingId: listingIdMatch[1],
@@ -543,6 +544,7 @@
         cards.push({
           index: cards.length + 1,
           rank: cards.length + 1,
+          visibleOrderRank: cards.length + 1,
           href,
           shopUrl: href,
           shopName,
@@ -734,7 +736,7 @@
       if (Math.abs(ay - by) > 80) return ay - by;
       return a.cardRect.x - b.cardRect.x;
     });
-    return candidates.slice(0, 40).map((card, idx) => ({ ...card, index: idx + 1 }));
+    return candidates.slice(0, 40).map((card, idx) => ({ ...card, index: idx + 1, visibleOrderRank: idx + 1 }));
   }
 
   function extractProductLinks() {

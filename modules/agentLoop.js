@@ -355,6 +355,125 @@ function hasCompetitorVisualLedger(ledger = []) {
   });
 }
 
+function normalizeEtsyCompetitorUrl(url = "") {
+  try {
+    const parsed = new URL(String(url || ""));
+    if (!/etsy\.com$/i.test(parsed.hostname) && !/\.etsy\.com$/i.test(parsed.hostname)) return "";
+    const match = parsed.pathname.match(/\/(?:shop|listing)\/[^/?#]+/i);
+    return match ? `${parsed.hostname.toLowerCase()}${match[0].replace(/\/$/, "")}` : "";
+  } catch (_) {
+    return "";
+  }
+}
+
+function getOpenedEtsyCompetitorUrls(toolHistory = [], currentUrl = "") {
+  const current = normalizeEtsyCompetitorUrl(currentUrl);
+  const urls = new Set();
+  toolHistory.forEach((entry) => {
+    if (!["open_new_tab", "navigate_to"].includes(entry?.tool)) return;
+    [
+      entry.arguments?.url,
+      entry.result?.url,
+      entry.result?.finalUrl,
+      entry.result?.pageData?.url,
+    ].filter(Boolean).map(normalizeEtsyCompetitorUrl).forEach((url) => {
+      if (url && (!current || url !== current)) urls.add(url);
+    });
+  });
+  return urls;
+}
+
+function countCompetitorVisualLedgerEntries(ledger = []) {
+  const refs = new Set();
+  ledger.forEach((entry) => {
+    if (String(entry?.source_type || "").toLowerCase() !== "screenshot_visual") return;
+    const text = [
+      entry?.source_ref,
+      entry?.observed_value,
+      entry?.used_for,
+      entry?.limitation,
+    ].filter(Boolean).join(" ");
+    if (!/竞品|头部|高排名|高销|对标|benchmark|competitor|top shop|best[-\s]?seller|listing|shop|店铺详情|商品详情/i.test(text)) return;
+    const urlMatch = text.match(/https?:\/\/(?:www\.)?etsy\.com\/(?:shop|listing)\/[^)\s，。；,]+/i);
+    refs.add(urlMatch ? normalizeEtsyCompetitorUrl(urlMatch[0]) : text.slice(0, 160));
+  });
+  return refs.size;
+}
+
+function hasBlockedCompetitorDepthExplanation(text = "") {
+  return /竞品.*(?:阻断|验证码|登录|无法访问|空白页|未获得|页面不可读|blocked|captcha|unavailable)|(?:只能|仅).*打开.*1\s*个竞品|不足\s*2\s*个竞品/i.test(String(text || ""));
+}
+
+function hasValue(value) {
+  if (value === undefined || value === null) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.values(value).some(hasValue);
+  return String(value).trim().length > 0;
+}
+
+function validateCompetitorBenchmarks(out, toolHistory = [], pageContext = {}) {
+  const errors = [];
+  const benchmarks = Array.isArray(out.competitor_benchmarks) ? out.competitor_benchmarks : [];
+  const fullText = `${out.overview || ""}\n${out.analysis || ""}\n${out.summary || ""}\n${JSON.stringify(out.data || [])}`;
+  const hasBlocker = hasBlockedCompetitorDepthExplanation(fullText);
+  const openedUrls = getOpenedEtsyCompetitorUrls(toolHistory, pageContext?.url);
+  const minCompetitors = hasBlocker ? 1 : 2;
+
+  if (benchmarks.length < minCompetitors) {
+    errors.push(`店铺优化报告缺少逐店铺竞品深度分析 competitor_benchmarks。默认至少需要 ${minCompetitors} 个已打开的 Etsy 竞品店铺/商品对象；每个对象必须包含商品样本、价格分布、类目/SKU 数量估计、促销、评论评分和可见排序解读。`);
+    return errors;
+  }
+
+  benchmarks.forEach((benchmark, idx) => {
+    const label = `竞品深度分析第 ${idx + 1} 项`;
+    const url = benchmark?.competitor_url || benchmark?.url || benchmark?.shop_url || benchmark?.listing_url;
+    const normalizedUrl = normalizeEtsyCompetitorUrl(url);
+    if (!benchmark?.competitor_name && !benchmark?.shop_name && !benchmark?.name) {
+      errors.push(`${label} 缺少 competitor_name / shop_name。`);
+    }
+    if (!normalizedUrl) {
+      errors.push(`${label} 缺少有效 Etsy competitor_url / shop_url / listing_url。`);
+    } else if (openedUrls.size > 0 && !openedUrls.has(normalizedUrl)) {
+      errors.push(`${label} 的 URL 未出现在本轮 open_new_tab/navigate_to 已打开竞品页证据中，不能把未打开页面写入竞品深度分析。`);
+    }
+    const productSamples = benchmark?.product_samples || benchmark?.sample_products || benchmark?.visible_products;
+    if (!Array.isArray(productSamples) || productSamples.length < 2) {
+      errors.push(`${label} 缺少 product_samples，至少列出 2 个可见商品样本，用于核对标题、价格、类目/场景和促销信号。`);
+    } else {
+      productSamples.forEach((product, productIdx) => {
+        if (!hasValue(product?.title || product?.name) || !hasValue(product?.price)) {
+          errors.push(`${label} 的 product_samples 第 ${productIdx + 1} 项缺少商品标题或价格。`);
+        }
+      });
+    }
+    const price = benchmark?.price_distribution || benchmark?.price_range;
+    if (!price || !hasValue(price.min) || !hasValue(price.max) || !hasValue(price.main_band || price.primary_band || price.median)) {
+      errors.push(`${label} 缺少 price_distribution.min / max / main_band，不能只写泛泛价格带。`);
+    }
+    if (!hasValue(benchmark?.category_mix) && !hasValue(benchmark?.category_structure)) {
+      errors.push(`${label} 缺少 category_mix / category_structure，必须说明竞品商品类别或场景结构。`);
+    }
+    if (!hasValue(benchmark?.sampled_products_count) || !hasValue(benchmark?.visible_sku_count_estimate)) {
+      errors.push(`${label} 缺少 sampled_products_count 或 visible_sku_count_estimate，必须说明本轮可见样本量与 SKU 数量估计口径。`);
+    }
+    if (!hasValue(benchmark?.promotion_signals)) {
+      errors.push(`${label} 缺少 promotion_signals，必须列出 sale / free shipping / bestseller / star seller / coupon 等可见促销或信任信号；若没有看到也要写 none_visible。`);
+    }
+    const review = benchmark?.shop_review_signal || benchmark?.review_signal || benchmark?.rating_signal;
+    if (!review || !hasValue(review.rating) || !hasValue(review.review_count)) {
+      errors.push(`${label} 缺少 shop_review_signal.rating / review_count，必须输出店铺或样本商品可见评分与评论门槛。`);
+    }
+    const order = benchmark?.listing_order_insight || benchmark?.visible_order_insight || benchmark?.product_order_insight;
+    if (!order || !hasValue(order.visible_sort_order) || !hasValue(order.observed_order_basis) || !hasValue(order.interpretation_limit)) {
+      errors.push(`${label} 缺少 listing_order_insight.visible_sort_order / observed_order_basis / interpretation_limit。Etsy 可见商品顺序只能用于判断店铺陈列/排序信号，不能直接推断真实上架时间、销量或完整 SKU 排序。`);
+    }
+    if (!hasValue(benchmark?.evidence_refs || benchmark?.evidence_ledger_refs)) {
+      errors.push(`${label} 缺少 evidence_refs / evidence_ledger_refs，必须指向 etsy_search、page_dom、screenshot_visual 等证据。`);
+    }
+  });
+  return errors;
+}
+
 function hasTrendsVisualLedger(ledger = []) {
   return ledger.some((entry) => {
     if (String(entry?.source_type || "").toLowerCase() !== "screenshot_visual") return false;
@@ -365,23 +484,6 @@ function hasTrendsVisualLedger(ledger = []) {
       entry?.limitation,
     ].filter(Boolean).join(" ");
     return /Google Trends|trends\.google|趋势图|Interest over time|related queries|related topics|季节|搜索热度|需求曲线|trend chart/i.test(text);
-  });
-}
-
-function hasOpenedEtsyCompetitorPage(toolHistory = [], currentUrl = "") {
-  const current = String(currentUrl || "");
-  return toolHistory.some((entry) => {
-    if (!["open_new_tab", "navigate_to"].includes(entry?.tool)) return false;
-    const urls = [
-      entry.arguments?.url,
-      entry.result?.url,
-      entry.result?.finalUrl,
-      entry.result?.pageData?.url,
-    ].filter(Boolean).map(String);
-    return urls.some((url) =>
-      /etsy\.com\/(?:shop|listing)\//i.test(url) &&
-      (!current || url !== current)
-    );
   });
 }
 
@@ -694,12 +796,16 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
     if (!hasLedgerType(allLedgerEntries, "screenshot_visual")) {
       errors.push("店铺优化报告缺少视觉截图证据。必须结合当前店铺截图或竞品截图判断调性、格调、首图卖点、视觉统一性，不能只看文本/API。");
     }
-    if (!hasOpenedEtsyCompetitorPage(toolHistory, pageContext?.url)) {
-      errors.push("店铺优化报告缺少竞品店铺/商品详情页打开取证。不能只看 Etsy 搜索结果页；必须打开 2-3 个同类高排名店铺或商品详情页，读取页面并结合截图分析其首图、调性、标题、评价门槛和履约承诺。");
+    const openedCompetitorCount = getOpenedEtsyCompetitorUrls(toolHistory, pageContext?.url).size;
+    const hasCompetitorBlocker = hasBlockedCompetitorDepthExplanation(fullReportText);
+    if (openedCompetitorCount < (hasCompetitorBlocker ? 1 : 2)) {
+      errors.push("店铺优化报告缺少足够的竞品店铺/商品详情页打开取证。不能只看 Etsy 搜索结果页；默认必须打开至少 2 个同类高排名店铺或商品详情页，读取页面并结合截图分析其首图、调性、标题、评价门槛、价格分布、SKU/类目结构和履约承诺。若不足 2 个，必须说明页面阻断或可访问竞品不足的原因。");
     }
-    if (!hasCompetitorVisualLedger(allLedgerEntries)) {
-      errors.push("店铺优化报告缺少竞品店铺/商品详情页截图视觉证据。当前店铺截图不能替代竞品截图；必须在 evidence_ledger 的 screenshot_visual 中写明竞品店铺/商品详情截图观察到的首图卖点、视觉调性、包装/场景图或画廊结构。");
+    const competitorVisualCount = countCompetitorVisualLedgerEntries(allLedgerEntries);
+    if (!hasCompetitorVisualLedger(allLedgerEntries) || competitorVisualCount < (hasCompetitorBlocker ? 1 : 2)) {
+      errors.push("店铺优化报告缺少足够的竞品店铺/商品详情页截图视觉证据。当前店铺截图不能替代竞品截图；默认必须在 evidence_ledger 的 screenshot_visual 中写明至少 2 个竞品店铺/商品详情截图观察到的首图卖点、视觉调性、包装/场景图或画廊结构。");
     }
+    errors.push(...validateCompetitorBenchmarks(out, toolHistory, pageContext));
     if (!hasLedgerType(allLedgerEntries, "etsy_search")) {
       errors.push("店铺优化报告缺少必须完成的 Etsy 站内搜索/热卖榜/高排名竞品店铺对标证据。该项不能降级为 assumption，请调用 search_in_browser(engine=etsy) 并学习同类高排名店铺/商品页面。");
     }
