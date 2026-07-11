@@ -33,6 +33,10 @@ assert.match(agentLoopSource, /stripCheckpointDataUrls[\s\S]*CHECKPOINT_IMAGE_PL
 assert.match(agentLoopSource, /lastNode:\s*"llm_response_received"/, "agent loop should checkpoint after receiving an LLM response");
 assert.match(agentLoopSource, /status:\s*"tool_pending"[\s\S]*lastNode:\s*"tool_call_ready"/, "agent loop should checkpoint before executing a parsed tool call");
 assert.match(agentLoopSource, /status:\s*"tool_guard_retry"/, "agent loop should checkpoint guard-driven retry nodes");
+assert.match(agentLoopSource, /getEtsyBrowserWorkflowGuardError[\s\S]*重复 open_new_tab[\s\S]*collect_etsy_shop_pages/, "Etsy browser workflow should prevent repeated tab opening loops and route shop pages into collection");
+assert.match(agentLoopSource, /本轮已有 3 个或以上已完成取证但未关闭的新标签页/, "Etsy browser workflow should require closing evidence tabs before opening more");
+assert.match(agentLoopSource, /runToolWithTimeout[\s\S]*timed out after[\s\S]*toolTimeoutMs/, "agent loop should enforce tool-level timeouts instead of waiting indefinitely");
+assert.match(agentLoopSource, /timeoutSeconds[\s\S]*最长等待/, "tool heartbeat should expose the maximum wait time to the UI");
 assert.match(agentLoopSource, /lastNode:\s*"max_steps_exceeded"/, "agent loop should checkpoint max-step failures before throwing");
 assert.match(agentLoopSource, /resumeState\s*=\s*null/, "agent loop should accept workflow-level resume state from background storage");
 assert.match(agentLoopSource, /onCheckpoint\s*=\s*null/, "agent loop should expose every saved node to workflow-level checkpoint storage");
@@ -46,6 +50,8 @@ assert.match(backgroundSource, /onCheckpoint:\s*async/, "background should persi
 assert.match(js, /interrupted:\s*"已保存断点"/, "dashboard should show interrupted runs as saved checkpoints");
 assert.match(js, /后台连接中断，已保存断点，可再次运行继续。/, "dashboard disconnects should not be shown as ordinary failed runs");
 assert.match(toolRegistrySource, /closedTabId/, "browser search should report automatically closed temporary tabs");
+assert.match(toolRegistrySource, /open_new_tab[\s\S]*readPageDataFromTab\(tab\.id\)/, "open_new_tab should read the newly opened tab by tabId instead of relying on the active tab");
+assert.match(toolRegistrySource, /timedOut[\s\S]*readError/, "open_new_tab should report timeout/read-error state for workflow guards");
 assert.match(toolRegistrySource, /shouldAutoCloseSearchTab[\s\S]*google_trends/, "Google and Trends search tabs should be auto-closed after evidence capture");
 assert.match(toolRegistrySource, /hasValidEtsySearchEvidence/, "Etsy search evidence should have a runtime validity gate");
 assert.match(toolRegistrySource, /buildBrowserSearchAttempts[\s\S]*etsy_market_fallback[\s\S]*google_trends_us_no_date_fallback/, "Etsy and Google Trends browser searches should retry alternate evidence URLs");

@@ -275,6 +275,126 @@ function hasSuccessfulToolCall(toolHistory = [], predicate) {
   });
 }
 
+function normalizeUrlForWorkflow(url = "") {
+  try {
+    const parsed = new URL(String(url || ""));
+    parsed.hash = "";
+    parsed.searchParams.sort?.();
+    return `${parsed.origin}${parsed.pathname.replace(/\/$/, "")}${parsed.search}`;
+  } catch (_) {
+    return String(url || "").replace(/#.*$/, "").replace(/\/$/, "");
+  }
+}
+
+function getOpenTabEvidence(toolHistory = []) {
+  return toolHistory.filter((entry) => entry?.tool === "open_new_tab" && entry?.result?.ok !== false && !entry?.result?.error);
+}
+
+function getClosedTabIds(toolHistory = []) {
+  const ids = new Set();
+  toolHistory.forEach((entry) => {
+    if (entry?.tool !== "close_tab" || entry?.result?.ok === false || entry?.result?.error) return;
+    const tabId = entry.arguments?.tabId;
+    if (tabId !== undefined && tabId !== null) ids.add(String(tabId));
+  });
+  return ids;
+}
+
+function getUnclosedEvidenceTabs(toolHistory = []) {
+  const closedIds = getClosedTabIds(toolHistory);
+  return getOpenTabEvidence(toolHistory).filter((entry) => {
+    const tabId = entry.result?.tabId;
+    if (tabId === undefined || tabId === null) return false;
+    if (entry.result?.isCaptcha) return false;
+    if (entry.arguments?.keepTab || entry.result?.keepTab) return false;
+    return !closedIds.has(String(tabId));
+  });
+}
+
+function getRepeatedOpenEvidence(toolHistory = [], url = "") {
+  const normalizedTarget = normalizeUrlForWorkflow(url);
+  if (!normalizedTarget) return [];
+  return getOpenTabEvidence(toolHistory).filter((entry) => {
+    const openedUrl = entry.result?.finalUrl || entry.result?.url || entry.result?.pageData?.url || entry.arguments?.url;
+    return normalizeUrlForWorkflow(openedUrl) === normalizedTarget;
+  });
+}
+
+function getEtsyBrowserWorkflowGuardError({ skillId = "", toolName = "", toolArgs = {}, toolHistory = [] } = {}) {
+  if (!isEtsyBusinessSkill(skillId)) return null;
+  if (toolName !== "open_new_tab") return null;
+
+  const targetUrl = String(toolArgs.url || "");
+  const repeated = getRepeatedOpenEvidence(toolHistory, targetUrl);
+  if (repeated.length > 0) {
+    const latest = repeated[repeated.length - 1];
+    return {
+      type: "tool_error",
+      tool: toolName,
+      error: "该 URL 本轮已经打开并读取过，不能重复 open_new_tab 卡住流程。请复用已有 pageData/toolHistory 证据；若是 Etsy 店铺页且需要更深竞品数据，下一步调用 collect_etsy_shop_pages；若已完成取证，请调用 close_tab 关闭 tabId 后继续分析。",
+      url: targetUrl,
+      existingTabId: latest.result?.tabId,
+      existingPageDataSummary: {
+        url: latest.result?.pageData?.url || latest.result?.finalUrl || latest.result?.url,
+        title: latest.result?.pageData?.title,
+        productCards: Array.isArray(latest.result?.pageData?.productCards) ? latest.result.pageData.productCards.length : 0,
+      },
+    };
+  }
+
+  const unclosedTabs = getUnclosedEvidenceTabs(toolHistory);
+  if (unclosedTabs.length >= 3) {
+    return {
+      type: "tool_error",
+      tool: toolName,
+      error: "本轮已有 3 个或以上已完成取证但未关闭的新标签页。请先对已打开页面做采集/截图分析，并调用 close_tab 关闭不再需要的 tabId，避免持续开新标签页导致 workflow 卡住。",
+      openTabIds: unclosedTabs.map((entry) => entry.result?.tabId).filter(Boolean),
+    };
+  }
+
+  if (/etsy\.com\/shop\//i.test(targetUrl)) {
+    const shopOpenCount = getOpenTabEvidence(toolHistory).filter((entry) =>
+      /etsy\.com\/shop\//i.test(String(entry.arguments?.url || entry.result?.url || entry.result?.finalUrl || entry.result?.pageData?.url || ""))
+    ).length;
+    const crawlCount = countToolCalls(toolHistory, "collect_etsy_shop_pages");
+    if (shopOpenCount >= 2 && crawlCount === 0) {
+      return {
+        type: "tool_error",
+        tool: toolName,
+        error: "已经打开过多个 Etsy 店铺页，但还没有执行分页采集。下一步不要继续 open_new_tab，请对已选竞品店铺调用 collect_etsy_shop_pages，并随后调用 analyze_etsy_shop_crawl_screenshots。",
+        openedShopPages: shopOpenCount,
+      };
+    }
+  }
+
+  return null;
+}
+
+function getToolTimeoutMs(toolName = "") {
+  if (["open_new_tab", "close_tab", "read_current_page"].includes(toolName)) return 45_000;
+  if (["search_in_browser", "collect_etsy_shop_pages"].includes(toolName)) return 120_000;
+  if (toolName === "analyze_etsy_shop_crawl_screenshots") return 180_000;
+  if (/image_search|prepare_clean_product_image/i.test(toolName)) return 180_000;
+  return 120_000;
+}
+
+async function runToolWithTimeout(toolName, toolArgs) {
+  const timeoutMs = getToolTimeoutMs(toolName);
+  let timeoutId = null;
+  try {
+    return await Promise.race([
+      tools[toolName](toolArgs),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error(`${toolName} timed out after ${Math.round(timeoutMs / 1000)} seconds`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 function hasMeaningfulPageDom(pageContext = {}) {
   const pageHealth = pageContext?.pageHealth || {};
   if (pageHealth.isLikelyBlocked) return false;
@@ -1607,6 +1727,28 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         }
       }
 
+      const etsyBrowserWorkflowGuardError = getEtsyBrowserWorkflowGuardError({
+        skillId,
+        toolName,
+        toolArgs,
+        toolHistory,
+      });
+      if (etsyBrowserWorkflowGuardError) {
+        messages.push({ role: "assistant", content: assistantContent });
+        messages.push({
+          role: "user",
+          content: JSON.stringify(etsyBrowserWorkflowGuardError),
+        });
+        sendProgress({
+          type: "tool_guard",
+          step,
+          toolName,
+          message: etsyBrowserWorkflowGuardError.error,
+        });
+        await saveCheckpoint({ status: "tool_guard_retry", step, lastNode: "etsy_browser_workflow_guard", toolName });
+        continue;
+      }
+
       const sourcingWorkflowGuardError = getSourcingWorkflowGuardError({
         skillId,
         toolName,
@@ -1724,6 +1866,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       let toolResult;
       let toolHeartbeatTimer = null;
       const toolStartedAt = Date.now();
+      const toolTimeoutMs = getToolTimeoutMs(toolName);
       try {
         toolHeartbeatTimer = setInterval(() => {
           const elapsedSeconds = Math.max(1, Math.round((Date.now() - toolStartedAt) / 1000));
@@ -1732,10 +1875,11 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
             step,
             toolName,
             elapsedSeconds,
-            message: `${toolName} 已运行 ${elapsedSeconds} 秒，仍在等待页面或工具返回数据。`,
+            timeoutSeconds: Math.round(toolTimeoutMs / 1000),
+            message: `${toolName} 已运行 ${elapsedSeconds} 秒，最长等待 ${Math.round(toolTimeoutMs / 1000)} 秒；若超时会自动返回错误并继续恢复 workflow。`,
           });
         }, 30000);
-        toolResult = await tools[toolName](toolArgs);
+        toolResult = await runToolWithTimeout(toolName, toolArgs);
       } catch (err) {
         toolResult = { error: err.message };
       } finally {
@@ -1791,6 +1935,9 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       if (Array.isArray(productCards) && productCards.length > 0) {
         userResultObj.visual_candidate_summary = summarizeProductCards(productCards);
         userResultObj.next_step_instruction = "当前页面已经抽取到带主图与屏幕坐标的 productCards。下一步必须停止继续搜索，先对照目标商品主图和最新截图，把这些卡片按外观/材质/结构视觉相似度排序；只允许打开视觉排名最高且未触发材质/造型红线的 1-3 个详情页。最终 data 每项必须写入 candidate_image_url、list_page_visual_score、visual_match_evidence，禁止只按标题关键词选择。";
+      }
+      if (isEtsyBusinessSkill(skillId) && toolName === "open_new_tab" && /etsy\.com\/shop\//i.test(String(toolResult?.finalUrl || toolResult?.url || toolArgs.url || ""))) {
+        userResultObj.next_step_instruction = "该 Etsy 店铺页已经打开并读取过。下一步不要继续重复 open_new_tab；若这是竞品店铺，请调用 collect_etsy_shop_pages 采集 1-3 页商品/排序/分页数据，再调用 analyze_etsy_shop_crawl_screenshots 解读截图；完成取证后调用 close_tab 关闭 tabId。";
       }
 
       let userMsgContent;

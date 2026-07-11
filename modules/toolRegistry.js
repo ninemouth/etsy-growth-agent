@@ -1686,7 +1686,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
   },
 
   open_new_tab: async (args) => {
-    const { url } = args;
+    const { url, readDelayMs = 1500, maxAttempts = 20 } = args;
     if (!url) throw new Error("url is required");
     
     return new Promise((resolve, reject) => {
@@ -1698,7 +1698,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
         
         // Poll for tab load and captcha/verification checks
         let attempts = 0;
-        const maxAttempts = 20; // up to 10 seconds total
+        const maxPollAttempts = Math.max(4, Math.min(Number(maxAttempts) || 20, 40));
         const poll = setInterval(() => {
           attempts++;
           chrome.tabs.get(tab.id, (t) => {
@@ -1716,23 +1716,38 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
               chrome.tabs.update(tab.id, { active: true });
               chrome.runtime.sendMessage({ type: "CAPTCHA_DETECTED", url: currentUrl });
               // We do not resolve yet, let the user solve it
-              if (attempts >= maxAttempts) {
+              if (attempts >= maxPollAttempts) {
                 clearInterval(poll);
-                resolve({ ok: true, tabId: tab.id, isCaptcha: true, pageData: "Verification timeout" });
+                resolve({ ok: true, tabId: tab.id, url: currentUrl, isCaptcha: true, pageData: "Verification timeout" });
               }
               return;
             }
             
-            if (t.status === "complete" || attempts >= maxAttempts) {
+            if (t.status === "complete" || attempts >= maxPollAttempts) {
               clearInterval(poll);
               setTimeout(async () => {
                 try {
-                  const data = await tools.read_current_page();
-                  resolve({ ok: true, tabId: tab.id, pageData: data || "" });
+                  const data = await readPageDataFromTab(tab.id);
+                  resolve({
+                    ok: true,
+                    tabId: tab.id,
+                    url: currentUrl,
+                    finalUrl: currentUrl,
+                    timedOut: attempts >= maxPollAttempts && t.status !== "complete",
+                    pageData: data || "",
+                  });
                 } catch (err) {
-                  resolve({ ok: true, tabId: tab.id, pageData: "Failed to read DOM (Script injection restricted)" });
+                  resolve({
+                    ok: true,
+                    tabId: tab.id,
+                    url: currentUrl,
+                    finalUrl: currentUrl,
+                    timedOut: attempts >= maxPollAttempts && t.status !== "complete",
+                    pageData: "Failed to read DOM (Script injection restricted)",
+                    readError: err.message,
+                  });
                 }
-              }, 1500);
+              }, Math.max(250, Math.min(Number(readDelayMs) || 1500, 4000)));
             }
           });
         }, 500);
