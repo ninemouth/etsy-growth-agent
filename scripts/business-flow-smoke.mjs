@@ -27,6 +27,7 @@ assert.match(agentLoopSource, /type:\s*"tool_heartbeat"/, "long-running tool cal
 assert.match(agentLoopSource, /etsyAgentCheckpoint:/, "agent loop should persist resumable workflow checkpoints");
 assert.match(agentLoopSource, /CHECKPOINT_IMAGE_PLACEHOLDER/, "persisted checkpoints should omit base64 screenshot payloads");
 assert.match(agentLoopSource, /type:\s*"checkpoint_restored"/, "agent loop should notify the UI when a checkpoint is restored");
+assert.match(agentLoopSource, /stripCheckpointDataUrls[\s\S]*CHECKPOINT_IMAGE_PLACEHOLDER[\s\S]*serializeToolHistoryForCheckpoint/, "persisted tool history should omit raw data-image payloads");
 assert.match(agentLoopSource, /lastNode:\s*"llm_response_received"/, "agent loop should checkpoint after receiving an LLM response");
 assert.match(agentLoopSource, /status:\s*"tool_pending"[\s\S]*lastNode:\s*"tool_call_ready"/, "agent loop should checkpoint before executing a parsed tool call");
 assert.match(agentLoopSource, /status:\s*"tool_guard_retry"/, "agent loop should checkpoint guard-driven retry nodes");
@@ -51,6 +52,7 @@ assert.match(toolRegistrySource, /\"google_trends\", \"bing\", \"etsy\"/, "Etsy 
 assert.match(toolRegistrySource, /collect_etsy_shop_pages/, "tool registry should expose a traditional Etsy shop pagination collection loop");
 assert.match(toolRegistrySource, /screenshotCaptured[\s\S]*screenshotRef[\s\S]*completedFullCrawl/, "Etsy shop collection loop should capture per-page screenshot evidence without returning raw base64 in checkpoints");
 assert.match(toolRegistrySource, /currentSessionData\.products\.set/, "Etsy shop collection loop should accumulate visible product cards while reading pages");
+assert.match(toolRegistrySource, /analyze_etsy_shop_crawl_screenshots[\s\S]*evidenceLedgerEntries/, "tool registry should expose independent visual analysis for cached Etsy shop crawl screenshots");
 assert.match(contentSource, /extractEtsySearchCards/, "content script should extract Etsy-specific listing cards");
 assert.match(contentSource, /search\\\/shops[\s\S]*shopUrl/, "content script should extract Etsy shop search cards");
 assert.match(contentSource, /visibleOrderRank/, "content script should expose visible product order rank for competitor storefront interpretation");
@@ -70,8 +72,10 @@ assert.match(agentLoopSource, /Etsy 站内搜索\/热卖榜\/高排名竞品店�
 assert.match(agentLoopSource, /竞品店铺\/商品详情页截图视觉证据/, "critic should require competitor screenshot evidence for shop optimizer reports");
 assert.match(agentLoopSource, /competitor_benchmarks/, "critic should require structured competitor benchmark data");
 assert.match(agentLoopSource, /collect_etsy_shop_pages[\s\S]*completedFullCrawl/, "critic should recognize completed Etsy shop pagination crawl evidence for full-shop coverage claims");
+assert.match(agentLoopSource, /analyze_etsy_shop_crawl_screenshots[\s\S]*独立截图解读/, "critic should require independent visual analysis after cached shop crawl screenshots are captured");
 assert.match(shopOptimizerSkillSource, /open_new_tab[\s\S]*竞品店铺\/商品详情截图/, "shop optimizer should require opening competitor pages and analyzing competitor screenshots");
 assert.match(shopOptimizerSkillSource, /collect_etsy_shop_pages[\s\S]*边读 DOM 边累积商品卡片/, "shop optimizer should require browser pagination collection when competitor shop API data is unavailable");
+assert.match(shopOptimizerSkillSource, /analyze_etsy_shop_crawl_screenshots[\s\S]*独立视觉解读/, "shop optimizer should require analysis of cached crawl screenshots after pagination collection");
 assert.match(shopOptimizerSkillSource, /competitor_benchmarks[\s\S]*listing_order_insight/, "shop optimizer should require per-competitor product structure and visible order analysis");
 assert.match(agentLoopSource, /Google Trends 截图视觉解读证据/, "critic should require Google Trends screenshot interpretation when trends are used");
 assert.match(shopOptimizerSkillSource, /Google Trends 页面截图解读趋势图/, "shop optimizer should require screenshot-based Google Trends interpretation");
@@ -424,6 +428,47 @@ const competitorCrawlHistory = {
     ],
   },
 };
+const competitorScreenshotAnalysisHistory = {
+  tool: "analyze_etsy_shop_crawl_screenshots",
+  arguments: {
+    competitorName: "TopBridalStudio",
+    pages: competitorCrawlHistory.result.pages,
+  },
+  result: {
+    ok: true,
+    competitorName: "TopBridalStudio",
+    screenshotsRequested: 2,
+    screenshotsAnalyzed: 2,
+    analyses: [
+      {
+        pageIndex: 1,
+        url: "https://www.etsy.com/shop/TopBridalStudio",
+        screenshotRef: "__ETSY_SHOP_CRAWL_SCREENSHOT_mock_1__",
+        ok: true,
+        visual_tone: "bridal soft luxury",
+        report_observation: "竞品首屏以婚礼手持场景和个性化礼品文字强化新娘/伴娘购买场景。",
+      },
+      {
+        pageIndex: 2,
+        url: "https://www.etsy.com/shop/TopBridalStudio?page=2",
+        screenshotRef: "__ETSY_SHOP_CRAWL_SCREENSHOT_mock_2__",
+        ok: true,
+        visual_tone: "giftable bridal accessories",
+        report_observation: "第二页继续使用统一婚礼色调、包装和礼品化陈列，促销与信任信号靠近商品网格。",
+      },
+    ],
+    evidenceLedgerEntries: [
+      {
+        source_type: "screenshot_visual",
+        source_ref: "竞品店铺分页截图: https://www.etsy.com/shop/TopBridalStudio",
+        observed_value: "竞品首屏以婚礼手持场景和个性化礼品文字强化新娘/伴娘购买场景。",
+        used_for: "对标竞品店铺视觉调性、首图/网格陈列、促销/信任信号和可见排序方法",
+        confidence: "medium",
+        limitation: "截图只能判断当前页可见视觉和陈列，不能证明真实销量、完整库存、真实上架时间或全店完整 SKU。",
+      },
+    ],
+  },
+};
 const completedCompetitorCrawlHistory = {
   ...competitorCrawlHistory,
   result: {
@@ -477,6 +522,40 @@ const completedCurrentShopCrawlHistory = {
     ],
   },
 };
+const completedCrawlScreenshotAnalysisHistory = {
+  tool: "analyze_etsy_shop_crawl_screenshots",
+  arguments: {
+    screenshotRefs: [
+      "__ETSY_SHOP_CRAWL_SCREENSHOT_current_1__",
+      "__ETSY_SHOP_CRAWL_SCREENSHOT_current_2__",
+      "__ETSY_SHOP_CRAWL_SCREENSHOT_mock_1__",
+      "__ETSY_SHOP_CRAWL_SCREENSHOT_mock_2__",
+      "__ETSY_SHOP_CRAWL_SCREENSHOT_mock_3__",
+    ],
+  },
+  result: {
+    ok: true,
+    screenshotsRequested: 5,
+    screenshotsAnalyzed: 5,
+    analyses: [
+      { ok: true, screenshotRef: "__ETSY_SHOP_CRAWL_SCREENSHOT_current_1__", report_observation: "当前店铺首页截图已完成视觉解读。" },
+      { ok: true, screenshotRef: "__ETSY_SHOP_CRAWL_SCREENSHOT_current_2__", report_observation: "当前店铺第二页截图已完成视觉解读。" },
+      { ok: true, screenshotRef: "__ETSY_SHOP_CRAWL_SCREENSHOT_mock_1__", report_observation: "竞品第一页截图已完成视觉解读。" },
+      { ok: true, screenshotRef: "__ETSY_SHOP_CRAWL_SCREENSHOT_mock_2__", report_observation: "竞品第二页截图已完成视觉解读。" },
+      { ok: true, screenshotRef: "__ETSY_SHOP_CRAWL_SCREENSHOT_mock_3__", report_observation: "竞品第三页截图已完成视觉解读。" },
+    ],
+    evidenceLedgerEntries: [
+      {
+        source_type: "screenshot_visual",
+        source_ref: "当前店铺与竞品店铺分页截图",
+        observed_value: "已逐页完成当前店铺与竞品店铺分页截图视觉解读。",
+        used_for: "校验完整分页采集后的视觉陈列和页面口径",
+        confidence: "medium",
+        limitation: "截图仍不能证明真实销量、完整库存或私有后台数据。",
+      },
+    ],
+  },
+};
 assert.notDeepEqual(
   validateReport(shopOptimizerReportWithEtsyEvidence, "", "skills/etsy_global_shop_optimizer.skill.md", [
     { tool: "search_in_browser", arguments: { engine: "etsy", query: "wedding clutch" }, result: invalidEtsySearchResult },
@@ -499,7 +578,7 @@ assert.deepEqual(
   [],
   "shop optimizer critic should accept valid Etsy listing/search evidence"
 );
-assert.deepEqual(
+assert.notDeepEqual(
   validateReport(shopOptimizerReportWithEtsyEvidence, "", "skills/etsy_global_shop_optimizer.skill.md", [
     { tool: "search_in_browser", arguments: { engine: "etsy", query: "wedding clutch" }, result: validEtsySearchResult },
     googleSearchHistory,
@@ -508,7 +587,19 @@ assert.deepEqual(
     competitorOpenHistory2,
   ], meaningfulPageContext),
   [],
-  "shop optimizer critic should accept collect_etsy_shop_pages as opened/read competitor shop evidence"
+  "shop optimizer critic should reject cached crawl screenshots that have not been independently analyzed"
+);
+assert.deepEqual(
+  validateReport(shopOptimizerReportWithEtsyEvidence, "", "skills/etsy_global_shop_optimizer.skill.md", [
+    { tool: "search_in_browser", arguments: { engine: "etsy", query: "wedding clutch" }, result: validEtsySearchResult },
+    googleSearchHistory,
+    googleTrendsHistory,
+    competitorCrawlHistory,
+    competitorScreenshotAnalysisHistory,
+    competitorOpenHistory2,
+  ], meaningfulPageContext),
+  [],
+  "shop optimizer critic should accept collect_etsy_shop_pages after cached screenshots are independently analyzed"
 );
 const shallowCompetitorReport = globalThis.structuredClone(shopOptimizerReportWithEtsyEvidence);
 delete shallowCompetitorReport.output.competitor_benchmarks;
@@ -543,6 +634,7 @@ assert.deepEqual(
     googleTrendsHistory,
     completedCurrentShopCrawlHistory,
     completedCompetitorCrawlHistory,
+    completedCrawlScreenshotAnalysisHistory,
     competitorOpenHistory2,
   ], meaningfulPageContext),
   [],

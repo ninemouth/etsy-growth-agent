@@ -19,7 +19,7 @@
 2. 如果用户已绑定 Etsy 个人访问 API，优先调用 `etsy_api_get_store_snapshot` 一次性获取店铺商品、流量与 发货资料 履约订单快照；必要时再调用 `etsy_api_get_products`、`etsy_api_get_analytics`、`etsy_api_get_transactions` 兼容工具补细节，但不得把已失效的 finance transaction 接口当作默认证据来源。
 3. 基于页面文本/API 先抽取店铺平台属性、主营类目、目标人群、价格带、视觉调性/格调、标题与 attributes 填写状态；**不能只凭截图做店铺诊断**。
 4. 必须调用 `search_in_browser` 且 `engine="etsy"`，围绕核心类目词访问 Etsy 站内搜索、market 或热卖页面，提取同类高排名商品/店铺的价格、评价门槛、首图卖点、标题词、店铺定位与履约承诺。建议先用 `searchType="listing"` 获取高排名 listing，再用 `searchType="shop"` 筛出店铺。
-5. 必须在 Etsy 搜索后用 `open_new_tab` 打开 2-3 个同类高排名竞品店铺或商品详情页，读取页面并结合打开后的实时截图做视觉分析；若竞品对象是 Etsy 店铺页，优先调用 `collect_etsy_shop_pages` 对每个竞品店铺做 1-3 页的小循环采集：逐页读取页面文本/商品卡片/排序口径/分页状态，逐页截屏留证，并把每页 URL、商品数量和可见排序写入后续结构化分析。`evidence_ledger` 中必须至少有一条 `screenshot_visual` 明确写明“竞品店铺/商品详情截图”的首图卖点、视觉调性、包装/场景图或画廊结构。只看搜索结果页截图、Google 摘要或当前自营店铺截图，不得声称“已完成头部店铺反向工程”。图中这类“Etsy 站内搜索/热卖榜未直接访问”不允许作为最终交付。
+5. 必须在 Etsy 搜索后用 `open_new_tab` 打开 2-3 个同类高排名竞品店铺或商品详情页，读取页面并结合打开后的实时截图做视觉分析；若竞品对象是 Etsy 店铺页，优先调用 `collect_etsy_shop_pages` 对每个竞品店铺做 1-3 页的小循环采集：逐页读取页面文本/商品卡片/排序口径/分页状态，逐页截屏留证，并把每页 URL、商品数量和可见排序写入后续结构化分析。采集完成后必须调用 `analyze_etsy_shop_crawl_screenshots` 对已缓存的分页截图做独立视觉解读，再把返回的视觉观察转写进 `evidence_ledger`。`evidence_ledger` 中必须至少有一条 `screenshot_visual` 明确写明“竞品店铺/商品详情截图”的首图卖点、视觉调性、包装/场景图或画廊结构。只看搜索结果页截图、Google 摘要或当前自营店铺截图，不得声称“已完成头部店铺反向工程”。图中这类“Etsy 站内搜索/热卖榜未直接访问”不允许作为最终交付。
 6. 必须调用 `search_in_browser` 且 `engine="google_us"` 或 `engine="google_trends"`，验证欧美站外需求表达、Google Trends US 近 12 个月方向或相关 Google 结果。若使用 `engine="google_trends"` 或报告正文输出趋势/季节性/搜索热度方向，必须结合 Google Trends 页面截图解读趋势图；`evidence_ledger` 中必须至少有一条 `screenshot_visual` 明确写明 “Google Trends / trends.google.com / 趋势图截图” 中观察到的时间范围、需求曲线方向、季节峰值或 related queries。图中这类“Google Trends US 未直接访问，来自行业报告摘要”不允许作为最终交付。
 7. 如果报告涉及配送/物流/时效/工作日，必须额外调用 `search_in_browser` 且 `engine="google_us"`，用 “Etsy international shipping delivery time + 发货地/目的地/品类/承运商” 等关键词做实时物流研究。国际物流因地区、发货地、承运商、季节和清关差异很大，禁止凭模型常识写“香港发货 7-12 工作日”这类确定承诺；没有实时证据时只能写成待确认区间和人工确认点。
 8. 在没有完成店铺健康度评级前，严禁把工作流切到 1688/采购/货源推荐。
@@ -64,7 +64,7 @@
 - 如果只看到 Etsy 搜索结果页，没有打开/读取竞品店铺或商品详情页并取得竞品截图，不得声称“已完成头部店铺反向工程”；只能写“已完成搜索结果初筛，仍需打开竞品详情页确认”。`search_in_browser(engine="etsy", searchType="shop")` 可用于店铺搜索，但仍必须确认结果页返回了真实 listing/shop 文本、价格/评价/店铺链接或可见卡片，不能把空白页/阻断页当成证据。
 - 竞品视觉学习必须写成可审计证据：`source_type="screenshot_visual"`，`source_ref` 写明竞品店铺/商品 URL 或截图区域，`observed_value` 写具体看到的首图文案、场景图、模特手持、包装图、画廊结构、风格统一度，不得用“竞品视觉较好”这类空话。
 - 竞品商品结构必须逐店铺输出，而不是只在正文里泛泛描述。每个竞品至少抽样 2 个可见商品，输出价格分布、商品类别/场景结构、可见 SKU 数量估计、促销/信任标签、店铺评论评分和商品展示顺序解读。
-- 当前版本无法用 Etsy 个人访问 API 读取其他竞品店铺的后台或全量私有数据。竞品店铺深度分析必须走传统浏览器证据路径：打开竞品店铺页，调用 `collect_etsy_shop_pages` 翻页采集可见页面，边读 DOM 边累积商品卡片、价格、评价、促销、排序和分页数据；每页截图后再进行独立视觉解读。报告只能描述“本轮已采集页面/可见样本”，不能把可见样本包装成竞品真实后台销量、完整库存或全部 SKU。
+- 当前版本无法用 Etsy 个人访问 API 读取其他竞品店铺的后台或全量私有数据。竞品店铺深度分析必须走传统浏览器证据路径：打开竞品店铺页，调用 `collect_etsy_shop_pages` 翻页采集可见页面，边读 DOM 边累积商品卡片、价格、评价、促销、排序和分页数据；每页截图后必须调用 `analyze_etsy_shop_crawl_screenshots` 做独立视觉解读。报告只能描述“本轮已采集页面/可见样本”，不能把可见样本包装成竞品真实后台销量、完整库存或全部 SKU。
 - Etsy 店铺内商品的“上架顺序/展示顺序”只能作为可见陈列信号解读：例如店主主推款、第一屏价格梯度、婚礼场景优先级、促销款是否前置。除非页面明确显示排序条件、上架日期或 newest/recent 标签，不得把可见顺序直接推断成真实上架时间、真实销量或完整 SKU 排序。
 - Etsy 店铺页若显示排序控件（例如 `Sort: Most Recent`），必须把当前排序口径写入 `listing_order_insight.observed_order_basis` 或 evidence limitation。`Most Recent` 只能说明当前页按 Etsy 可见“最近”排序展示，不能证明已经抓取全店全部商品。
 - 默认只分析当前读取到的可见商品卡片、已打开的详情页和 `collect_etsy_shop_pages` 已采集分页；不得声称“已抓取全店所有商品/全部 SKU/完整价格分布”。只有在 Etsy API 返回自营全量商品，或 `collect_etsy_shop_pages` 确认分页已经走到 `completedFullCrawl=true` 并记录每一页 URL、页码和商品数量后，才允许写“全量/所有/完整”。

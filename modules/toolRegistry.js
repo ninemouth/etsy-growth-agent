@@ -414,6 +414,51 @@ function normalizeNextEtsyPageUrl(nextPageUrl = "", currentUrl = "") {
   }
 }
 
+function extractJsonObject(text = "") {
+  const raw = String(text || "").trim();
+  const codeMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = codeMatch ? codeMatch[1].trim() : raw;
+  try {
+    return JSON.parse(candidate);
+  } catch (_) {
+    const start = candidate.indexOf("{");
+    const end = candidate.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      return JSON.parse(candidate.slice(start, end + 1));
+    }
+    throw new Error("Vision analysis did not return valid JSON.");
+  }
+}
+
+function getCachedEtsyShopScreenshot(ref = "") {
+  return etsyShopCrawlScreenshotCache.get(ref) || null;
+}
+
+function normalizeScreenshotPages(pages = [], screenshotRefs = []) {
+  const fromPages = Array.isArray(pages) ? pages.map((page, index) => ({
+    pageIndex: page?.pageIndex || index + 1,
+    url: page?.url || "",
+    screenshotRef: page?.screenshotRef || "",
+    sortLabel: page?.sortLabel || "",
+    productCardsVisible: page?.productCardsVisible || page?.productCards?.length || 0,
+    visibleProductOrderBasis: page?.visibleProductOrderBasis || "",
+  })) : [];
+  const fromRefs = Array.isArray(screenshotRefs) ? screenshotRefs.map((ref, index) => ({
+    pageIndex: index + 1,
+    url: "",
+    screenshotRef: ref,
+    sortLabel: "",
+    productCardsVisible: 0,
+    visibleProductOrderBasis: "",
+  })) : [];
+  const seenRefs = new Set();
+  return [...fromPages, ...fromRefs].filter((page) => {
+    if (!page.screenshotRef || seenRefs.has(page.screenshotRef)) return false;
+    seenRefs.add(page.screenshotRef);
+    return true;
+  });
+}
+
 function isWarmCtaPixel(r, g, b, a) {
   return a > 180 && r >= 210 && g >= 50 && g <= 190 && b <= 125 && r > g + 35;
 }
@@ -760,6 +805,108 @@ export const tools = {
     } finally {
       if (openedByTool && !keepTab) await closeTabQuietly(targetTabId);
     }
+  },
+
+  analyze_etsy_shop_crawl_screenshots: async (args = {}) => {
+    const {
+      pages = [],
+      screenshotRefs = [],
+      competitorName = "",
+      maxScreenshots = 6,
+    } = args;
+    const screenshotPages = normalizeScreenshotPages(pages, screenshotRefs)
+      .slice(0, Math.max(1, Math.min(Number(maxScreenshots) || 6, 10)));
+    if (screenshotPages.length === 0) {
+      throw new Error("analyze_etsy_shop_crawl_screenshots requires pages with screenshotRef or a screenshotRefs array.");
+    }
+
+    const analyses = [];
+    const evidenceLedgerEntries = [];
+    for (const page of screenshotPages) {
+      const imageUrl = getCachedEtsyShopScreenshot(page.screenshotRef);
+      if (!imageUrl) {
+        analyses.push({
+          pageIndex: page.pageIndex,
+          url: page.url,
+          screenshotRef: page.screenshotRef,
+          ok: false,
+          error: "Screenshot reference was not found in the runtime cache. Re-run collect_etsy_shop_pages before visual analysis.",
+        });
+        continue;
+      }
+
+      const prompt = `You are analyzing an Etsy competitor shop screenshot for a seller growth report.
+Return strict JSON only with this shape:
+{
+  "ok": true,
+  "visual_tone": "short concrete description",
+  "hero_or_first_grid_signals": ["specific visible signal"],
+  "product_image_patterns": ["specific image/thumbnail pattern"],
+  "promotion_or_trust_signals": ["visible sale/free shipping/star seller/review/brand trust signal or none_visible"],
+  "layout_and_merchandising": "how the visible order/grid appears to be merchandised",
+  "risks_or_limits": "what this screenshot cannot prove",
+  "report_observation": "one concise Chinese sentence suitable for evidence_ledger.observed_value"
+}
+Do not infer private sales, inventory, exact upload time, or full SKU coverage from the screenshot.
+
+Context:
+- competitorName: ${competitorName || "unknown"}
+- pageIndex: ${page.pageIndex}
+- url: ${page.url || "unknown"}
+- sortLabel: ${page.sortLabel || "unknown"}
+- productCardsVisible: ${page.productCardsVisible || 0}
+- visibleProductOrderBasis: ${page.visibleProductOrderBasis || "unknown"}`;
+
+      try {
+        const responseText = await callLLM([
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              { type: "image_url", image_url: { url: imageUrl } },
+            ],
+          },
+        ]);
+        const parsed = extractJsonObject(responseText);
+        const reportObservation = parsed.report_observation || parsed.visual_tone || "已完成竞品店铺截图视觉解读。";
+        analyses.push({
+          pageIndex: page.pageIndex,
+          url: page.url,
+          screenshotRef: page.screenshotRef,
+          ok: parsed.ok !== false,
+          ...parsed,
+        });
+        evidenceLedgerEntries.push({
+          source_type: "screenshot_visual",
+          source_ref: `竞品店铺分页截图: ${page.url || page.screenshotRef}`,
+          observed_value: reportObservation,
+          used_for: "对标竞品店铺视觉调性、首图/网格陈列、促销/信任信号和可见排序方法",
+          confidence: "medium",
+          limitation: parsed.risks_or_limits || "截图只能判断当前页可见视觉和陈列，不能证明真实销量、完整库存、真实上架时间或全店完整 SKU。",
+        });
+      } catch (err) {
+        analyses.push({
+          pageIndex: page.pageIndex,
+          url: page.url,
+          screenshotRef: page.screenshotRef,
+          ok: false,
+          error: err.message,
+        });
+      }
+    }
+
+    return {
+      ok: evidenceLedgerEntries.length > 0,
+      tool: "analyze_etsy_shop_crawl_screenshots",
+      competitorName,
+      screenshotsRequested: screenshotPages.length,
+      screenshotsAnalyzed: evidenceLedgerEntries.length,
+      analyses,
+      evidenceLedgerEntries,
+      message: evidenceLedgerEntries.length > 0
+        ? "Etsy shop crawl screenshots analyzed into structured visual evidence."
+        : "No screenshots could be analyzed. Re-run collect_etsy_shop_pages in the same workflow before visual analysis.",
+    };
   },
 
   extract_product_info: async () => {

@@ -46,6 +46,21 @@ function serializeMessagesForCheckpoint(messages = []) {
   }));
 }
 
+function stripCheckpointDataUrls(value) {
+  if (typeof value === "string") {
+    return /^data:image\//i.test(value) ? CHECKPOINT_IMAGE_PLACEHOLDER : value;
+  }
+  if (Array.isArray(value)) return value.map(stripCheckpointDataUrls);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, stripCheckpointDataUrls(nested)]));
+  }
+  return value;
+}
+
+function serializeToolHistoryForCheckpoint(toolHistory = []) {
+  return toolHistory.map((entry) => stripCheckpointDataUrls(entry));
+}
+
 function hydrateMessagesFromCheckpoint(messages = []) {
   return messages.map((message) => ({
     ...message,
@@ -60,6 +75,7 @@ async function saveAgentCheckpoint(sessionKey, checkpoint = {}) {
     sessionKey,
     updatedAt: new Date().toISOString(),
     messages: serializeMessagesForCheckpoint(checkpoint.messages || []),
+    toolHistory: serializeToolHistoryForCheckpoint(checkpoint.toolHistory || []),
   };
   await new Promise((resolve) => {
     chrome.storage.local.set({
@@ -277,7 +293,10 @@ function hasEvidenceSource(toolHistory = [], pageContext = {}, sourceType = "") 
     return hasMeaningfulPageDom(pageContext);
   }
   if (normalized === "screenshot_visual") {
-    return Boolean(pageContext?.screenshot);
+    return Boolean(pageContext?.screenshot) || hasSuccessfulToolCall(toolHistory, (entry) =>
+      entry.tool === "analyze_etsy_shop_crawl_screenshots" &&
+      Number(entry.result?.screenshotsAnalyzed || 0) > 0
+    );
   }
   if (normalized === "etsy_api") {
     return hasSuccessfulToolCall(toolHistory, (entry) => String(entry.tool || "").startsWith("etsy_api_"));
@@ -353,6 +372,31 @@ function hasCompetitorVisualLedger(ledger = []) {
     ].filter(Boolean).join(" ");
     return /竞品|头部|高排名|高销|对标|benchmark|competitor|top shop|best[-\s]?seller|listing|shop|店铺详情|商品详情/i.test(text);
   });
+}
+
+function hasEtsyShopCrawlScreenshotEvidence(toolHistory = []) {
+  return toolHistory.some((entry) => {
+    if (entry?.tool !== "collect_etsy_shop_pages" || entry?.result?.ok === false) return false;
+    return Array.isArray(entry.result?.pages) && entry.result.pages.some((page) => page?.screenshotCaptured && page?.screenshotRef);
+  });
+}
+
+function getUnanalyzedEtsyShopCrawlScreenshotRefs(toolHistory = []) {
+  const capturedRefs = new Set();
+  const analyzedRefs = new Set();
+  toolHistory.forEach((entry) => {
+    if (entry?.tool === "collect_etsy_shop_pages" && entry?.result?.ok !== false && Array.isArray(entry.result?.pages)) {
+      entry.result.pages.forEach((page) => {
+        if (page?.screenshotCaptured && page?.screenshotRef) capturedRefs.add(page.screenshotRef);
+      });
+    }
+    if (entry?.tool === "analyze_etsy_shop_crawl_screenshots" && entry?.result?.ok !== false && Array.isArray(entry.result?.analyses)) {
+      entry.result.analyses.forEach((analysis) => {
+        if (analysis?.ok !== false && analysis?.screenshotRef) analyzedRefs.add(analysis.screenshotRef);
+      });
+    }
+  });
+  return Array.from(capturedRefs).filter((ref) => !analyzedRefs.has(ref));
 }
 
 function normalizeEtsyCompetitorUrl(url = "") {
@@ -864,6 +908,10 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
     if (!hasCompetitorVisualLedger(allLedgerEntries) || competitorVisualCount < (hasCompetitorBlocker ? 1 : 2)) {
       errors.push("店铺优化报告缺少足够的竞品店铺/商品详情页截图视觉证据。当前店铺截图不能替代竞品截图；默认必须在 evidence_ledger 的 screenshot_visual 中写明至少 2 个竞品店铺/商品详情截图观察到的首图卖点、视觉调性、包装/场景图或画廊结构。");
     }
+    const unanalyzedScreenshotRefs = getUnanalyzedEtsyShopCrawlScreenshotRefs(toolHistory);
+    if (hasEtsyShopCrawlScreenshotEvidence(toolHistory) && unanalyzedScreenshotRefs.length > 0) {
+      errors.push(`本轮已通过 collect_etsy_shop_pages 捕获竞品店铺分页截图，但仍有 ${unanalyzedScreenshotRefs.length} 张截图尚未调用 analyze_etsy_shop_crawl_screenshots 做独立截图解读。请先分析已缓存截图，再把视觉调性、首图/网格陈列、促销/信任信号和局限写入 evidence_ledger。`);
+    }
     errors.push(...validateCompetitorBenchmarks(out, toolHistory, pageContext));
     if (!hasLedgerType(allLedgerEntries, "etsy_search")) {
       errors.push("店铺优化报告缺少必须完成的 Etsy 站内搜索/热卖榜/高排名竞品店铺对标证据。该项不能降级为 assumption，请调用 search_in_browser(engine=etsy) 并学习同类高排名店铺/商品页面。");
@@ -1197,6 +1245,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         await onCheckpoint({
           ...checkpointPayload,
           messages: serializeMessagesForCheckpoint(messages),
+          toolHistory: serializeToolHistoryForCheckpoint(toolHistory),
           updatedAt: new Date().toISOString(),
         });
       }
