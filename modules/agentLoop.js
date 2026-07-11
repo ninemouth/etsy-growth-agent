@@ -474,6 +474,43 @@ function validateCompetitorBenchmarks(out, toolHistory = [], pageContext = {}) {
   return errors;
 }
 
+function hasFullShopProductCrawlEvidence(toolHistory = [], pageContext = {}) {
+  if (hasEvidenceSource(toolHistory, pageContext, "etsy_api")) return true;
+  const urls = new Set();
+  toolHistory.forEach((entry) => {
+    if (!["open_new_tab", "navigate_to", "read_current_page"].includes(entry?.tool)) return;
+    [
+      entry.arguments?.url,
+      entry.result?.url,
+      entry.result?.finalUrl,
+      entry.result?.pageData?.url,
+      entry.result?.pageData?.etsyShopProductContext?.currentPageUrl,
+    ].filter(Boolean).forEach((url) => {
+      if (/etsy\.com\/shop\//i.test(String(url))) urls.add(String(url));
+    });
+  });
+  const pageUrls = Array.from(urls).filter((url) => /[?&]page=\d+/i.test(url));
+  return pageUrls.length >= 2 || Boolean(pageContext?.etsyShopProductContext?.pagination?.hasNextPage === false && pageContext?.productCards?.length > 0);
+}
+
+function validateShopProductCoverageClaims(out, toolHistory = [], pageContext = {}) {
+  const errors = [];
+  const text = `${out.overview || ""}\n${out.analysis || ""}\n${out.summary || ""}\n${JSON.stringify(out.data || [])}\n${JSON.stringify(out.competitor_benchmarks || [])}`;
+  const claimsFullCoverage = /(?:已|已经|完成|覆盖|抓取|读取|获取|分析|统计)[^。；\n]{0,24}(?:全店(?:所有|全部|完整|全量)|所有商品|全部商品|完整商品|全量商品|全部\s*SKU|所有\s*SKU|完整\s*SKU|完整价格分布|full\s+(?:shop|store).*(?:products|listings|sku)|all\s+(?:products|listings|skus))/i.test(text);
+  if (claimsFullCoverage && !hasFullShopProductCrawlEvidence(toolHistory, pageContext)) {
+    errors.push("店铺优化报告声称已覆盖全店所有商品/全部 SKU/完整价格分布，但本轮没有 Etsy API 全量商品证据，也没有逐页分页抓取证据。请改为“当前可见样本/已打开页面样本”，或继续逐页打开分页并记录每页 URL 与商品数量。");
+  }
+  const benchmarks = Array.isArray(out.competitor_benchmarks) ? out.competitor_benchmarks : [];
+  benchmarks.forEach((benchmark, idx) => {
+    const order = benchmark?.listing_order_insight || benchmark?.visible_order_insight || benchmark?.product_order_insight;
+    const basis = String(order?.observed_order_basis || "");
+    if (order && !/Sort|Most Recent|Recommended|Custom|Recent|current visible|visible shop grid|排序|最近|推荐|未检测到排序控件|sort control/i.test(basis)) {
+      errors.push(`竞品深度分析第 ${idx + 1} 项的 listing_order_insight.observed_order_basis 未写明 Etsy 当前排序/可见展示口径。请明确例如 Sort: Most Recent、Recommended、当前可见店铺网格或未检测到排序控件。`);
+    }
+  });
+  return errors;
+}
+
 function hasTrendsVisualLedger(ledger = []) {
   return ledger.some((entry) => {
     if (String(entry?.source_type || "").toLowerCase() !== "screenshot_visual") return false;
@@ -825,6 +862,7 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
     if (!/竞品店铺|头部店铺|高排名店铺|高销店铺|best[-\s]?seller|top shop|同类高排名/i.test(combinedReportText)) {
       errors.push("店铺优化报告缺少同类高排名/高销竞品店铺的反向学习结论。必须搜索并对标 2-3 个头部店铺或高排名商品，再提炼其定位、调性、首图、标题和履约承诺。");
     }
+    errors.push(...validateShopProductCoverageClaims(out, toolHistory, pageContext));
     const hasPrematureScaleAdvice = /1\s*[-–—到至]\s*2\s*周内.*第三方海外仓|立即.*第三方海外仓|海外仓.*第一优先级|大额广告|广告放量/i.test(fullReportText);
     const isWarningAgainstPrematureScale = /不建议[^。；\n]{0,24}(?:第三方海外仓|海外仓|大额广告|广告放量)|不得[^。；\n]{0,24}(?:第三方海外仓|海外仓|大额广告|广告放量)|避免[^。；\n]{0,24}(?:第三方海外仓|海外仓|大额广告|广告放量)/i.test(fullReportText);
     if (hasPrematureScaleAdvice && !isWarningAgainstPrematureScale && !/成熟店|订单密度|库存周转|履约成本证据|etsy_api/i.test(fullReportText)) {

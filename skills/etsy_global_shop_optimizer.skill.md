@@ -65,6 +65,8 @@
 - 竞品视觉学习必须写成可审计证据：`source_type="screenshot_visual"`，`source_ref` 写明竞品店铺/商品 URL 或截图区域，`observed_value` 写具体看到的首图文案、场景图、模特手持、包装图、画廊结构、风格统一度，不得用“竞品视觉较好”这类空话。
 - 竞品商品结构必须逐店铺输出，而不是只在正文里泛泛描述。每个竞品至少抽样 2 个可见商品，输出价格分布、商品类别/场景结构、可见 SKU 数量估计、促销/信任标签、店铺评论评分和商品展示顺序解读。
 - Etsy 店铺内商品的“上架顺序/展示顺序”只能作为可见陈列信号解读：例如店主主推款、第一屏价格梯度、婚礼场景优先级、促销款是否前置。除非页面明确显示排序条件、上架日期或 newest/recent 标签，不得把可见顺序直接推断成真实上架时间、真实销量或完整 SKU 排序。
+- Etsy 店铺页若显示排序控件（例如 `Sort: Most Recent`），必须把当前排序口径写入 `listing_order_insight.observed_order_basis` 或 evidence limitation。`Most Recent` 只能说明当前页按 Etsy 可见“最近”排序展示，不能证明已经抓取全店全部商品。
+- 默认只分析当前读取到的可见商品卡片和已打开的详情页；不得声称“已抓取全店所有商品/全部 SKU/完整价格分布”。只有在 Etsy API 返回全量商品，或你逐页打开分页并记录每一页 URL、页码和商品数量后，才允许写“全量/所有/完整”。
 
 ---
 
@@ -202,13 +204,13 @@
      - `competitor_url`: 已通过 `open_new_tab` 打开的 Etsy 店铺或商品详情 URL。
      - `page_type`: `shop` 或 `listing`。
      - `sampled_products_count`: 本轮实际分析的可见商品样本数。
-     - `visible_sku_count_estimate`: 页面可见 SKU / listing 数量估计与口径，例如“首屏 12 个可见商品”。
+     - `visible_sku_count_estimate`: 页面可见 SKU / listing 数量估计与口径，例如“当前 Sort: Most Recent 下首屏 12 个可见商品”；必须明确这是可见样本估计还是分页/API 全量。
      - `category_mix`: 商品类别或场景结构，例如 bridal clutch、bridesmaid gift、evening bag、photo clutch。
      - `product_samples`: 至少 2 个可见商品样本，每个样本包含 `title`、`price`、`category_or_scenario`、`promotion_signal`、`visible_order_rank`。
      - `price_distribution`: 必须包含 `min`、`max`、`main_band`，可补充 `premium_band` 或 `entry_band`。
      - `promotion_signals`: 促销和信任标签，例如 sale、free shipping、bestseller、star seller、coupon；没有看到也写 `none_visible`。
      - `shop_review_signal`: 必须包含可见 `rating` 和 `review_count`；若只读到商品评论而非店铺总评论，需要说明口径。
-     - `listing_order_insight`: 必须包含 `visible_sort_order`、`observed_order_basis`、`interpretation_limit`。只能解读可见展示顺序与陈列策略，不得把顺序直接当成真实上架时间或销量。
+     - `listing_order_insight`: 必须包含 `visible_sort_order`、`observed_order_basis`、`interpretation_limit`。`observed_order_basis` 必须写明当前排序控件/页面口径，例如 `Sort: Most Recent`、`Recommended`、`current visible shop grid` 或“未检测到排序控件”。只能解读可见展示顺序与陈列策略，不得把顺序直接当成真实上架时间、销量或全店完整排序。
      - `visual_method`、`seo_method`、`fulfillment_signal`：分别总结视觉方法、标题/关键词方法、履约/配送承诺。
      - `evidence_refs` 或 `evidence_ledger_refs`: 指向 `etsy_search`、`page_dom`、`screenshot_visual` 等证据来源。
 

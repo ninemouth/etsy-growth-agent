@@ -484,6 +484,50 @@
     };
   }
 
+  function extractEtsyShopProductControls() {
+    if (!window.location.hostname.includes("etsy.com") || !/\/shop\//i.test(window.location.pathname)) {
+      return null;
+    }
+    const bodyText = normalizeText(document.body.innerText || "", 8000);
+    const sortMatch = bodyText.match(/Sort:\s*([^\n\r]{2,60})/i) ||
+      bodyText.match(/排序[:：]\s*([^\n\r]{2,60})/i);
+    const sortControl = Array.from(document.querySelectorAll('button, [role="button"], select, [aria-haspopup="listbox"], [aria-label*="Sort" i]'))
+      .map((el) => normalizeText(`${el.getAttribute("aria-label") || ""} ${el.innerText || ""} ${el.value || ""}`, 120))
+      .find((text) => /Sort|Most Recent|Recommended|Custom|排序|最近|推荐/i.test(text));
+    const pageLinks = Array.from(document.querySelectorAll('a[href]'))
+      .map((a) => ({
+        href: normalizeUrl(a.getAttribute("href") || a.href || ""),
+        text: normalizeText(a.innerText || a.getAttribute("aria-label") || "", 80),
+        rel: normalizeText(a.getAttribute("rel") || "", 40),
+        ariaLabel: normalizeText(a.getAttribute("aria-label") || "", 80),
+      }))
+      .filter((link) => /[?&]page=\d+|pagination|下一页|Next|Page \d+/i.test(`${link.href} ${link.text} ${link.rel} ${link.ariaLabel}`));
+    const nextPage = pageLinks.find((link) => /next|下一页/i.test(`${link.text} ${link.rel} ${link.ariaLabel}`)) ||
+      pageLinks.find((link) => {
+        try {
+          const current = new URL(window.location.href);
+          const candidate = new URL(link.href);
+          return Number(candidate.searchParams.get("page") || 1) > Number(current.searchParams.get("page") || 1);
+        } catch (_) {
+          return false;
+        }
+      });
+    return {
+      sortLabel: normalizeText(sortMatch?.[1] || sortControl || "", 80),
+      sortControlText: sortControl || "",
+      currentPageUrl: window.location.href,
+      visibleProductOrderBasis: sortMatch?.[1] || sortControl
+        ? `Visible shop grid order under sort control: ${normalizeText(sortMatch?.[1] || sortControl, 80)}`
+        : "Visible shop grid order from current page; sort control was not detected.",
+      pagination: {
+        hasPagination: pageLinks.length > 0,
+        hasNextPage: Boolean(nextPage?.href),
+        nextPageUrl: nextPage?.href || "",
+        pageLinks: pageLinks.slice(0, 12),
+      },
+    };
+  }
+
   function extractEtsySearchCards() {
     if (!window.location.hostname.includes("etsy.com")) return [];
     const cards = [];
@@ -1246,6 +1290,7 @@
       }
     } catch (_) {}
     const pageHealth = classifyPageHealth({ url, title, visibleText, productCards, productLinks });
+    const etsyShopProductContext = extractEtsyShopProductControls();
 
     return {
       url,
@@ -1268,6 +1313,7 @@
       structuredData,
       productLinks,
       productCards,
+      etsyShopProductContext,
       pageHealth,
       creatorInfo,
       detailCreators

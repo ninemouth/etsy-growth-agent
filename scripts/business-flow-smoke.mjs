@@ -51,6 +51,7 @@ assert.match(toolRegistrySource, /\"google_trends\", \"bing\", \"etsy\"/, "Etsy 
 assert.match(contentSource, /extractEtsySearchCards/, "content script should extract Etsy-specific listing cards");
 assert.match(contentSource, /search\\\/shops[\s\S]*shopUrl/, "content script should extract Etsy shop search cards");
 assert.match(contentSource, /visibleOrderRank/, "content script should expose visible product order rank for competitor storefront interpretation");
+assert.match(contentSource, /sortLabel[\s\S]*hasNextPage[\s\S]*etsyShopProductContext/, "content script should expose Etsy shop sort and pagination context");
 assert.match(contentSource, /pageHealth/, "content script should report page health for blocked or empty Etsy pages");
 assert.match(js, /<html lang="zh-CN" dir="ltr">/, "PDF print template should declare Chinese language and stable text direction");
 assert.match(js, /charset=UTF-8/, "PDF print template should force UTF-8 content type");
@@ -300,7 +301,7 @@ const shopOptimizerReportWithEtsyEvidence = {
         competitor_url: "https://www.etsy.com/shop/TopBridalStudio",
         page_type: "shop",
         sampled_products_count: 3,
-        visible_sku_count_estimate: "12+ visible products in first shop grid",
+        visible_sku_count_estimate: "12+ visible products in first shop grid under Sort: Most Recent",
         category_mix: ["bridal clutch", "bridesmaid gift", "evening bag"],
         product_samples: [
           { title: "Personalized Bridal Clutch", price: "$42.00", category_or_scenario: "bride gift", promotion_signal: "free shipping", visible_order_rank: 1 },
@@ -312,7 +313,7 @@ const shopOptimizerReportWithEtsyEvidence = {
         shop_review_signal: { rating: "4.9", review_count: "174 reviews", scope: "visible shop/search signal" },
         listing_order_insight: {
           visible_sort_order: "Personalized bridal clutch and pearl wedding purse appear first in the visible shop grid.",
-          observed_order_basis: "Only visible storefront order and search card rank were observed.",
+          observed_order_basis: "Sort: Most Recent; only visible storefront order and search card rank were observed.",
           interpretation_limit: "Visible order may reflect shop merchandising or Etsy sorting; it cannot prove true upload time, sales rank, or complete SKU order.",
         },
         visual_method: "Model hand-held wedding scene, personalized text overlay, packaging image.",
@@ -325,7 +326,7 @@ const shopOptimizerReportWithEtsyEvidence = {
         competitor_url: "https://www.etsy.com/shop/BellaOliviaGifts",
         page_type: "shop",
         sampled_products_count: 3,
-        visible_sku_count_estimate: "16+ visible products in first shop grid",
+        visible_sku_count_estimate: "16+ visible products in first shop grid under Sort: Most Recent",
         category_mix: ["photo clutch", "mother of bride gift", "wedding party gift"],
         product_samples: [
           { title: "Personalized Photo Clutch", price: "$24.99", category_or_scenario: "photo gift", promotion_signal: "sale", visible_order_rank: 1 },
@@ -337,7 +338,7 @@ const shopOptimizerReportWithEtsyEvidence = {
         shop_review_signal: { rating: "4.8", review_count: "245 reviews", scope: "visible shop/search signal" },
         listing_order_insight: {
           visible_sort_order: "Photo clutch and mother-of-bride gift products appear before generic wedding clutch products.",
-          observed_order_basis: "Only the visible shop grid order was observed after opening the competitor page.",
+          observed_order_basis: "Sort: Most Recent; only the visible shop grid order was observed after opening the competitor page.",
           interpretation_limit: "Visible order is a merchandising signal only; it cannot prove exact listing publish order or sales velocity.",
         },
         visual_method: "Multi-SKU gift grid with promo labels and personalized photo examples.",
@@ -354,6 +355,11 @@ const meaningfulPageContext = {
   visibleText: "MidnightReveriee wedding clutch bridesmaid gifts",
   screenshot: "data:image/jpeg;base64,mock",
   pageHealth: { hasMeaningfulDom: true, isLikelyBlocked: false },
+  etsyShopProductContext: {
+    sortLabel: "Most Recent",
+    visibleProductOrderBasis: "Visible shop grid order under sort control: Most Recent",
+    pagination: { hasPagination: true, hasNextPage: true, nextPageUrl: "https://www.etsy.com/shop/MidnightReveriee?page=2" },
+  },
 };
 const googleSearchHistory = { tool: "search_in_browser", arguments: { engine: "google_us", query: "wedding clutch" }, result: { ok: true, pageData: { visibleText: "wedding clutch search results" } } };
 const googleTrendsHistory = {
@@ -414,6 +420,19 @@ assert.notDeepEqual(
   ], meaningfulPageContext),
   [],
   "shop optimizer critic should reject reports without per-competitor product structure benchmarks"
+);
+const falseFullCoverageReport = globalThis.structuredClone(shopOptimizerReportWithEtsyEvidence);
+falseFullCoverageReport.output.analysis += " 已抓取全店所有商品和全部 SKU 的完整价格分布。";
+assert.notDeepEqual(
+  validateReport(falseFullCoverageReport, "", "skills/etsy_global_shop_optimizer.skill.md", [
+    { tool: "search_in_browser", arguments: { engine: "etsy", query: "wedding clutch" }, result: validEtsySearchResult },
+    googleSearchHistory,
+    googleTrendsHistory,
+    competitorOpenHistory,
+    competitorOpenHistory2,
+  ], meaningfulPageContext),
+  [],
+  "shop optimizer critic should reject full-shop product coverage claims without API or pagination crawl evidence"
 );
 const shopOptimizerReportWithApiClaims = globalThis.structuredClone(shopOptimizerReportWithEtsyEvidence);
 shopOptimizerReportWithApiClaims.output.data[0].recommendation = "待 Etsy API 复核 Sessions、订单、转化与 Etsy 自发货履约节奏后再扩大广告。";
