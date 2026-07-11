@@ -1588,6 +1588,57 @@ function closeWorkflowPip() {
   if (pip) pip.classList.add("hidden");
 }
 
+function readableKeyLabel(key = "") {
+  return String(key || "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function valueToReadableMarkdown(value, depth = 0) {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value !== "object") return String(value);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "";
+    if (value.every((item) => item === null || typeof item !== "object")) {
+      return value.map((item) => String(item ?? "")).filter(Boolean).join("；");
+    }
+    return value.map((item, index) => {
+      const rendered = valueToReadableMarkdown(item, depth + 1).trim();
+      return rendered ? `${index + 1}. ${rendered.replace(/\n/g, "\n   ")}` : "";
+    }).filter(Boolean).join("\n");
+  }
+  const entries = Object.entries(value).filter(([, val]) => val !== undefined && val !== null && val !== "");
+  if (entries.length === 0) return "";
+  return entries.map(([key, val]) => {
+    const label = readableKeyLabel(key);
+    const rendered = valueToReadableMarkdown(val, depth + 1).trim();
+    if (!rendered) return "";
+    if (typeof val === "object" && val !== null) {
+      return `**${label}**:\n${rendered}`;
+    }
+    return `**${label}**: ${rendered}`;
+  }).filter(Boolean).join(depth === 0 ? "\n\n" : "\n");
+}
+
+function valueToPlainText(value, maxLength = 140) {
+  const text = valueToReadableMarkdown(value)
+    .replace(/\*\*/g, "")
+    .replace(/[#`|]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.slice(0, maxLength) || "未命名分析项";
+}
+
+function reportItemTitle(item = {}, fallback = "诊断项") {
+  const id = valueToPlainText(item.plan_id || item.scheme_id || item.id || "", 48);
+  const title = valueToPlainText(item.title || item.name || item.direction || "", 120);
+  if (id && id !== "未命名分析项" && title && title !== "未命名分析项") return `${id} · ${title}`;
+  if (id && id !== "未命名分析项") return id;
+  if (title && title !== "未命名分析项") return title;
+  return fallback;
+}
+
 function workflowReportToMarkdown(report) {
   if (!report) return "还没有关联报告。运行或更新此流程后，AI 报告会作为根节点证据进入画布。";
   const result = normalizeFinalOutput(report.result || report);
@@ -1595,7 +1646,7 @@ function workflowReportToMarkdown(report) {
   if (typeof direct === "string" && direct.trim()) return direct;
   const lines = [];
   const summary = result.summary || result.overview || result.conclusion;
-  if (summary) lines.push(`### 摘要\n${summary}`);
+  if (summary) lines.push(`### 摘要\n${valueToReadableMarkdown(summary)}`);
   const data = Array.isArray(result.data) ? result.data : [];
   if (data.length) {
     lines.push("### 结构化诊断");
@@ -1608,13 +1659,13 @@ function workflowReportToMarkdown(report) {
       direction: "方向",
     };
     data.slice(0, 12).forEach((item, index) => {
-      const title = item.title || item.plan_id || item.direction || item.name || `诊断项 ${index + 1}`;
+      const title = reportItemTitle(item, `诊断项 ${index + 1}`);
       lines.push(`#### ${index + 1}. ${title}`);
       ["diagnosis_level", "priority", "evidence", "diagnosis_basis", "recommendation", "direction"].forEach((key) => {
-        if (item[key]) lines.push(`- ${labelMap[key]}: ${Array.isArray(item[key]) ? item[key].join("；") : item[key]}`);
+        if (item[key]) lines.push(`- ${labelMap[key]}: ${valueToReadableMarkdown(item[key])}`);
       });
       const actions = item.first_actions || item.next_steps || item.actionable_tasks || item.actions;
-      if (actions) lines.push(`- 建议动作: ${Array.isArray(actions) ? actions.join("；") : actions}`);
+      if (actions) lines.push(`- 建议动作: ${valueToReadableMarkdown(actions)}`);
     });
   }
   if (!lines.length) lines.push("```json\n" + JSON.stringify(result || report, null, 2) + "\n```");
@@ -1714,25 +1765,25 @@ function normalizeFinalOutput(value) {
 function resultToReportMarkdown(result = {}) {
   const data = normalizeFinalOutput(result);
   const lines = [];
-  if (data.overview) lines.push(`### ${data.overview}`);
-  if (data.analysis) lines.push(`**决策诊断与数据推演**:\n${data.analysis}`);
-  if (data.summary) lines.push(`**下一步建议**:\n${data.summary}`);
+  if (data.overview) lines.push(`### 分析概述\n\n${valueToReadableMarkdown(data.overview)}`);
+  if (data.analysis) lines.push(`### 深度商业诊断\n\n${valueToReadableMarkdown(data.analysis)}`);
+  if (data.summary) lines.push(`### 核心运营建议\n\n${valueToReadableMarkdown(data.summary)}`);
   if (Array.isArray(data.data) && data.data.length) {
     lines.push("### 结构化行动项");
     data.data.slice(0, 12).forEach((item, index) => {
       if (!item || typeof item !== "object") return;
-      const title = item.plan_id || item.title || item.name || item.direction || `行动项 ${index + 1}`;
+      const title = reportItemTitle(item, `行动项 ${index + 1}`);
       const actions = item.first_actions || item.next_steps || item.actionable_tasks || item.actions;
       const fields = [
         ["优先级", item.diagnosis_level || item.priority || item.severity],
         ["方向", item.direction || item.recommendation || item.strategy],
         ["证据", item.evidence || item.diagnosis_basis || item.selection_rationale || item.trend_evidence],
-        ["首批动作", Array.isArray(actions) ? actions.join("；") : actions],
+        ["首批动作", actions],
         ["风险护栏", item.risk_guard || item.risk_notes || item.guardrail],
       ];
       lines.push(`#### ${index + 1}. ${title}`);
       fields.forEach(([label, value]) => {
-        if (value) lines.push(`- ${label}: ${value}`);
+        if (value) lines.push(`- ${label}: ${valueToReadableMarkdown(value)}`);
       });
     });
   }
@@ -3279,7 +3330,7 @@ function renderReportsList(monitorReports = [], savedResults = []) {
   // Combine automatic monitor reports and regular skill runs
   const list = [];
   monitorReports.forEach(r => {
-    const text = `### ${r.overview || '诊断概述'}\n\n**决策诊断与数据推演**:\n${r.analysis || ''}\n\n**下一步建议与分级路线图**:\n${r.summary || ''}`;
+    const text = `### ${valueToPlainText(r.overview || '诊断概述')}\n\n**决策诊断与数据推演**:\n${valueToReadableMarkdown(r.analysis || '')}\n\n**下一步建议与分级路线图**:\n${valueToReadableMarkdown(r.summary || '')}`;
     list.push({ id: r.id, source: "monitor", title: r.title || r.shop_name || "店铺诊断报告", date: new Date(r.created_at || Date.now()).toLocaleDateString(), content: text, tag: "店铺报告" });
   });
 

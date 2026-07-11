@@ -775,6 +775,48 @@ function renderMarkdown(text) {
   return html;
 }
 
+function readableKeyLabel(key = "") {
+  return String(key || "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function valueToReadableMarkdown(value, depth = 0) {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value !== "object") return String(value);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "";
+    if (value.every((item) => item === null || typeof item !== "object")) {
+      return value.map((item) => String(item ?? "")).filter(Boolean).join("；");
+    }
+    return value.map((item, index) => {
+      const rendered = valueToReadableMarkdown(item, depth + 1).trim();
+      return rendered ? `${index + 1}. ${rendered.replace(/\n/g, "\n   ")}` : "";
+    }).filter(Boolean).join("\n");
+  }
+  const entries = Object.entries(value).filter(([, val]) => val !== undefined && val !== null && val !== "");
+  if (entries.length === 0) return "";
+  return entries.map(([key, val]) => {
+    const label = readableKeyLabel(key);
+    const rendered = valueToReadableMarkdown(val, depth + 1).trim();
+    if (!rendered) return "";
+    if (typeof val === "object" && val !== null) {
+      return `**${label}**:\n${rendered}`;
+    }
+    return `**${label}**: ${rendered}`;
+  }).filter(Boolean).join(depth === 0 ? "\n\n" : "\n");
+}
+
+function valueToPlainText(value, maxLength = 120) {
+  const text = valueToReadableMarkdown(value)
+    .replace(/\*\*/g, "")
+    .replace(/[#`|]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.slice(0, maxLength) || "未命名分析项";
+}
+
 function renderReport(resultObj) {
   let html = '';
   const standardKeys = ['overview', 'analysis', 'summary'];
@@ -784,21 +826,21 @@ function renderReport(resultObj) {
     let title = key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ');
     // Handle standard keys without titles if preferred, but adding title makes it robust for random keys
     let titleHtml = standardKeys.includes(key) ? '' : `<h3 style="margin-top:10px;margin-bottom:5px;font-size:1.1em;color:var(--text);">${escapeHtml(title)}</h3>`;
-    return `${titleHtml}<div class="report-section" style="padding:10px;background:var(--bg3);border-radius:6px;margin-bottom:10px;">${renderMarkdown(String(val))}</div>`;
+    return `${titleHtml}<div class="report-section" style="padding:10px;background:var(--bg3);border-radius:6px;margin-bottom:10px;">${renderMarkdown(valueToReadableMarkdown(val))}</div>`;
   };
 
   // Render standard keys first
   standardKeys.forEach(k => {
-    if (resultObj[k] !== undefined && resultObj[k] !== null && typeof resultObj[k] !== 'object') {
+    if (resultObj[k] !== undefined && resultObj[k] !== null) {
       html += renderSection(k, resultObj[k]);
       renderedKeys.add(k);
     }
   });
 
   const skipKeys = ['type', 'output', 'guides', 'data'];
-  // Render any remaining primitive keys (like verdict, total_score)
+  // Render any remaining readable keys (like verdict, total_score, nested report objects)
   for (const key in resultObj) {
-    if (!renderedKeys.has(key) && !skipKeys.includes(key) && resultObj[key] !== undefined && resultObj[key] !== null && typeof resultObj[key] !== 'object') {
+    if (!renderedKeys.has(key) && !skipKeys.includes(key) && resultObj[key] !== undefined && resultObj[key] !== null) {
       html += renderSection(key, resultObj[key]);
     }
   }
@@ -973,7 +1015,7 @@ function renderGrid(dataArray) {
     
     // Card Header
     html += `<div style="background: var(--bg2); padding: 12px 16px; border-bottom: 1px solid var(--border); font-weight: 600; color: var(--text); font-size: 13px; display: flex; align-items: center; gap: 8px; text-align: left;">`;
-    html += `<span style="color: var(--accent);">📦</span> ${escapeHtml(String(itemName))}</div>`;
+    html += `<span style="color: var(--accent);">📦</span> ${escapeHtml(valueToPlainText(itemName))}</div>`;
     
     // Card Body (Vertical Property List Table)
     html += '<table style="width: 100%; border-collapse: collapse; margin: 0; font-size: 12px; table-layout: fixed; text-align: left;">';
@@ -1717,13 +1759,13 @@ function convertResultToMarkdown(obj) {
   if (!obj) return "";
   let md = "";
   if (obj.overview) {
-    md += `# 📊 概述\n\n${obj.overview}\n\n`;
+    md += `# 📊 概述\n\n${valueToReadableMarkdown(obj.overview)}\n\n`;
   }
   if (obj.analysis) {
-    md += `## 💡 深度分析\n\n${obj.analysis}\n\n`;
+    md += `## 💡 深度分析\n\n${valueToReadableMarkdown(obj.analysis)}\n\n`;
   }
   if (obj.summary) {
-    md += `## 🏁 核心结论\n\n${obj.summary}\n\n`;
+    md += `## 🏁 核心结论\n\n${valueToReadableMarkdown(obj.summary)}\n\n`;
   }
   
   let targetArray = null;
@@ -1757,8 +1799,7 @@ function convertResultToMarkdown(obj) {
       const row = columns.map(col => {
         let val = item[col];
         if (val === undefined || val === null) val = '';
-        else if (typeof val === 'object') val = JSON.stringify(val);
-        else val = String(val).replace(/\n/g, "<br>");
+        else val = valueToReadableMarkdown(val).replace(/\n/g, "<br>");
         return val;
       });
       md += `| ${row.join(" | ")} |\n`;

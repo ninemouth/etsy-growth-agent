@@ -112,6 +112,9 @@ assert.match(agentLoopSource, /选品机会书\/选品机会分析/, "critic sho
 assert.match(agentLoopSource, /stage_fit/, "critic should require shop optimizer plans to explain stage fit");
 assert.match(agentLoopSource, /buyer_scenario/, "critic should require shop optimizer plans to name the buyer scenario");
 assert.match(sidepanelSource, /继续\|继续推进\|恢复\|resume\|continue/, "sidepanel should treat a plain continue message as a session resume request");
+assert.match(sidepanelSource, /valueToReadableMarkdown[\s\S]*renderMarkdown\(valueToReadableMarkdown\(val\)\)/, "sidepanel report renderer should expand nested overview/analysis/summary objects instead of stringifying them");
+assert.doesNotMatch(sidepanelSource, /renderMarkdown\(String\(val\)\)/, "sidepanel report renderer must not stringify nested report sections into [object Object]");
+assert.match(js, /valueToReadableMarkdown[\s\S]*resultToReportMarkdown[\s\S]*深度商业诊断/, "dashboard report center should expand nested report objects into readable markdown sections");
 
 const proseThenBareFinalJson = `The critic agent has identified several issues with my report.
 Let me create a corrected report.{
@@ -1169,6 +1172,46 @@ context.renderReportsList([], storage.savedResults);
 const embeddedReportText = window.document.getElementById("report-viewer-content").textContent;
 assert.match(embeddedReportText, /Etsy 金属喂食器跨境供应链审计报告/, "embedded final JSON text should render as business report content");
 assert.doesNotMatch(embeddedReportText, /"type":\s*"final"/, "embedded final JSON text should not render raw JSON by default");
+
+storage.savedResults.unshift({
+  id: "nested-object-report",
+  createdAt: "2026-07-10T10:10:00Z",
+  skillId: "skills/etsy_global_shop_optimizer.skill.md",
+  skillName: "Etsy 店铺优化诊断",
+  result: {
+    type: "final",
+    output: {
+      overview: {
+        shop_stage: "新店冷启动",
+        core_problem: "信任资产不足，婚礼/晚宴场景定位需要收敛",
+      },
+      analysis: {
+        evidence_chain: {
+          page_dom: "已读取店铺页面文本与商品结构",
+          competitor: "已对标 JuniperAndLace 的婚礼场景陈列",
+        },
+      },
+      summary: {
+        immediate_priority: "先补 About、FAQ、Shipping Profile 和首图画廊",
+      },
+      data: [{
+        plan_id: "A-1",
+        title: { zh: "新店信任基石", en: "Trust Foundation" },
+        diagnosis_level: "A",
+        direction: { focus: "聚焦婚礼/晚宴场景", remove: ["非相关 SKU", "泛礼品表达"] },
+        evidence: { page_dom: "0 评价店铺", competitor: "JuniperAndLace 垂直定位" },
+        first_actions: [{ task: "撰写英文 About" }, { task: "优化 Shipping Profile" }],
+      }],
+    },
+  },
+});
+context.renderReportsList([], storage.savedResults);
+const nestedObjectReportText = window.document.getElementById("report-viewer-content").textContent;
+assert.doesNotMatch(nestedObjectReportText, /\[object Object\]/, "nested object report sections should not render as [object Object]");
+assert.match(nestedObjectReportText, /新店冷启动/, "nested overview object values should render as readable report text");
+assert.match(nestedObjectReportText, /信任资产不足/, "nested overview object details should be preserved");
+assert.match(nestedObjectReportText, /JuniperAndLace/, "nested analysis object values should render");
+assert.match(nestedObjectReportText, /新店信任基石|Trust Foundation/, "nested card title objects should render as readable text");
 
 assert.match(css, /\.report-viewer\s*\{[\s\S]*?overflow:\s*hidden;/, "report viewer shell should not rely on page-level overflow");
 assert.match(css, /\.report-viewer-content\s*>\s*\.md-report\s*\{[\s\S]*?overflow:\s*auto;/, "report body should own vertical scrolling for long reports");
