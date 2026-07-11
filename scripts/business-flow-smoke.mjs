@@ -21,6 +21,7 @@ const backgroundSource = fs.readFileSync(path.join(root, "background.js"), "utf8
 const contentSource = fs.readFileSync(path.join(root, "content.js"), "utf8");
 const agentLoopSource = fs.readFileSync(path.join(root, "modules", "agentLoop.js"), "utf8");
 const toolRegistrySource = fs.readFileSync(path.join(root, "modules", "toolRegistry.js"), "utf8");
+const artifactStoreSource = fs.readFileSync(path.join(root, "modules", "artifactStore.js"), "utf8");
 const shopOptimizerSkillSource = fs.readFileSync(path.join(root, "skills", "etsy_global_shop_optimizer.skill.md"), "utf8");
 
 assert.match(agentLoopSource, /type:\s*"tool_heartbeat"/, "long-running tool calls should emit heartbeat progress");
@@ -53,6 +54,9 @@ assert.match(toolRegistrySource, /collect_etsy_shop_pages/, "tool registry shoul
 assert.match(toolRegistrySource, /screenshotCaptured[\s\S]*screenshotRef[\s\S]*completedFullCrawl/, "Etsy shop collection loop should capture per-page screenshot evidence without returning raw base64 in checkpoints");
 assert.match(toolRegistrySource, /currentSessionData\.products\.set/, "Etsy shop collection loop should accumulate visible product cards while reading pages");
 assert.match(toolRegistrySource, /analyze_etsy_shop_crawl_screenshots[\s\S]*evidenceLedgerEntries/, "tool registry should expose independent visual analysis for cached Etsy shop crawl screenshots");
+assert.match(toolRegistrySource, /putDataUrlArtifact[\s\S]*artifactStore:\s*"indexeddb_blob_with_memory_fallback"/, "Etsy shop crawl screenshots should be stored as artifact refs instead of chrome.storage.local payloads");
+assert.match(artifactStoreSource, /STORE_NAME\s*=\s*"artifacts"[\s\S]*indexedDB\.open[\s\S]*createObjectStore\(STORE_NAME[\s\S]*new Blob/, "large screenshot artifacts should use IndexedDB Blob storage");
+assert.doesNotMatch(artifactStoreSource, /chrome\.storage\.local\.set/, "artifact store must not persist large screenshot blobs through chrome.storage.local");
 assert.match(contentSource, /extractEtsySearchCards/, "content script should extract Etsy-specific listing cards");
 assert.match(contentSource, /search\\\/shops[\s\S]*shopUrl/, "content script should extract Etsy shop search cards");
 assert.match(contentSource, /visibleOrderRank/, "content script should expose visible product order rank for competitor storefront interpretation");

@@ -2,9 +2,10 @@
 
 import { callLLM, getSettings, prepareCleanProductImage } from './llmClient.js';
 import { etsyGetProductList, etsyGetProductInfo, etsyGetAnalyticsData, etsyGetFbsPostingList, etsyGetFboPostingList, etsyGetStoreSnapshot } from './etsyApi.js';
+import { getArtifactDataUrl, pruneArtifacts, putDataUrlArtifact } from './artifactStore.js';
 
 const preparedImageCache = new Map();
-const etsyShopCrawlScreenshotCache = new Map();
+const ETSY_SHOP_CRAWL_SCREENSHOT_NAMESPACE = "etsy-shop-crawl-screenshot";
 
 export let currentSessionData = {
   products: new Map(),
@@ -18,7 +19,9 @@ export function resetSessionData() {
     creatorInfo: null,
     detailCreators: []
   };
-  etsyShopCrawlScreenshotCache.clear();
+  pruneArtifacts({ namespace: ETSY_SHOP_CRAWL_SCREENSHOT_NAMESPACE }).catch((err) => {
+    console.warn("Failed to prune Etsy shop screenshot artifacts:", err.message);
+  });
 }
 
 export function getAccumulatedSessionData() {
@@ -44,11 +47,16 @@ function resolvePreparedImageUrl(imageUrl) {
   return preparedImageCache.get(imageUrl) || imageUrl;
 }
 
-function cacheEtsyShopCrawlScreenshot(dataUrl, pageIndex = 0) {
+async function cacheEtsyShopCrawlScreenshot(dataUrl, pageIndex = 0) {
   if (!dataUrl) return null;
-  const ref = `__ETSY_SHOP_CRAWL_SCREENSHOT_${Date.now()}_${pageIndex}_${Math.random().toString(36).slice(2, 8)}__`;
-  etsyShopCrawlScreenshotCache.set(ref, dataUrl);
-  return ref;
+  return await putDataUrlArtifact(dataUrl, {
+    namespace: ETSY_SHOP_CRAWL_SCREENSHOT_NAMESPACE,
+    metadata: {
+      kind: "etsy_shop_crawl_screenshot",
+      pageIndex,
+    },
+    ttlMs: 24 * 60 * 60 * 1000,
+  });
 }
 
 function delay(ms = 0) {
@@ -430,8 +438,8 @@ function extractJsonObject(text = "") {
   }
 }
 
-function getCachedEtsyShopScreenshot(ref = "") {
-  return etsyShopCrawlScreenshotCache.get(ref) || null;
+async function getCachedEtsyShopScreenshot(ref = "") {
+  return await getArtifactDataUrl(ref);
 }
 
 function normalizeScreenshotPages(pages = [], screenshotRefs = []) {
@@ -721,11 +729,16 @@ export const tools = {
 
         let screenshotRef = null;
         let screenshotBytes = 0;
+        let screenshotStorage = "";
+        let screenshotExpiresAt = null;
         let screenshotError = "";
         try {
           const screenshotDataUrl = await _captureTabScreenshot(targetTabId);
-          screenshotBytes = screenshotDataUrl.length;
-          screenshotRef = cacheEtsyShopCrawlScreenshot(screenshotDataUrl, pageIndex);
+          const screenshotArtifact = await cacheEtsyShopCrawlScreenshot(screenshotDataUrl, pageIndex);
+          screenshotRef = screenshotArtifact?.ref || null;
+          screenshotBytes = screenshotArtifact?.bytes || screenshotDataUrl.length;
+          screenshotStorage = screenshotArtifact?.storage || "";
+          screenshotExpiresAt = screenshotArtifact?.expiresAt || null;
         } catch (err) {
           screenshotError = err.message;
         }
@@ -766,8 +779,10 @@ export const tools = {
           screenshotCaptured: Boolean(screenshotRef),
           screenshotRef,
           screenshotBytes,
+          screenshotStorage,
+          screenshotExpiresAt,
           screenshotNote: screenshotRef
-            ? "Screenshot is cached by reference for visual evidence; full base64 is intentionally omitted from tool history/checkpoints."
+            ? "Screenshot is stored as a referenced artifact; full base64 is intentionally omitted from tool history/checkpoints."
             : "",
           screenshotError,
         });
@@ -799,7 +814,8 @@ export const tools = {
         totalVisibleProductCards: pages.reduce((sum, page) => sum + Number(page.productCardsVisible || 0), 0),
         uniqueListingCount: uniqueListings.size,
         sortLabels: Array.from(new Set(pages.map((page) => page.sortLabel).filter(Boolean))),
-        screenshotPolicy: "Per-page screenshots are captured and cached by reference; full base64 payloads are omitted to keep checkpoints resumable.",
+        screenshotPolicy: "Per-page screenshots are stored as referenced artifacts; full base64 payloads are omitted from chrome.storage.local checkpoints.",
+        artifactStore: "indexeddb_blob_with_memory_fallback",
         pages,
       };
     } finally {
@@ -823,14 +839,14 @@ export const tools = {
     const analyses = [];
     const evidenceLedgerEntries = [];
     for (const page of screenshotPages) {
-      const imageUrl = getCachedEtsyShopScreenshot(page.screenshotRef);
+      const imageUrl = await getCachedEtsyShopScreenshot(page.screenshotRef);
       if (!imageUrl) {
         analyses.push({
           pageIndex: page.pageIndex,
           url: page.url,
           screenshotRef: page.screenshotRef,
           ok: false,
-          error: "Screenshot reference was not found in the runtime cache. Re-run collect_etsy_shop_pages before visual analysis.",
+          error: "Screenshot artifact was not found or has expired. Re-run collect_etsy_shop_pages before visual analysis.",
         });
         continue;
       }
