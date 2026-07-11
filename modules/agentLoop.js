@@ -287,10 +287,75 @@ function hasMeaningfulPageDom(pageContext = {}) {
   return Boolean((title && title.toLowerCase() !== "etsy.com") || h1);
 }
 
+function getToolPageDataCandidates(toolHistory = []) {
+  const candidates = [];
+  toolHistory.forEach((entry) => {
+    if (!entry || entry.result?.ok === false || entry.result?.error) return;
+    if (entry.tool === "read_current_page") {
+      candidates.push({
+        sourceRef: entry.result?.url || entry.result?.currentPageUrl || "read_current_page",
+        pageData: entry.result,
+      });
+    }
+    if (["open_new_tab", "navigate_to", "search_in_browser"].includes(entry.tool) && entry.result?.pageData) {
+      candidates.push({
+        sourceRef: entry.result.pageData.url || entry.result?.url || entry.arguments?.url || entry.tool,
+        pageData: entry.result.pageData,
+      });
+    }
+    if (entry.tool === "collect_etsy_shop_pages" && Array.isArray(entry.result?.pages)) {
+      entry.result.pages.forEach((page) => {
+        candidates.push({
+          sourceRef: page?.url || entry.result?.sourceUrl || "collect_etsy_shop_pages",
+          pageData: {
+            url: page?.url,
+            title: page?.title,
+            visibleText: page?.visibleTextSnippet,
+            productCards: page?.productCards,
+            pageHealth: page?.pageHealth,
+            etsyShopProductContext: {
+              sortLabel: page?.sortLabel,
+              visibleProductOrderBasis: page?.visibleProductOrderBasis,
+              pagination: page?.pagination,
+            },
+          },
+        });
+      });
+    }
+  });
+  return candidates;
+}
+
+function hasMeaningfulToolPageDom(toolHistory = []) {
+  return getToolPageDataCandidates(toolHistory).some(({ pageData }) => hasMeaningfulPageDom(pageData));
+}
+
+function getBestPageDomEvidence(toolHistory = [], pageContext = {}) {
+  const candidates = [
+    { sourceRef: pageContext?.url || "当前 Etsy 页面", pageData: pageContext },
+    ...getToolPageDataCandidates(toolHistory),
+  ];
+  const best = candidates.find(({ pageData }) => hasMeaningfulPageDom(pageData));
+  if (!best) return null;
+  const pageData = best.pageData || {};
+  const productCount = Array.isArray(pageData.productCards) ? pageData.productCards.length : 0;
+  const shopContext = pageData.etsyShopProductContext || {};
+  const observed = [
+    pageData.title || pageData.h1 || "",
+    productCount ? `可见商品样本 ${productCount} 个` : "",
+    shopContext.sortLabel ? `排序口径 ${shopContext.sortLabel}` : "",
+    String(pageData.visibleText || pageData.text || "").replace(/\s+/g, " ").trim().slice(0, 180),
+  ].filter(Boolean).join("；");
+  return {
+    sourceRef: best.sourceRef || pageData.url || "当前 Etsy 页面",
+    observedValue: observed || "已读取当前 Etsy 页面文本、标题、商品卡片或店铺上下文。",
+  };
+}
+
 function hasEvidenceSource(toolHistory = [], pageContext = {}, sourceType = "") {
   const normalized = String(sourceType || "").toLowerCase();
   if (normalized === "page_dom") {
-    return hasMeaningfulPageDom(pageContext);
+    return hasMeaningfulPageDom(pageContext) || hasMeaningfulToolPageDom(toolHistory);
   }
   if (normalized === "screenshot_visual") {
     return Boolean(pageContext?.screenshot) || hasSuccessfulToolCall(toolHistory, (entry) =>
@@ -729,6 +794,63 @@ function buildAssumptionLedgerEntry({ sourceRef, observedValue, usedFor, limitat
   };
 }
 
+function buildPageDomLedgerEntry({ sourceRef, observedValue }) {
+  return {
+    source_type: "page_dom",
+    source_ref: sourceRef || "当前 Etsy 页面",
+    observed_value: observedValue || "已读取当前 Etsy 页面文本、店铺定位、标题、商品卡片或类目上下文。",
+    used_for: "支撑店铺定位、类目属性、商品结构、标题/描述和整改方向判断。",
+    confidence: "high",
+    limitation: "页面文本仅代表本轮可读取的公开页面内容，不能替代 Etsy 后台 API、订单或完整竞品私有数据。",
+  };
+}
+
+function looksLikeReportOutput(value = {}) {
+  const narrativeFieldCount = ["overview", "analysis", "summary"].filter((key) =>
+    typeof value?.[key] === "string" && value[key].trim().length > 0
+  ).length;
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    (
+      (Array.isArray(value.data) && narrativeFieldCount >= 1) ||
+      narrativeFieldCount >= 2
+    )
+  );
+}
+
+export function normalizeFinalReportShapeForDelivery(parsed) {
+  if (!parsed || typeof parsed !== "object") {
+    return { parsed, changed: false, reason: "" };
+  }
+  if (parsed.type === "final" && parsed.output && typeof parsed.output === "object") {
+    return { parsed, changed: false, reason: "" };
+  }
+  if (parsed.output && typeof parsed.output === "object" && looksLikeReportOutput(parsed.output)) {
+    return {
+      parsed: { ...parsed, type: "final", output: parsed.output },
+      changed: parsed.type !== "final",
+      reason: "已将非标准 final 类型包装为标准 final 报告结构",
+    };
+  }
+  if (parsed.type === "final" && looksLikeReportOutput(parsed)) {
+    const { type: _type, ...output } = parsed;
+    return {
+      parsed: { type: "final", output },
+      changed: true,
+      reason: "已将裸报告字段包装到 output 中",
+    };
+  }
+  if (!parsed.type && looksLikeReportOutput(parsed)) {
+    return {
+      parsed: { type: "final", output: parsed },
+      changed: true,
+      reason: "已将裸报告 JSON 包装为标准 final 报告结构",
+    };
+  }
+  return { parsed, changed: false, reason: "" };
+}
+
 export function autoRepairFinalReportForDelivery(parsed, {
   skillId = "",
   toolHistory = [],
@@ -741,11 +863,18 @@ export function autoRepairFinalReportForDelivery(parsed, {
   const repaired = cloneReport(parsed);
   const reasons = [];
   const hasEtsyApiEvidence = hasEvidenceSource(toolHistory, pageContext, "etsy_api");
+  const pageDomEvidence = getBestPageDomEvidence(toolHistory, pageContext);
+  const shouldAutoAttachPageDom = isShopOptimizerOnly(skillId) && pageDomEvidence;
 
   repaired.output.data.forEach((item, idx) => {
     if (!item || typeof item !== "object") return;
     const ledger = ensureArrayField(item, "evidence_ledger");
     let itemChanged = false;
+
+    if (shouldAutoAttachPageDom && !hasLedgerType(ledger, "page_dom")) {
+      ledger.unshift(buildPageDomLedgerEntry(pageDomEvidence));
+      itemChanged = true;
+    }
 
     ledger.forEach((entry) => {
       if (!entry || typeof entry !== "object") return;
@@ -771,7 +900,7 @@ export function autoRepairFinalReportForDelivery(parsed, {
     }
 
     if (itemChanged) {
-      reasons.push(`第 ${idx + 1} 项 API/订单/履约类证据已降级为待验证假设`);
+      reasons.push(`第 ${idx + 1} 项已补齐页面文本证据或降级 API/订单/履约类假设`);
     }
   });
 
@@ -1358,6 +1487,15 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     });
 
     let parsed = extractJSONBlock(assistantContent);
+    const normalizedFinalShape = normalizeFinalReportShapeForDelivery(parsed);
+    if (normalizedFinalShape.changed) {
+      parsed = normalizedFinalShape.parsed;
+      sendProgress({
+        type: "auto_fix",
+        step,
+        message: `${normalizedFinalShape.reason}，避免因交付包装偏差触发整稿重做。`,
+      });
+    }
 
     if (!parsed) {
       messages.push({ role: "assistant", content: assistantContent });
@@ -1784,6 +1922,14 @@ function extractBalancedJSONCandidates(text = "") {
   return candidates;
 }
 
+function isLikelyAgentJSON(parsed) {
+  return Boolean(
+    parsed &&
+    typeof parsed === "object" &&
+    (parsed.type === "final" || parsed.output || parsed.tool || looksLikeReportOutput(parsed))
+  );
+}
+
 export function extractJSONBlock(text) {
   if (!text || typeof text !== "string") return null;
 
@@ -1798,7 +1944,7 @@ export function extractJSONBlock(text) {
   for (let i = matches.length - 1; i >= 0; i--) {
     try {
       const parsed = tryParseJSON(matches[i]);
-      if (parsed && (parsed.type === "final" || parsed.output || parsed.tool)) {
+      if (isLikelyAgentJSON(parsed)) {
         return parsed;
       }
     } catch (_) {}
@@ -1808,11 +1954,11 @@ export function extractJSONBlock(text) {
   // "critic notes ... { type: final ... }" without returning the prose as text.
   const braceMatches = extractBalancedJSONCandidates(text)
     .map((candidate) => candidate.trim())
-    .filter((candidate) => /"type"\s*:\s*"final"|"output"\s*:|"tool"\s*:/.test(candidate));
+    .filter((candidate) => /"type"\s*:\s*"final"|"output"\s*:|"tool"\s*:|"overview"\s*:|"analysis"\s*:|"summary"\s*:|"data"\s*:/.test(candidate));
   for (let i = braceMatches.length - 1; i >= 0; i--) {
     try {
       const parsed = tryParseJSON(braceMatches[i]);
-      if (parsed && (parsed.type === "final" || parsed.output || parsed.tool)) {
+      if (isLikelyAgentJSON(parsed)) {
         return parsed;
       }
     } catch (_) {}

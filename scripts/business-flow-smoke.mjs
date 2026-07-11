@@ -6,6 +6,7 @@ import { JSDOM } from "jsdom";
 import {
   autoRepairFinalReportForDelivery,
   extractJSONBlock,
+  normalizeFinalReportShapeForDelivery,
   sanitizeFinalReportForDelivery,
   validateReport,
 } from "../modules/agentLoop.js";
@@ -104,6 +105,15 @@ assert.equal(
   "final",
   "parser should extract a bare final JSON object after critic prose instead of returning text"
 );
+const bareReportJson = `Critic notes...{
+  "overview": "Etsy 店铺优化诊断",
+  "analysis": "已完成页面文本、竞品和趋势证据整理。",
+  "summary": "优先修复页面信任资产。",
+  "data": []
+}`;
+const normalizedBareReport = normalizeFinalReportShapeForDelivery(extractJSONBlock(bareReportJson));
+assert.equal(normalizedBareReport.parsed?.type, "final", "bare report JSON should be normalized into a final envelope");
+assert.equal(normalizedBareReport.parsed?.output?.overview, "Etsy 店铺优化诊断", "bare report output fields should be preserved during final normalization");
 
 const jargonReport = {
   type: "final",
@@ -653,6 +663,46 @@ const validShopEvidenceHistory = [
   competitorOpenHistory,
   competitorOpenHistory2,
 ];
+const toolDomHistory = [
+  ...validShopEvidenceHistory,
+  {
+    tool: "read_current_page",
+    arguments: {},
+    result: {
+      url: "https://www.etsy.com/shop/MidnightReveriee",
+      title: "MidnightReveriee - Etsy",
+      visibleText: "MidnightReveriee wedding clutch bridesmaid gifts French Chic Soft Luxury Bridal Clutches Bridesmaid Gifts",
+      productCards: [{ title: "Pearl wedding clutch", price: "$42.00", href: "https://www.etsy.com/listing/mock" }],
+      pageHealth: { hasMeaningfulDom: true, isLikelyBlocked: false },
+    },
+  },
+];
+const visualOnlyPageContext = {
+  url: "https://www.etsy.com/shop/MidnightReveriee",
+  title: "MidnightReveriee - Etsy",
+  screenshot: "data:image/jpeg;base64,mock",
+  pageHealth: { hasMeaningfulDom: false, isLikelyBlocked: false },
+};
+const missingPageDomLedgerReport = globalThis.structuredClone(shopOptimizerReportWithEtsyEvidence);
+missingPageDomLedgerReport.output.data.forEach((item) => {
+  item.evidence_ledger = item.evidence_ledger.filter((entry) => entry.source_type !== "page_dom");
+});
+assert.notDeepEqual(
+  validateReport(missingPageDomLedgerReport, "", "skills/etsy_global_shop_optimizer.skill.md", toolDomHistory, visualOnlyPageContext),
+  [],
+  "shop optimizer critic should still reject reports that omit page_dom ledger entries"
+);
+const repairedMissingPageDomLedgerReport = autoRepairFinalReportForDelivery(missingPageDomLedgerReport, {
+  skillId: "skills/etsy_global_shop_optimizer.skill.md",
+  toolHistory: toolDomHistory,
+  pageContext: visualOnlyPageContext,
+});
+assert.equal(repairedMissingPageDomLedgerReport.changed, true, "shop optimizer reports should auto-attach page_dom ledger when real page text exists in tool history");
+assert.deepEqual(
+  validateReport(repairedMissingPageDomLedgerReport.parsed, "", "skills/etsy_global_shop_optimizer.skill.md", toolDomHistory, visualOnlyPageContext),
+  [],
+  "auto-attached page_dom evidence should prevent non-quality critic redo"
+);
 assert.notDeepEqual(
   validateReport(shopOptimizerReportWithApiClaims, "", "skills/etsy_global_shop_optimizer.skill.md", validShopEvidenceHistory, meaningfulPageContext),
   [],
