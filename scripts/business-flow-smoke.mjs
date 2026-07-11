@@ -4,6 +4,7 @@ import path from "node:path";
 import vm from "node:vm";
 import { JSDOM } from "jsdom";
 import {
+  __testInternals,
   autoRepairFinalReportForDelivery,
   extractJSONBlock,
   normalizeFinalReportShapeForDelivery,
@@ -30,6 +31,10 @@ assert.match(agentLoopSource, /etsyAgentCheckpoint:/, "agent loop should persist
 assert.match(agentLoopSource, /CHECKPOINT_IMAGE_PLACEHOLDER/, "persisted checkpoints should omit base64 screenshot payloads");
 assert.match(agentLoopSource, /type:\s*"checkpoint_restored"/, "agent loop should notify the UI when a checkpoint is restored");
 assert.match(agentLoopSource, /stripCheckpointDataUrls[\s\S]*CHECKPOINT_IMAGE_PLACEHOLDER[\s\S]*serializeToolHistoryForCheckpoint/, "persisted tool history should omit raw data-image payloads");
+assert.match(agentLoopSource, /compactToolResultForLLM[\s\S]*MAX_LLM_PRODUCT_CARDS[\s\S]*visibleTextSnippet/, "tool results sent back to the LLM should be compressed before the next reasoning turn");
+assert.match(agentLoopSource, /compactMessagesForLLM\(messages\)[\s\S]*callLLM\(llmMessages/, "agent loop should compact message history before every LLM request");
+assert.match(agentLoopSource, /rawResultPreservedInToolHistory:\s*true/, "compressed LLM payloads should preserve raw evidence in tool history for validators");
+assert.match(agentLoopSource, /productCardsCount[\s\S]*truncateText\(ctx\.visibleText/, "initial page context should be summarized before entering the prompt");
 assert.match(agentLoopSource, /lastNode:\s*"llm_response_received"/, "agent loop should checkpoint after receiving an LLM response");
 assert.match(agentLoopSource, /status:\s*"tool_pending"[\s\S]*lastNode:\s*"tool_call_ready"/, "agent loop should checkpoint before executing a parsed tool call");
 assert.match(agentLoopSource, /status:\s*"tool_guard_retry"/, "agent loop should checkpoint guard-driven retry nodes");
@@ -248,6 +253,43 @@ const validEtsySearchResult = {
 };
 assert.equal(hasValidEtsySearchEvidence(invalidEtsySearchResult), false, "empty or blocked Etsy pages should not count as valid search evidence");
 assert.equal(hasValidEtsySearchEvidence(validEtsySearchResult), true, "Etsy listing cards should count as valid search evidence");
+const hugeCrawlResult = {
+  ok: true,
+  tool: "collect_etsy_shop_pages",
+  sourceUrl: "https://www.etsy.com/shop/HugeShop",
+  pagesCollected: 6,
+  completedFullCrawl: false,
+  totalVisibleProductCards: 360,
+  uniqueListingCount: 360,
+  artifactStore: "indexeddb_blob_with_memory_fallback",
+  pages: Array.from({ length: 6 }, (_, pageIdx) => ({
+    pageIndex: pageIdx + 1,
+    url: `https://www.etsy.com/shop/HugeShop?page=${pageIdx + 1}`,
+    title: "HugeShop",
+    sortLabel: "Most Recent",
+    productCardsVisible: 60,
+    visibleTextSnippet: "wedding clutch ".repeat(500),
+    screenshotCaptured: true,
+    screenshotRef: `artifact://etsy-shop-crawl-screenshot/mock-${pageIdx}`,
+    productCards: Array.from({ length: 60 }, (_, cardIdx) => ({
+      visibleOrderRank: cardIdx + 1,
+      title: `Personalized wedding clutch ${cardIdx} ${"bridal ".repeat(20)}`,
+      price: "$42.00",
+      href: `https://www.etsy.com/listing/${pageIdx}${cardIdx}`,
+      imageSrc: `https://i.etsystatic.com/mock-${pageIdx}-${cardIdx}.jpg`,
+      shippingText: "Free shipping ".repeat(20),
+      promotionText: "Sale ".repeat(20),
+    })),
+  })),
+};
+const compactHugeCrawlResult = __testInternals.compactToolResultForLLM("collect_etsy_shop_pages", hugeCrawlResult);
+assert.equal(compactHugeCrawlResult.totalVisibleProductCards, 360, "compressed crawl result should preserve aggregate product counts");
+assert.equal(compactHugeCrawlResult.pages.length, 4, "compressed crawl result should keep only a bounded number of pages");
+assert.equal(compactHugeCrawlResult.pages[0].productCards.length, 8, "compressed crawl result should keep only bounded product samples per page");
+assert.ok(
+  JSON.stringify(compactHugeCrawlResult).length < JSON.stringify(hugeCrawlResult).length / 4,
+  "compressed crawl result should be much smaller than raw crawl evidence"
+);
 assert.equal(hasValidEtsySearchEvidence({
   ok: true,
   searchUrl: "https://www.etsy.com/search/shops?search_query=wedding%20clutch",

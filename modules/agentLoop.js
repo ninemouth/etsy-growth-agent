@@ -7,6 +7,11 @@ const globalSessionCache = {};
 const CHECKPOINT_PREFIX = "etsyAgentCheckpoint:";
 const CHECKPOINT_LATEST_KEY = "etsyAgentCheckpointLatest";
 const CHECKPOINT_IMAGE_PLACEHOLDER = "__CHECKPOINT_IMAGE_OMITTED__";
+const MAX_LLM_TEXT_FIELD = 900;
+const MAX_LLM_PRODUCT_CARDS = 8;
+const MAX_LLM_CRAWL_PAGES = 4;
+const MAX_LLM_MESSAGE_CHARS = 18000;
+const MAX_LLM_HISTORY_MESSAGES = 18;
 
 function checkpointStorageAvailable() {
   return typeof chrome !== "undefined" && chrome.storage?.local;
@@ -67,6 +72,188 @@ function hydrateMessagesFromCheckpoint(messages = []) {
     content: restoreCheckpointContent(message.content),
   }));
 }
+
+function truncateText(value = "", maxLength = MAX_LLM_TEXT_FIELD) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength)}... [truncated ${text.length - maxLength} chars]`;
+}
+
+function compactProductCardForLLM(card = {}, index = 0) {
+  return {
+    rank: card.visibleOrderRank ?? card.index ?? index + 1,
+    title: truncateText(card.title || card.name || "", 160),
+    price: card.price || "",
+    href: card.href || card.listingUrl || card.url || "",
+    shopName: card.shopName || "",
+    reviewCount: card.reviewCount || card.reviews || "",
+    rating: card.rating || "",
+    badges: Array.isArray(card.badges) ? card.badges.slice(0, 4) : card.badges,
+    shippingText: truncateText(card.shippingText || card.shipping || "", 120),
+    promotionText: truncateText(card.promotionText || card.discountText || card.saleText || "", 120),
+    hasImage: Boolean(card.imageSrc || card.image || card.imageUrl || card.candidate_image_url),
+  };
+}
+
+function compactPageDataForLLM(pageData = {}) {
+  if (!pageData || typeof pageData !== "object") return pageData;
+  const cards = Array.isArray(pageData.productCards) ? pageData.productCards : [];
+  const links = Array.isArray(pageData.productLinks) ? pageData.productLinks : [];
+  return {
+    url: pageData.url || pageData.currentPageUrl || "",
+    title: pageData.title || "",
+    h1: pageData.h1 || "",
+    shopName: pageData.shopName || "",
+    visibleText: truncateText(pageData.visibleText || pageData.text || "", 1400),
+    metaDescription: truncateText(pageData.metaDescription || "", 400),
+    pageHealth: pageData.pageHealth,
+    etsyShopProductContext: pageData.etsyShopProductContext,
+    productCardsCount: cards.length,
+    productCards: cards.slice(0, MAX_LLM_PRODUCT_CARDS).map(compactProductCardForLLM),
+    productLinksCount: links.length,
+    productLinks: links.slice(0, MAX_LLM_PRODUCT_CARDS).map((link) => ({
+      href: link.href || "",
+      text: truncateText(link.text || link.title || "", 160),
+    })),
+  };
+}
+
+function compactToolResultForLLM(toolName = "", result = {}) {
+  if (!result || typeof result !== "object") return result;
+  const base = {
+    ok: result.ok,
+    error: result.error,
+    message: truncateText(result.message || "", 500),
+    tabId: result.tabId,
+    url: result.url,
+    finalUrl: result.finalUrl,
+    searchUrl: result.searchUrl,
+    queryUsed: result.queryUsed,
+    evidenceOk: result.evidenceOk,
+    evidenceStatus: result.evidenceStatus,
+    isCaptcha: result.isCaptcha,
+    timedOut: result.timedOut,
+    readError: result.readError,
+  };
+
+  if (result.pageData && typeof result.pageData === "object") {
+    base.pageData = compactPageDataForLLM(result.pageData);
+  } else if (typeof result.pageData === "string") {
+    base.pageData = truncateText(result.pageData, 500);
+  }
+
+  if (Array.isArray(result.retryAttempts)) {
+    base.retryAttempts = result.retryAttempts.slice(-4).map((attempt) => ({
+      searchUrl: attempt.searchUrl,
+      searchType: attempt.searchType,
+      evidenceStatus: attempt.evidenceStatus,
+      message: truncateText(attempt.message || "", 220),
+    }));
+  }
+
+  if (toolName === "collect_etsy_shop_pages" && Array.isArray(result.pages)) {
+    base.tool = result.tool;
+    base.sourceUrl = result.sourceUrl;
+    base.pagesCollected = result.pagesCollected;
+    base.maxPages = result.maxPages;
+    base.completedFullCrawl = result.completedFullCrawl;
+    base.stoppedReason = result.stoppedReason;
+    base.totalVisibleProductCards = result.totalVisibleProductCards;
+    base.uniqueListingCount = result.uniqueListingCount;
+    base.sortLabels = result.sortLabels;
+    base.artifactStore = result.artifactStore;
+    base.screenshotPolicy = result.screenshotPolicy;
+    base.pages = result.pages.slice(0, MAX_LLM_CRAWL_PAGES).map((page) => ({
+      pageIndex: page.pageIndex,
+      url: page.url,
+      title: page.title,
+      shopName: page.shopName,
+      sortLabel: page.sortLabel,
+      visibleProductOrderBasis: page.visibleProductOrderBasis,
+      pagination: page.pagination,
+      productCardsVisible: page.productCardsVisible,
+      productCards: Array.isArray(page.productCards) ? page.productCards.slice(0, MAX_LLM_PRODUCT_CARDS).map(compactProductCardForLLM) : [],
+      visibleTextSnippet: truncateText(page.visibleTextSnippet || "", 700),
+      pageHealth: page.pageHealth,
+      screenshotCaptured: page.screenshotCaptured,
+      screenshotRef: page.screenshotRef,
+      screenshotStorage: page.screenshotStorage,
+      screenshotExpiresAt: page.screenshotExpiresAt,
+      screenshotError: page.screenshotError,
+    }));
+    if (result.pages.length > MAX_LLM_CRAWL_PAGES) {
+      base.omittedPages = result.pages.length - MAX_LLM_CRAWL_PAGES;
+    }
+  }
+
+  if (toolName === "analyze_etsy_shop_crawl_screenshots") {
+    base.tool = result.tool;
+    base.competitorName = result.competitorName;
+    base.screenshotsRequested = result.screenshotsRequested;
+    base.screenshotsAnalyzed = result.screenshotsAnalyzed;
+    base.analyses = Array.isArray(result.analyses) ? result.analyses.slice(0, 6).map((analysis) => ({
+      pageIndex: analysis.pageIndex,
+      url: analysis.url,
+      screenshotRef: analysis.screenshotRef,
+      ok: analysis.ok,
+      visual_tone: truncateText(analysis.visual_tone || "", 160),
+      report_observation: truncateText(analysis.report_observation || "", 260),
+      error: truncateText(analysis.error || "", 180),
+    })) : [];
+    base.evidenceLedgerEntries = Array.isArray(result.evidenceLedgerEntries)
+      ? result.evidenceLedgerEntries.slice(0, 6)
+      : [];
+  }
+
+  if (Array.isArray(result.productCards)) {
+    base.productCardsCount = result.productCards.length;
+    base.productCards = result.productCards.slice(0, MAX_LLM_PRODUCT_CARDS).map(compactProductCardForLLM);
+  }
+  return Object.fromEntries(Object.entries(base).filter(([, value]) => value !== undefined && value !== "" && value !== null));
+}
+
+function compactJsonStringForLLM(payload) {
+  const json = JSON.stringify(payload);
+  if (json.length <= MAX_LLM_MESSAGE_CHARS) return json;
+  return JSON.stringify({
+    type: payload?.type || "compressed_payload",
+    tool: payload?.tool,
+    note: `Payload compressed from ${json.length} chars to avoid LLM request-size limits.`,
+    result: compactToolResultForLLM(payload?.tool, payload?.result || {}),
+  });
+}
+
+function compactMessageContentForLLM(content) {
+  if (Array.isArray(content)) {
+    return content.map((part) => {
+      if (part?.type !== "text" || typeof part.text !== "string") return part;
+      if (part.text.length <= MAX_LLM_MESSAGE_CHARS) return part;
+      return {
+        ...part,
+        text: `${part.text.slice(0, MAX_LLM_MESSAGE_CHARS)}\n...[message truncated ${part.text.length - MAX_LLM_MESSAGE_CHARS} chars before LLM call]`,
+      };
+    });
+  }
+  if (typeof content === "string" && content.length > MAX_LLM_MESSAGE_CHARS) {
+    return `${content.slice(0, MAX_LLM_MESSAGE_CHARS)}\n...[message truncated ${content.length - MAX_LLM_MESSAGE_CHARS} chars before LLM call]`;
+  }
+  return content;
+}
+
+function compactMessagesForLLM(messages = []) {
+  const preserved = messages.length > MAX_LLM_HISTORY_MESSAGES
+    ? [messages[0], ...messages.slice(-(MAX_LLM_HISTORY_MESSAGES - 1))]
+    : messages;
+  return preserved.map((message) => ({
+    ...message,
+    content: compactMessageContentForLLM(message.content),
+  }));
+}
+
+export const __testInternals = {
+  compactToolResultForLLM,
+  compactMessagesForLLM,
+};
 
 async function saveAgentCheckpoint(sessionKey, checkpoint = {}) {
   if (!checkpointStorageAvailable()) return;
@@ -1381,6 +1568,24 @@ export function clearSessionCache(tabId) {
 
 function buildPromptContext(pageContext = {}) {
   const ctx = { ...pageContext };
+  if (Array.isArray(ctx.productCards)) {
+    ctx.productCardsCount = ctx.productCards.length;
+    ctx.productCards = ctx.productCards.slice(0, MAX_LLM_PRODUCT_CARDS).map(compactProductCardForLLM);
+  }
+  if (Array.isArray(ctx.productLinks)) {
+    ctx.productLinksCount = ctx.productLinks.length;
+    ctx.productLinks = ctx.productLinks.slice(0, MAX_LLM_PRODUCT_CARDS).map((link) => ({
+      href: link.href || "",
+      text: truncateText(link.text || link.title || "", 160),
+    }));
+  }
+  if (ctx.visibleText || ctx.text) {
+    ctx.visibleText = truncateText(ctx.visibleText || ctx.text, 1600);
+    delete ctx.text;
+  }
+  if (ctx.metaDescription) {
+    ctx.metaDescription = truncateText(ctx.metaDescription, 400);
+  }
   if (ctx.targetImageUrl && String(ctx.targetImageUrl).startsWith("data:")) {
     ctx.targetImageUrl = "__TARGET_IMAGE_URL__";
     ctx.targetImageInputType = "uploaded_image";
@@ -1594,7 +1799,8 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     await saveCheckpoint({ status: "running", step, lastNode: "llm_call_started" });
 
     let assistantContent = "";
-    assistantContent = await callLLM(messages, ({ chunk, fullText, isReasoning }) => {
+    const llmMessages = compactMessagesForLLM(messages);
+    assistantContent = await callLLM(llmMessages, ({ chunk, fullText, isReasoning }) => {
       sendProgress({ type: "streaming", step, chunk, fullText, isReasoning });
     }, highRandomness);
 
@@ -1929,7 +2135,8 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       const userResultObj = {
         type: "tool_result",
         tool: toolName,
-        result: toolResult,
+        result: compactToolResultForLLM(toolName, toolResult),
+        rawResultPreservedInToolHistory: true,
       };
       const productCards = toolResult?.pageData?.productCards || [];
       if (Array.isArray(productCards) && productCards.length > 0) {
@@ -1943,11 +2150,11 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       let userMsgContent;
       if (nextScreenshot) {
         userMsgContent = [
-          { type: "text", text: JSON.stringify(userResultObj) },
+          { type: "text", text: compactJsonStringForLLM(userResultObj) },
           { type: "image_url", image_url: { url: nextScreenshot } }
         ];
       } else {
-        userMsgContent = JSON.stringify(userResultObj);
+        userMsgContent = compactJsonStringForLLM(userResultObj);
       }
 
       messages.push({
