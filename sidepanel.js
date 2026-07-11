@@ -1137,7 +1137,7 @@ async function loadLibrary() {
 // ── Settings ──
 async function loadSettings() {
   const s = await new Promise((r) =>
-    chrome.storage.local.get(["apiKey", "llmProvider", "llmModel", "imageGenerationModel", "llmBaseUrl", "maxLoopSteps", "temperature", "helium10ApiKey", "sellerSpriteApiKey", "fastmossApiKey"], r)
+    chrome.storage.local.get(["apiKey", "llmProvider", "llmModel", "imageGenerationModel", "llmBaseUrl", "temperature", "helium10ApiKey", "sellerSpriteApiKey", "fastmossApiKey"], r)
   );
 
   if (s.llmProvider) $("llmProvider").value = s.llmProvider;
@@ -1145,7 +1145,6 @@ async function loadSettings() {
   if (s.imageGenerationModel) $("imageGenerationModel").value = s.imageGenerationModel;
   if (s.apiKey) $("apiKey").value = s.apiKey;
   if (s.llmBaseUrl) $("llmBaseUrl").value = s.llmBaseUrl;
-  if (s.maxLoopSteps) $("maxLoopSteps").value = s.maxLoopSteps;
   if (s.temperature !== undefined) {
     $("temperature").value = s.temperature;
     $("tempValue").textContent = s.temperature;
@@ -1214,7 +1213,6 @@ async function saveSettings() {
   const llmModel = $("llmModel").value.trim();
   const imageGenerationModel = $("imageGenerationModel").value.trim();
   const llmBaseUrl = $("llmBaseUrl").value.trim();
-  const maxLoopSteps = $("maxLoopSteps").value;
   const temperature = $("temperature").value;
   const helium10ApiKey = $("helium10ApiKey").value.trim();
   const sellerSpriteApiKey = $("sellerSpriteApiKey").value.trim();
@@ -1236,7 +1234,6 @@ async function saveSettings() {
       llmModel, 
       imageGenerationModel,
       llmBaseUrl, 
-      maxLoopSteps, 
       temperature,
       helium10ApiKey,
       sellerSpriteApiKey,

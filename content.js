@@ -2888,11 +2888,6 @@
           <input type="range" class="form-range" id="llm-temperature" min="0" max="1.5" step="0.05" value="0.2">
         </div>
 
-        <div class="form-group">
-          <label class="form-label">最大循环步数 (Max Steps)</label>
-          <input type="number" class="form-input" id="llm-max-steps" value="25" min="1" max="100">
-        </div>
-
         <div class="settings-section-title">界面配置 (UI Options)</div>
         <div class="form-group">
           <label class="form-label">界面主题 (Theme)</label>
@@ -3907,7 +3902,6 @@
         'llmModel',
         'imageGenerationModel',
         'llmBaseUrl',
-        'maxLoopSteps',
         'temperature'
       ], (data) => {
         const shops = data.etsyShops || [];
@@ -3978,7 +3972,6 @@
         shadow.getElementById("image-gen-model").value = data.imageGenerationModel || 'qwen-image-2.0';
         shadow.getElementById("llm-temperature").value = data.temperature !== undefined ? data.temperature : 0.2;
         shadow.getElementById("temp-val-display").innerText = data.temperature !== undefined ? data.temperature : 0.2;
-        shadow.getElementById("llm-max-steps").value = data.maxLoopSteps || 25;
 
         toggleCustomUrlContainer(data.llmProvider);
 
@@ -4015,7 +4008,6 @@
       const llmModel = shadow.getElementById("llm-model").value.trim();
       const imageGenerationModel = shadow.getElementById("image-gen-model").value.trim();
       const temperature = parseFloat(shadow.getElementById("llm-temperature").value);
-      const maxLoopSteps = parseInt(shadow.getElementById("llm-max-steps").value, 10) || 25;
 
       const settingsObj = {
         apiKey,
@@ -4023,7 +4015,6 @@
         llmModel,
         imageGenerationModel,
         llmBaseUrl,
-        maxLoopSteps,
         temperature
       };
 
@@ -4036,7 +4027,6 @@
         apiKey,
         llmModel,
         imageGenerationModel,
-        llmMaxSteps: maxLoopSteps,
         temperature,
         settings: settingsObj
       }, () => {

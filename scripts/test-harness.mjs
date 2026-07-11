@@ -15,7 +15,6 @@ global.chrome = {
           etsyTargetMargin: '25',
           settings: {
             apiKey: process.env.DASHSCOPE_API_KEY || process.env.GEMINI_API_KEY || 'mock-llm-key',
-            maxLoopSteps: '3' // Fast dry run limit
           }
         };
         const res = {};
@@ -103,7 +102,6 @@ async function main() {
       continueSession: false,
       highRandomness: false,
       negativeFilter: true,
-      maxLoopSteps: 4 // Limit to 4 reasoning steps for testing
     });
 
     console.log("\n🎉 Harness Run Completed successfully!");

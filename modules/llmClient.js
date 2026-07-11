@@ -3,7 +3,7 @@
 export async function getSettings() {
   return new Promise((resolve) => {
     chrome.storage.local.get(
-      ["apiKey", "llmProvider", "llmModel", "imageGenerationModel", "llmBaseUrl", "maxLoopSteps", "temperature", "helium10ApiKey", "sellerSpriteApiKey", "fastmossApiKey"],
+      ["apiKey", "llmProvider", "llmModel", "imageGenerationModel", "llmBaseUrl", "temperature", "helium10ApiKey", "sellerSpriteApiKey", "fastmossApiKey"],
       resolve
     );
   });

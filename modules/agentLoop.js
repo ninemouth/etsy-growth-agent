@@ -1598,9 +1598,10 @@ function buildPromptContext(pageContext = {}) {
   return ctx;
 }
 
-export async function runAgentLoop({ tabId, skillId, skillMarkdown, userInstruction, pageContext, sendProgress, continueSession, highRandomness, negativeFilter, maxLoopSteps, resumeState = null, onCheckpoint = null }) {
+const INTERNAL_RUNAWAY_GUARD_STEPS = 200;
+
+export async function runAgentLoop({ tabId, skillId, skillMarkdown, userInstruction, pageContext, sendProgress, continueSession, highRandomness, negativeFilter, resumeState = null, onCheckpoint = null }) {
   const settings = await getSettings();
-  const maxSteps = maxLoopSteps || Math.max(parseInt(settings.maxLoopSteps) || 25, 25);
 
   let systemPrompt = skillMarkdown;
   if (negativeFilter === false) {
@@ -1689,7 +1690,6 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       messages,
       toolHistory,
       ctxState,
-      maxSteps,
       lastStage: patch.lastStage || patch.lastNode || patch.status || "checkpoint",
       ...patch,
     };
@@ -1792,10 +1792,23 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     await saveCheckpoint({ status: "started", step: 0, lastNode: "initial_prompt_created" });
   }
 
-  sendProgress({ type: "start", step: 0, maxSteps });
+  sendProgress({ type: "start", step: 0, loopLimitDisabled: true });
 
-  for (let step = 1; step <= maxSteps; step++) {
-    sendProgress({ type: "thinking", step, maxSteps });
+  for (let step = 1; ; step++) {
+    if (step > INTERNAL_RUNAWAY_GUARD_STEPS) {
+      await saveCheckpoint({
+        status: "runaway_guard_paused",
+        step: step - 1,
+        lastNode: "internal_runaway_guard",
+      });
+      return {
+        ok: false,
+        type: "interrupted",
+        result: "工作流已触发内部跑飞保护并保存断点。请补充一句“继续”，系统会从当前工具证据和消息历史继续推进，而不是从第一步重跑。",
+        steps: step - 1,
+      };
+    }
+    sendProgress({ type: "thinking", step, loopLimitDisabled: true });
     await saveCheckpoint({ status: "running", step, lastNode: "llm_call_started" });
 
     let assistantContent = "";
@@ -1857,7 +1870,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       const validationErrors = validateReport(parsed, userInstruction, skillId, toolHistory, pageContext);
       if (validationErrors.length > 0) {
         const reflectionsCount = ctxForPrompt.__reflectionsCount || 0;
-        if (reflectionsCount < 2 && step < maxSteps - 1) {
+        if (reflectionsCount < 2) {
           ctxForPrompt.__reflectionsCount = reflectionsCount + 1;
           sendProgress({ type: "reflection", step, message: `Critic 自动审计拒绝：${validationErrors[0]} 正在打回重做...` });
           
@@ -1872,28 +1885,15 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         }
       }
 
-      if (!ctxForPrompt.__hasDeepReflected && step < maxSteps - 1) {
-        ctxForPrompt.__hasDeepReflected = true;
-        sendProgress({ type: "reflection", step, message: "Critic Agent 正在进行深层商业推演反思..." });
-        
-        messages.push({ role: "assistant", content: assistantContent });
-        messages.push({
-          role: "user",
-          content: `【Critic Agent 报告质量审计与反思】\n请根据本会话系统提示词（System Prompt）头部的【报告设计审计与规划基座 Skill】中的质量审计检查单（Auditor Checklist），对你刚才生成的最终报告进行最严苛的自检审查：\n1. 结构完整性：是否严格包含并对齐了该 Skill 要求的分析模块（如概述、推演、数据结构化卡片）？\n2. 深度审计：内容是否流于表面？是否对消费者痛点、产品改良策略或运营动作进行了多维度的场景化推演？\n3. 格式规范性：数据视图（data 数组）中的键名和键值是否合规（无 [object Object] 等序列化错误，且已翻译为中文）？\n\n【重要要求】在输出优化后的 JSON 时，严禁在 output 内部的字段（如 overview, analysis, summary）中写入任何有关 AI 自我审计、自检表格或自评文字。报告正文必须纯净、专业，不留任何自检草稿痕迹，直接呈现面向 Etsy 卖家的运营/商业诊断方案。\n\n如果你发现可以改进的地方，请进行深度反思，并输出优化后的 \`{"type":"final", "output": {...}}\`。\n如果你确信当前版本已经完美无缺，请直接原样再次输出 \`{"type":"final", "output": {...}}\` 即可通过审查。`
-        });
-        await saveCheckpoint({ status: "critic_deep_reflection", step, lastNode: "deep_reflection_retry" });
-        continue;
-      } else {
-        messages.push({ role: "assistant", content: assistantContent });
-        globalSessionCache[sessionKey] = { messages, toolHistory, ctxState: {} };
-        await clearAgentCheckpoint(sessionKey);
-        return {
-          ok: true,
-          type: "final",
-          result: parsed.output,
-          steps: step,
-        };
-      }
+      messages.push({ role: "assistant", content: assistantContent });
+      globalSessionCache[sessionKey] = { messages, toolHistory, ctxState: {} };
+      await clearAgentCheckpoint(sessionKey);
+      return {
+        ok: true,
+        type: "final",
+        result: parsed.output,
+        steps: step,
+      };
     }
 
     if (parsed.type === "tool_call") {
@@ -2177,8 +2177,6 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     };
   }
 
-  await saveCheckpoint({ status: "max_steps_exceeded", step: maxSteps, lastNode: "max_steps_exceeded" });
-  throw new Error(`Agent loop exceeded maximum steps (${maxSteps})`);
 }
 
 function repairJSONQuotes(str) {

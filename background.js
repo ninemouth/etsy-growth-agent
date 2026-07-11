@@ -837,7 +837,6 @@ chrome.runtime.onInstalled.addListener(() => {
         llmProvider: "qwen",
         llmModel: "qwen-max",
         temperature: "0.2",
-        maxLoopSteps: "25",
         etsyTargetMargin: "20",
         etsyWarehouseType: "Etsy 自发货"
       });
