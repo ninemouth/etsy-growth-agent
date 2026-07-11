@@ -186,6 +186,66 @@ function compactToolResultForLLM(toolName = "", result = {}) {
     }
   }
 
+  if (toolName === "collect_etsy_competitor_shops" && Array.isArray(result.shops)) {
+    base.tool = result.tool;
+    base.competitorsRequested = result.competitorsRequested;
+    base.competitorsCollected = result.competitorsCollected;
+    base.cacheHits = result.cacheHits;
+    base.pagesCollected = result.pagesCollected;
+    base.screenshotRefs = Array.isArray(result.screenshotRefs) ? result.screenshotRefs.slice(0, 12) : [];
+    base.artifactStore = result.artifactStore;
+    base.screenshotPolicy = result.screenshotPolicy;
+    base.nextStep = result.nextStep;
+    base.allPages = Array.isArray(result.allPages) ? result.allPages.slice(0, 8).map((page) => ({
+      competitorName: page.competitorName,
+      competitorUrl: page.competitorUrl,
+      pageIndex: page.pageIndex,
+      url: page.url,
+      shopName: page.shopName,
+      sortLabel: page.sortLabel,
+      visibleProductOrderBasis: page.visibleProductOrderBasis,
+      productCardsVisible: page.productCardsVisible,
+      screenshotCaptured: page.screenshotCaptured,
+      screenshotRef: page.screenshotRef,
+      screenshotStorage: page.screenshotStorage,
+      screenshotExpiresAt: page.screenshotExpiresAt,
+    })) : [];
+    base.shops = result.shops.slice(0, 4).map((shop) => ({
+      ok: shop.ok,
+      competitorName: shop.competitorName,
+      url: shop.url,
+      cacheHit: shop.cacheHit,
+      error: truncateText(shop.error || "", 180),
+      pagesCollected: shop.pagesCollected,
+      completedFullCrawl: shop.completedFullCrawl,
+      stoppedReason: shop.stoppedReason,
+      totalVisibleProductCards: shop.totalVisibleProductCards,
+      uniqueListingCount: shop.uniqueListingCount,
+      sortLabels: shop.sortLabels,
+      pages: Array.isArray(shop.pages) ? shop.pages.slice(0, MAX_LLM_CRAWL_PAGES).map((page) => ({
+        pageIndex: page.pageIndex,
+        url: page.url,
+        title: page.title,
+        shopName: page.shopName,
+        sortLabel: page.sortLabel,
+        visibleProductOrderBasis: page.visibleProductOrderBasis,
+        pagination: page.pagination,
+        productCardsVisible: page.productCardsVisible,
+        productCards: Array.isArray(page.productCards) ? page.productCards.slice(0, MAX_LLM_PRODUCT_CARDS).map(compactProductCardForLLM) : [],
+        visibleTextSnippet: truncateText(page.visibleTextSnippet || "", 500),
+        pageHealth: page.pageHealth,
+        screenshotCaptured: page.screenshotCaptured,
+        screenshotRef: page.screenshotRef,
+        screenshotStorage: page.screenshotStorage,
+        screenshotExpiresAt: page.screenshotExpiresAt,
+        screenshotError: page.screenshotError,
+      })) : [],
+    }));
+    if (Array.isArray(result.allPages) && result.allPages.length > MAX_LLM_CRAWL_PAGES) {
+      base.omittedPages = result.allPages.length - MAX_LLM_CRAWL_PAGES;
+    }
+  }
+
   if (toolName === "analyze_etsy_shop_crawl_screenshots") {
     base.tool = result.tool;
     base.competitorName = result.competitorName;
@@ -544,11 +604,12 @@ function getEtsyBrowserWorkflowGuardError({ skillId = "", toolName = "", toolArg
       /etsy\.com\/shop\//i.test(String(entry.arguments?.url || entry.result?.url || entry.result?.finalUrl || entry.result?.pageData?.url || ""))
     ).length;
     const crawlCount = countToolCalls(toolHistory, "collect_etsy_shop_pages");
-    if (shopOpenCount >= 2 && crawlCount === 0) {
+    const batchCrawlCount = countToolCalls(toolHistory, "collect_etsy_competitor_shops");
+    if (shopOpenCount >= 2 && crawlCount === 0 && batchCrawlCount === 0) {
       return {
         type: "tool_error",
         tool: toolName,
-        error: "已经打开过多个 Etsy 店铺页，但还没有执行分页采集。下一步不要继续 open_new_tab，请对已选竞品店铺调用 collect_etsy_shop_pages，并随后调用 analyze_etsy_shop_crawl_screenshots。",
+        error: "已经打开过多个 Etsy 店铺页，但还没有执行分页采集。下一步不要继续 open_new_tab；如果已有 2-3 个店铺 URL，请调用 collect_etsy_competitor_shops 批量采集，并随后调用 analyze_etsy_shop_crawl_screenshots。",
         openedShopPages: shopOpenCount,
       };
     }
@@ -560,6 +621,7 @@ function getEtsyBrowserWorkflowGuardError({ skillId = "", toolName = "", toolArg
 function getToolTimeoutMs(toolName = "") {
   if (["open_new_tab", "close_tab", "read_current_page"].includes(toolName)) return 45_000;
   if (["search_in_browser", "collect_etsy_shop_pages"].includes(toolName)) return 120_000;
+  if (toolName === "collect_etsy_competitor_shops") return 300_000;
   if (toolName === "analyze_etsy_shop_crawl_screenshots") return 180_000;
   if (/image_search|prepare_clean_product_image/i.test(toolName)) return 180_000;
   return 120_000;
@@ -610,10 +672,17 @@ function getToolPageDataCandidates(toolHistory = []) {
         pageData: entry.result.pageData,
       });
     }
+    const crawlPages = [];
     if (entry.tool === "collect_etsy_shop_pages" && Array.isArray(entry.result?.pages)) {
-      entry.result.pages.forEach((page) => {
+      crawlPages.push(...entry.result.pages);
+    }
+    if (entry.tool === "collect_etsy_competitor_shops" && Array.isArray(entry.result?.allPages)) {
+      crawlPages.push(...entry.result.allPages);
+    }
+    if (crawlPages.length > 0) {
+      crawlPages.forEach((page) => {
         candidates.push({
-          sourceRef: page?.url || entry.result?.sourceUrl || "collect_etsy_shop_pages",
+          sourceRef: page?.url || entry.result?.sourceUrl || entry.result?.tool || "collect_etsy_shop_pages",
           pageData: {
             url: page?.url,
             title: page?.title,
@@ -748,8 +817,11 @@ function hasCompetitorVisualLedger(ledger = []) {
 
 function hasEtsyShopCrawlScreenshotEvidence(toolHistory = []) {
   return toolHistory.some((entry) => {
-    if (entry?.tool !== "collect_etsy_shop_pages" || entry?.result?.ok === false) return false;
-    return Array.isArray(entry.result?.pages) && entry.result.pages.some((page) => page?.screenshotCaptured && page?.screenshotRef);
+    if (!["collect_etsy_shop_pages", "collect_etsy_competitor_shops"].includes(entry?.tool) || entry?.result?.ok === false) return false;
+    const pages = entry.tool === "collect_etsy_competitor_shops"
+      ? entry.result?.allPages
+      : entry.result?.pages;
+    return Array.isArray(pages) && pages.some((page) => page?.screenshotCaptured && page?.screenshotRef);
   });
 }
 
@@ -757,8 +829,11 @@ function getUnanalyzedEtsyShopCrawlScreenshotRefs(toolHistory = []) {
   const capturedRefs = new Set();
   const analyzedRefs = new Set();
   toolHistory.forEach((entry) => {
-    if (entry?.tool === "collect_etsy_shop_pages" && entry?.result?.ok !== false && Array.isArray(entry.result?.pages)) {
-      entry.result.pages.forEach((page) => {
+    const pages = entry?.tool === "collect_etsy_competitor_shops"
+      ? entry.result?.allPages
+      : entry.result?.pages;
+    if (["collect_etsy_shop_pages", "collect_etsy_competitor_shops"].includes(entry?.tool) && entry?.result?.ok !== false && Array.isArray(pages)) {
+      pages.forEach((page) => {
         if (page?.screenshotCaptured && page?.screenshotRef) capturedRefs.add(page.screenshotRef);
       });
     }
@@ -799,6 +874,18 @@ function getOpenedEtsyCompetitorUrls(toolHistory = [], currentUrl = "") {
       candidateUrls.push(entry.arguments?.url, entry.result?.sourceUrl);
       if (Array.isArray(entry.result?.pages)) {
         entry.result.pages.forEach((page) => candidateUrls.push(page?.url));
+      }
+    }
+    if (entry?.tool === "collect_etsy_competitor_shops") {
+      if (Array.isArray(entry.arguments?.urls)) candidateUrls.push(...entry.arguments.urls);
+      if (Array.isArray(entry.arguments?.competitors)) {
+        entry.arguments.competitors.forEach((item) => candidateUrls.push(typeof item === "string" ? item : item?.url || item?.shopUrl || item?.shop_url));
+      }
+      if (Array.isArray(entry.result?.shops)) {
+        entry.result.shops.forEach((shop) => candidateUrls.push(shop?.url));
+      }
+      if (Array.isArray(entry.result?.allPages)) {
+        entry.result.allPages.forEach((page) => candidateUrls.push(page?.url || page?.competitorUrl));
       }
     }
     candidateUrls.filter(Boolean).map(normalizeEtsyCompetitorUrl).forEach((url) => {
@@ -2107,7 +2194,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       }
 
       let nextScreenshot = null;
-      const pageModifyingTools = ["open_new_tab", "navigate_to", "search_in_browser", "collect_etsy_shop_pages", "click_by_text", "input_text_and_search", "click_by_selector", "image_search_1688", "image_search_taobao", "image_search_in_browser", "click_by_coordinate"];
+      const pageModifyingTools = ["open_new_tab", "navigate_to", "search_in_browser", "collect_etsy_shop_pages", "collect_etsy_competitor_shops", "click_by_text", "input_text_and_search", "click_by_selector", "image_search_1688", "image_search_taobao", "image_search_in_browser", "click_by_coordinate"];
       if (pageModifyingTools.includes(toolName)) {
         try {
           const tId = (toolResult && toolResult.tabId) ? toolResult.tabId : tabId;
@@ -2144,7 +2231,10 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         userResultObj.next_step_instruction = "当前页面已经抽取到带主图与屏幕坐标的 productCards。下一步必须停止继续搜索，先对照目标商品主图和最新截图，把这些卡片按外观/材质/结构视觉相似度排序；只允许打开视觉排名最高且未触发材质/造型红线的 1-3 个详情页。最终 data 每项必须写入 candidate_image_url、list_page_visual_score、visual_match_evidence，禁止只按标题关键词选择。";
       }
       if (isEtsyBusinessSkill(skillId) && toolName === "open_new_tab" && /etsy\.com\/shop\//i.test(String(toolResult?.finalUrl || toolResult?.url || toolArgs.url || ""))) {
-        userResultObj.next_step_instruction = "该 Etsy 店铺页已经打开并读取过。下一步不要继续重复 open_new_tab；若这是竞品店铺，请调用 collect_etsy_shop_pages 采集 1-3 页商品/排序/分页数据，再调用 analyze_etsy_shop_crawl_screenshots 解读截图；完成取证后调用 close_tab 关闭 tabId。";
+        userResultObj.next_step_instruction = "该 Etsy 店铺页已经打开并读取过。下一步不要继续重复 open_new_tab；若已有 2-3 个竞品店铺 URL，请优先调用 collect_etsy_competitor_shops 批量采集；若只处理当前单个店铺，再调用 collect_etsy_shop_pages 采集 1-3 页商品/排序/分页数据。采集后必须调用 analyze_etsy_shop_crawl_screenshots 解读截图；完成取证后关闭不再需要的 tabId。";
+      }
+      if (isEtsyBusinessSkill(skillId) && toolName === "collect_etsy_competitor_shops") {
+        userResultObj.next_step_instruction = "批量竞品店铺采集已完成。下一步不要重复打开这些店铺；请把 allPages 或 screenshotRefs 传给 analyze_etsy_shop_crawl_screenshots 做独立视觉解读，然后基于 shops[].pages[].productCards 逐店铺输出价格分布、商品类别/SKU 样本、促销/评论信号和可见排序解读。";
       }
 
       let userMsgContent;

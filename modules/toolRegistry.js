@@ -6,6 +6,7 @@ import { getArtifactDataUrl, pruneArtifacts, putDataUrlArtifact } from './artifa
 
 const preparedImageCache = new Map();
 const ETSY_SHOP_CRAWL_SCREENSHOT_NAMESPACE = "etsy-shop-crawl-screenshot";
+const etsyShopCrawlCache = new Map();
 
 export let currentSessionData = {
   products: new Map(),
@@ -19,6 +20,7 @@ export function resetSessionData() {
     creatorInfo: null,
     detailCreators: []
   };
+  etsyShopCrawlCache.clear();
   pruneArtifacts({ namespace: ETSY_SHOP_CRAWL_SCREENSHOT_NAMESPACE }).catch((err) => {
     console.warn("Failed to prune Etsy shop screenshot artifacts:", err.message);
   });
@@ -413,6 +415,33 @@ function summarizeEtsyProductCard(card = {}, index = 0) {
   };
 }
 
+function normalizeEtsyShopUrlForCache(url = "") {
+  try {
+    const parsed = new URL(String(url || ""));
+    if (!/etsy\.com$/i.test(parsed.hostname) && !/\.etsy\.com$/i.test(parsed.hostname)) return "";
+    const match = parsed.pathname.match(/\/shop\/[^/?#]+/i);
+    if (!match) return "";
+    return `https://www.etsy.com${match[0].replace(/\/$/, "")}`;
+  } catch (_) {
+    return "";
+  }
+}
+
+function buildEtsyShopCrawlCacheKey({ url = "", maxPages = 3, maxProductsPerPage = 40 } = {}) {
+  const normalizedUrl = normalizeEtsyShopUrlForCache(url);
+  if (!normalizedUrl) return "";
+  return [
+    normalizedUrl.toLowerCase(),
+    `pages:${Math.max(1, Math.min(Number(maxPages) || 3, 10))}`,
+    `products:${Math.max(2, Math.min(Number(maxProductsPerPage) || 40, 80))}`,
+  ].join("|");
+}
+
+function cloneJson(value) {
+  if (typeof globalThis.structuredClone === "function") return globalThis.structuredClone(value);
+  return JSON.parse(JSON.stringify(value));
+}
+
 function normalizeNextEtsyPageUrl(nextPageUrl = "", currentUrl = "") {
   if (!nextPageUrl) return "";
   try {
@@ -668,9 +697,18 @@ export const tools = {
       keepTab = false,
       delayMs = 900,
       maxProductsPerPage = 40,
+      useCache = true,
     } = args;
     const pageLimit = Math.max(1, Math.min(Number(maxPages) || 3, 10));
     const productLimit = Math.max(2, Math.min(Number(maxProductsPerPage) || 40, 80));
+    const initialCacheKey = !tabId ? buildEtsyShopCrawlCacheKey({ url, maxPages: pageLimit, maxProductsPerPage: productLimit }) : "";
+    if (useCache !== false && initialCacheKey && etsyShopCrawlCache.has(initialCacheKey)) {
+      return {
+        ...cloneJson(etsyShopCrawlCache.get(initialCacheKey)),
+        cacheHit: true,
+        cacheKey: initialCacheKey,
+      };
+    }
     let targetTabId = tabId ? parseInt(tabId) : null;
     let openedByTool = false;
     let sourceUrl = url;
@@ -699,6 +737,14 @@ export const tools = {
     }
     if (!/etsy\.com\/shop\//i.test(String(sourceUrl || ""))) {
       throw new Error("collect_etsy_shop_pages requires an Etsy shop URL or an active Etsy shop tab.");
+    }
+    const cacheKey = buildEtsyShopCrawlCacheKey({ url: sourceUrl, maxPages: pageLimit, maxProductsPerPage: productLimit });
+    if (useCache !== false && cacheKey && etsyShopCrawlCache.has(cacheKey)) {
+      return {
+        ...cloneJson(etsyShopCrawlCache.get(cacheKey)),
+        cacheHit: true,
+        cacheKey,
+      };
     }
 
     const pages = [];
@@ -801,7 +847,7 @@ export const tools = {
         });
       }
 
-      return {
+      const result = {
         ok: pages.length > 0,
         tool: "collect_etsy_shop_pages",
         sourceUrl,
@@ -818,9 +864,117 @@ export const tools = {
         artifactStore: "indexeddb_blob_with_memory_fallback",
         pages,
       };
+      if (result.ok && cacheKey) {
+        etsyShopCrawlCache.set(cacheKey, cloneJson(result));
+      }
+      return result;
     } finally {
       if (openedByTool && !keepTab) await closeTabQuietly(targetTabId);
     }
+  },
+
+  collect_etsy_competitor_shops: async (args = {}) => {
+    const {
+      urls = [],
+      competitors = [],
+      maxCompetitors = 3,
+      maxPagesPerShop = 2,
+      maxProductsPerPage = 32,
+      delayMs = 700,
+      useCache = true,
+    } = args;
+    const rawCandidates = [
+      ...urls.map((url) => ({ url })),
+      ...competitors.map((item) => (typeof item === "string" ? { url: item } : item || {})),
+    ];
+    const seen = new Set();
+    const targets = [];
+    for (const candidate of rawCandidates) {
+      const normalizedUrl = normalizeEtsyShopUrlForCache(candidate.url || candidate.shopUrl || candidate.shop_url || "");
+      if (!normalizedUrl || seen.has(normalizedUrl.toLowerCase())) continue;
+      seen.add(normalizedUrl.toLowerCase());
+      targets.push({
+        name: candidate.name || candidate.competitorName || candidate.shopName || candidate.shop_name || "",
+        url: normalizedUrl,
+      });
+      if (targets.length >= Math.max(1, Math.min(Number(maxCompetitors) || 3, 5))) break;
+    }
+    if (targets.length === 0) {
+      throw new Error("collect_etsy_competitor_shops requires at least one Etsy shop URL.");
+    }
+
+    const shops = [];
+    for (const target of targets) {
+      try {
+        const crawl = await tools.collect_etsy_shop_pages({
+          url: target.url,
+          maxPages: Math.max(1, Math.min(Number(maxPagesPerShop) || 2, 5)),
+          maxProductsPerPage,
+          delayMs,
+          keepTab: false,
+          useCache,
+        });
+        shops.push({
+          ok: crawl.ok !== false,
+          competitorName: target.name || crawl.pages?.[0]?.shopName || "",
+          url: target.url,
+          cacheHit: Boolean(crawl.cacheHit),
+          pagesCollected: crawl.pagesCollected || 0,
+          completedFullCrawl: Boolean(crawl.completedFullCrawl),
+          stoppedReason: crawl.stoppedReason || "",
+          totalVisibleProductCards: crawl.totalVisibleProductCards || 0,
+          uniqueListingCount: crawl.uniqueListingCount || 0,
+          sortLabels: crawl.sortLabels || [],
+          pages: Array.isArray(crawl.pages) ? crawl.pages : [],
+          crawl,
+        });
+      } catch (err) {
+        shops.push({
+          ok: false,
+          competitorName: target.name || "",
+          url: target.url,
+          error: err.message,
+          pagesCollected: 0,
+          pages: [],
+        });
+      }
+    }
+
+    const allPages = shops.flatMap((shop) =>
+      (Array.isArray(shop.pages) ? shop.pages : []).map((page) => ({
+        ...page,
+        competitorName: shop.competitorName,
+        competitorUrl: shop.url,
+      }))
+    );
+    const screenshotRefs = allPages.map((page) => page.screenshotRef).filter(Boolean);
+    return {
+      ok: shops.some((shop) => shop.ok && shop.pagesCollected > 0),
+      tool: "collect_etsy_competitor_shops",
+      competitorsRequested: targets.length,
+      competitorsCollected: shops.filter((shop) => shop.ok && shop.pagesCollected > 0).length,
+      cacheHits: shops.filter((shop) => shop.cacheHit).length,
+      pagesCollected: allPages.length,
+      screenshotRefs,
+      allPages,
+      shops: shops.map((shop) => ({
+        ok: shop.ok,
+        competitorName: shop.competitorName,
+        url: shop.url,
+        cacheHit: shop.cacheHit,
+        error: shop.error,
+        pagesCollected: shop.pagesCollected,
+        completedFullCrawl: shop.completedFullCrawl,
+        stoppedReason: shop.stoppedReason,
+        totalVisibleProductCards: shop.totalVisibleProductCards,
+        uniqueListingCount: shop.uniqueListingCount,
+        sortLabels: shop.sortLabels,
+        pages: shop.pages,
+      })),
+      nextStep: "Pass allPages or screenshotRefs to analyze_etsy_shop_crawl_screenshots before final report delivery.",
+      screenshotPolicy: "Per-page screenshots are stored as referenced artifacts; full base64 payloads are omitted from chrome.storage.local checkpoints.",
+      artifactStore: "indexeddb_blob_with_memory_fallback",
+    };
   },
 
   analyze_etsy_shop_crawl_screenshots: async (args = {}) => {

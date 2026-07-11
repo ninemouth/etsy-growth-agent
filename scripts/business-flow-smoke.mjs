@@ -71,6 +71,8 @@ assert.match(toolRegistrySource, /buildBrowserSearchAttempts[\s\S]*etsy_market_f
 assert.match(toolRegistrySource, /hasValidGoogleTrendsEvidence/, "Google Trends search evidence should have a runtime validity gate");
 assert.match(toolRegistrySource, /\"google_trends\", \"bing\", \"etsy\"/, "Etsy search tabs should be auto-closed after evidence capture unless keepTab is set");
 assert.match(toolRegistrySource, /collect_etsy_shop_pages/, "tool registry should expose a traditional Etsy shop pagination collection loop");
+assert.match(toolRegistrySource, /collect_etsy_competitor_shops[\s\S]*collect_etsy_shop_pages[\s\S]*keepTab:\s*false/, "tool registry should expose batch competitor shop collection that reuses the pagination collector and closes temporary tabs");
+assert.match(toolRegistrySource, /etsyShopCrawlCache[\s\S]*cacheHit/, "Etsy shop collection should reuse in-session crawl evidence instead of reopening the same competitor shop");
 assert.match(toolRegistrySource, /screenshotCaptured[\s\S]*screenshotRef[\s\S]*completedFullCrawl/, "Etsy shop collection loop should capture per-page screenshot evidence without returning raw base64 in checkpoints");
 assert.match(toolRegistrySource, /currentSessionData\.products\.set/, "Etsy shop collection loop should accumulate visible product cards while reading pages");
 assert.match(toolRegistrySource, /analyze_etsy_shop_crawl_screenshots[\s\S]*evidenceLedgerEntries/, "tool registry should expose independent visual analysis for cached Etsy shop crawl screenshots");
@@ -96,8 +98,10 @@ assert.match(agentLoopSource, /Etsy 站内搜索\/热卖榜\/高排名竞品店�
 assert.match(agentLoopSource, /竞品店铺\/商品详情页截图视觉证据/, "critic should require competitor screenshot evidence for shop optimizer reports");
 assert.match(agentLoopSource, /competitor_benchmarks/, "critic should require structured competitor benchmark data");
 assert.match(agentLoopSource, /collect_etsy_shop_pages[\s\S]*completedFullCrawl/, "critic should recognize completed Etsy shop pagination crawl evidence for full-shop coverage claims");
+assert.match(agentLoopSource, /collect_etsy_competitor_shops[\s\S]*competitorsCollected[\s\S]*cacheHits/, "agent loop should compress batch competitor crawl results before sending them back to the LLM");
+assert.match(agentLoopSource, /collect_etsy_competitor_shops[\s\S]*internal_runaway_guard/, "agent loop should know batch competitor collection without reintroducing fixed max-loop failures");
 assert.match(agentLoopSource, /analyze_etsy_shop_crawl_screenshots[\s\S]*独立截图解读/, "critic should require independent visual analysis after cached shop crawl screenshots are captured");
-assert.match(shopOptimizerSkillSource, /open_new_tab[\s\S]*竞品店铺\/商品详情截图/, "shop optimizer should require opening competitor pages and analyzing competitor screenshots");
+assert.match(shopOptimizerSkillSource, /collect_etsy_competitor_shops[\s\S]*减少重复开页和 LLM 往返/, "shop optimizer should prefer batch competitor shop collection when multiple competitor URLs are available");
 assert.match(shopOptimizerSkillSource, /collect_etsy_shop_pages[\s\S]*边读 DOM 边累积商品卡片/, "shop optimizer should require browser pagination collection when competitor shop API data is unavailable");
 assert.match(shopOptimizerSkillSource, /analyze_etsy_shop_crawl_screenshots[\s\S]*独立视觉解读/, "shop optimizer should require analysis of cached crawl screenshots after pagination collection");
 assert.match(shopOptimizerSkillSource, /competitor_benchmarks[\s\S]*listing_order_insight/, "shop optimizer should require per-competitor product structure and visible order analysis");
@@ -297,6 +301,40 @@ assert.equal(compactHugeCrawlResult.pages[0].productCards.length, 8, "compressed
 assert.ok(
   JSON.stringify(compactHugeCrawlResult).length < JSON.stringify(hugeCrawlResult).length / 4,
   "compressed crawl result should be much smaller than raw crawl evidence"
+);
+const hugeBatchCrawlResult = {
+  ok: true,
+  tool: "collect_etsy_competitor_shops",
+  competitorsRequested: 3,
+  competitorsCollected: 3,
+  cacheHits: 1,
+  pagesCollected: 6,
+  screenshotRefs: hugeCrawlResult.pages.map((page) => page.screenshotRef),
+  allPages: hugeCrawlResult.pages,
+  artifactStore: "indexeddb_blob_with_memory_fallback",
+  screenshotPolicy: "Per-page screenshots are stored as referenced artifacts.",
+  nextStep: "Pass allPages to analyze_etsy_shop_crawl_screenshots.",
+  shops: [0, 1, 2].map((shopIdx) => ({
+    ok: true,
+    competitorName: `Competitor ${shopIdx + 1}`,
+    url: `https://www.etsy.com/shop/Competitor${shopIdx + 1}`,
+    cacheHit: shopIdx === 0,
+    pagesCollected: 2,
+    completedFullCrawl: false,
+    stoppedReason: "max_pages_reached",
+    totalVisibleProductCards: 120,
+    uniqueListingCount: 120,
+    sortLabels: ["Most Recent"],
+    pages: hugeCrawlResult.pages.slice(shopIdx * 2, shopIdx * 2 + 2),
+  })),
+};
+const compactHugeBatchCrawlResult = __testInternals.compactToolResultForLLM("collect_etsy_competitor_shops", hugeBatchCrawlResult);
+assert.equal(compactHugeBatchCrawlResult.competitorsCollected, 3, "compressed batch crawl result should preserve competitor counts");
+assert.equal(compactHugeBatchCrawlResult.cacheHits, 1, "compressed batch crawl result should preserve cache-hit counts");
+assert.equal(compactHugeBatchCrawlResult.shops[0].pages[0].productCards.length, 8, "compressed batch crawl result should bound product samples per page");
+assert.ok(
+  JSON.stringify(compactHugeBatchCrawlResult).length < JSON.stringify(hugeBatchCrawlResult).length / 4,
+  "compressed batch crawl result should be much smaller than raw batch crawl evidence"
 );
 assert.equal(hasValidEtsySearchEvidence({
   ok: true,
@@ -498,6 +536,72 @@ const competitorCrawlHistory = {
     ],
   },
 };
+const batchCompetitorCrawlHistory = {
+  tool: "collect_etsy_competitor_shops",
+  arguments: {
+    urls: [
+      "https://www.etsy.com/shop/TopBridalStudio",
+      "https://www.etsy.com/shop/BellaOliviaGifts",
+    ],
+    maxPagesPerShop: 2,
+  },
+  result: {
+    ok: true,
+    tool: "collect_etsy_competitor_shops",
+    competitorsRequested: 2,
+    competitorsCollected: 2,
+    cacheHits: 0,
+    pagesCollected: 2,
+    screenshotRefs: [
+      "__ETSY_SHOP_CRAWL_SCREENSHOT_mock_1__",
+      "__ETSY_SHOP_CRAWL_SCREENSHOT_mock_2__",
+    ],
+    allPages: [
+      {
+        pageIndex: 1,
+        url: "https://www.etsy.com/shop/TopBridalStudio",
+        competitorUrl: "https://www.etsy.com/shop/TopBridalStudio",
+        competitorName: "TopBridalStudio",
+        sortLabel: "Most Recent",
+        productCardsVisible: 24,
+        screenshotCaptured: true,
+        screenshotRef: "__ETSY_SHOP_CRAWL_SCREENSHOT_mock_1__",
+        pagination: { hasPagination: true, hasNextPage: true, nextPageUrl: "https://www.etsy.com/shop/TopBridalStudio?page=2" },
+      },
+      {
+        pageIndex: 1,
+        url: "https://www.etsy.com/shop/BellaOliviaGifts",
+        competitorUrl: "https://www.etsy.com/shop/BellaOliviaGifts",
+        competitorName: "BellaOliviaGifts",
+        sortLabel: "Recommended",
+        productCardsVisible: 18,
+        screenshotCaptured: true,
+        screenshotRef: "__ETSY_SHOP_CRAWL_SCREENSHOT_mock_2__",
+        pagination: { hasPagination: true, hasNextPage: false, nextPageUrl: "" },
+      },
+    ],
+    shops: [
+      {
+        ok: true,
+        competitorName: "TopBridalStudio",
+        url: "https://www.etsy.com/shop/TopBridalStudio",
+        pagesCollected: 1,
+        totalVisibleProductCards: 24,
+        uniqueListingCount: 24,
+        pages: [],
+      },
+      {
+        ok: true,
+        competitorName: "BellaOliviaGifts",
+        url: "https://www.etsy.com/shop/BellaOliviaGifts",
+        pagesCollected: 1,
+        totalVisibleProductCards: 18,
+        uniqueListingCount: 18,
+        pages: [],
+      },
+    ],
+  },
+};
 const competitorScreenshotAnalysisHistory = {
   tool: "analyze_etsy_shop_crawl_screenshots",
   arguments: {
@@ -670,6 +774,27 @@ assert.deepEqual(
   ], meaningfulPageContext),
   [],
   "shop optimizer critic should accept collect_etsy_shop_pages after cached screenshots are independently analyzed"
+);
+assert.notDeepEqual(
+  validateReport(shopOptimizerReportWithEtsyEvidence, "", "skills/etsy_global_shop_optimizer.skill.md", [
+    { tool: "search_in_browser", arguments: { engine: "etsy", query: "wedding clutch" }, result: validEtsySearchResult },
+    googleSearchHistory,
+    googleTrendsHistory,
+    batchCompetitorCrawlHistory,
+  ], meaningfulPageContext),
+  [],
+  "shop optimizer critic should reject batch competitor crawl screenshots that have not been independently analyzed"
+);
+assert.deepEqual(
+  validateReport(shopOptimizerReportWithEtsyEvidence, "", "skills/etsy_global_shop_optimizer.skill.md", [
+    { tool: "search_in_browser", arguments: { engine: "etsy", query: "wedding clutch" }, result: validEtsySearchResult },
+    googleSearchHistory,
+    googleTrendsHistory,
+    batchCompetitorCrawlHistory,
+    competitorScreenshotAnalysisHistory,
+  ], meaningfulPageContext),
+  [],
+  "shop optimizer critic should accept collect_etsy_competitor_shops after cached screenshots are independently analyzed"
 );
 const shallowCompetitorReport = globalThis.structuredClone(shopOptimizerReportWithEtsyEvidence);
 delete shallowCompetitorReport.output.competitor_benchmarks;
