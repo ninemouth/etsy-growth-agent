@@ -7,8 +7,10 @@
 ## 🛠/⚙️ Etsy API 数据对接与审计规范
 
 为了获取客观的数据指标，你在执行分析时必须优先调用以下 Etsy API 接口：
-1. **调用 `etsy_api_get_analytics`**：拉取待分析商品在不同时间窗口（优化前 vs 优化后）的曝光量、点击量、加购率及订单量变化，作为阶段成效对比的硬性指标支撑。
-2. **调用 `etsy_api_get_transactions`**：兼容读取 发货资料 posting 履约订单快照。该工具不再默认依赖已失效/不可用的 finance transaction list；如需严格财务报表，应在报告中标注“待财务报表接口验证”。
+1. **调用 `etsy_api_get_capabilities`**：先确认当前接入的是 Etsy 个人卖家 API，只能读取当前授权自营店铺范围。
+2. **调用 `etsy_api_get_products` / `etsy_api_get_product_info`**：读取自营 listings、商品详情和库存/可见状态。
+3. **调用 `etsy_api_get_transactions`**：读取当前授权店铺的 receipts/发货资料兼容快照；它不是财务总账，也不代表平台仓履约数据。
+4. **不得调用或假设 `etsy_api_get_analytics` 提供 Sessions、页面浏览、点击率或加购率**：当前个人卖家 API 不提供这些指标，工具会明确返回 unsupported。需要流量/转化方向时，使用公开 Etsy 页面、搜索和截图证据，并在报告中标注覆盖限制。
 
 * **数据同步保存规范**：在需要保存/同步当前商品及指标变化数据时，调用 `monitor_process_page_data`，且其参数 `items` 和 `shopInfo` 可以留空（或不传），系统后台会自动从当前网页上下文中抓取并填充完整的商品列表和店铺 URL，这能极大节省生成 Token 数量，避免长文本序列化导致生成被中途截断。
 

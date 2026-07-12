@@ -177,7 +177,7 @@ async function dispatchEtsySkills(userInstruction, pageContext = {}) {
           content: `你是一个 Etsy 跨境电商运营智能路由器。请根据用户的输入需求，从以下 7 个专有 AI 技能路径中选择所有最相关的技能路径：
 1. "skills/etsy_product_opportunity_explorer.skill.md" (Etsy选品、类目需求分析、合规性风险审计)
 2. "skills/etsy_sourcing_finder.skill.md" (1688货源开发、美元跨境利润套利测算、运费关税核算)
-3. "skills/etsy_global_shop_optimizer.skill.md" (Etsy店铺经营诊断、Seller API对账、ABC分级优化)
+3. "skills/etsy_global_shop_optimizer.skill.md" (Etsy店铺经营诊断、自营 listings/订单/发货资料对账、ABC分级优化)
 4. "skills/etsy_operations_tracker.skill.md" (监控数据、对比优化阶段、流量曝光转化效果)
 5. "skills/etsy_listing_generator.skill.md" (英文 SEO Title/Description 商品详情文案生成)
 6. "skills/etsy_review_analyzer.skill.md" (买家原声差评剖析、退换货与商品缺陷分析)
@@ -826,6 +826,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         sendResponse({ ok: data.ok, data, cache });
       })
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "GET_ETSY_API_CAPABILITIES") {
+    tools
+      .etsy_api_get_capabilities()
+      .then((data) => sendResponse({ ok: data.ok, data }))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }

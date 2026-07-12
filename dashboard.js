@@ -621,6 +621,7 @@ function getRiskBadgeClass(kind) {
 }
 
 function extractSkuAnalyticsRows(snapshot = null) {
+  if (snapshot && snapshot?.result?.supported !== true && snapshot?.supported !== true) return [];
   const rows = snapshot?.result?.data || snapshot?.data || [];
   const metrics = snapshot?.result?.metrics || snapshot?.metrics || ["hits_view", "session_view", "ordered_units", "conv_tocart"];
   if (!Array.isArray(rows)) return [];
@@ -701,6 +702,8 @@ function buildSkuRows(tracked = [], savedResults = [], events = [], activeShop =
     });
   }
 
+  if (skuAnalyticsSnapshot && skuAnalyticsSnapshot?.result?.supported !== true && skuAnalyticsSnapshot?.supported !== true) return [];
+
   const mock = activeShop ? getShopMockData(activeShop) : null;
   const categories = ["定制项链", "宠物纪念牌", "婚礼座位牌", "手工串珠套装", "墙面装饰画", "婴儿姓名毯", "蜡烛模具", "节日礼品盒"];
   const sourceProducts = tracked.length
@@ -765,8 +768,8 @@ function buildSkuRows(tracked = [], savedResults = [], events = [], activeShop =
       nextAction,
       savedEvidence: savedResults.length,
       eventCount: events.length,
-      mockSource: !tracked.length,
-      dataSource: tracked.length ? "本地追踪" : "示例队列",
+      mockSource: true,
+      dataSource: tracked.length ? "本地商品 + 模拟指标" : "示例队列",
       mockStoreSessions: mock?.sessions || 0,
     });
   });
@@ -2233,10 +2236,10 @@ function getEndpointAuditSummary() {
       action: "保留在 API 概览；画布只引用它作为经营证据。",
     },
     {
-      name: "Etsy 个人访问 API SKU analytics",
+      name: "Etsy 个人访问 API 自营商品与订单数据",
       status: "真实端点",
-      evidence: "GET_ETSY_SKU_ANALYTICS 调用 etsy_api_get_analytics，成功后缓存到 etsySkuAnalyticsSnapshot。",
-      action: "作为全量 SKU 轻体检、定位风险和任务优先级输入。",
+      evidence: "当前个人卖家 API 可读取自营 listings、商品详情和 receipts/发货资料；不提供 Sessions、页面浏览、点击率或加购率 analytics。",
+      action: "流量与转化方向改由公开 Etsy 页面、搜索和截图证据提供，不把 unsupported analytics 填成 0。",
     },
     {
       name: "AI 业务技能运行",
@@ -3182,32 +3185,35 @@ function averageMetric(rows = [], metricNames = [], metricName) {
 
 function mapSnapshotToStoreMetrics(snapshot = {}) {
   const analytics = snapshot.analytics || {};
+  const analyticsSupported = analytics.supported === true;
   const metrics = analytics.metrics || [];
   const totals = analytics.totals || {};
   const rows = analytics.data || [];
-  const views = metricValue(totals, metrics, "hits_view");
-  const sessions = metricValue(totals, metrics, "session_view");
-  const orderedUnits = metricValue(totals, metrics, "ordered_units");
-  const avgCartRate = averageMetric(rows, metrics, "conv_tocart");
+  const views = analyticsSupported ? metricValue(totals, metrics, "hits_view") : null;
+  const sessions = analyticsSupported ? metricValue(totals, metrics, "session_view") : null;
+  const orderedUnits = analyticsSupported ? metricValue(totals, metrics, "ordered_units") : null;
+  const avgCartRate = analyticsSupported ? averageMetric(rows, metrics, "conv_tocart") : null;
   const cartRate = avgCartRate > 0
     ? avgCartRate
-    : (sessions > 0 ? (orderedUnits / sessions) * 100 : 0);
-  const orderRate = sessions > 0 ? (orderedUnits / sessions) * 100 : 0;
+    : (analyticsSupported && sessions > 0 ? (orderedUnits / sessions) * 100 : null);
+  const orderRate = analyticsSupported && sessions > 0 ? (orderedUnits / sessions) * 100 : null;
   return {
+    analyticsSupported,
     sessions,
     views,
-    cartRate: cartRate.toFixed(1),
-    orderRate: orderRate.toFixed(1),
+    cartRate: cartRate === null ? null : cartRate.toFixed(1),
+    orderRate: orderRate === null ? null : orderRate.toFixed(1),
     orders: snapshot.orders || [],
     failures: snapshot.failures || [],
   };
 }
 
 function renderStoreMetrics(storeData, sourceKind) {
-  document.getElementById("api-sessions").innerText = Number(storeData.sessions || 0).toLocaleString();
-  document.getElementById("api-views").innerText = Number(storeData.views || 0).toLocaleString();
-  document.getElementById("api-cart-rate").innerText = `${storeData.cartRate || "0.0"}%`;
-  document.getElementById("api-order-rate").innerText = `${storeData.orderRate || "0.0"}%`;
+  const analyticsSupported = storeData.analyticsSupported !== false;
+  document.getElementById("api-sessions").innerText = analyticsSupported && storeData.sessions !== null ? Number(storeData.sessions || 0).toLocaleString() : "--";
+  document.getElementById("api-views").innerText = analyticsSupported && storeData.views !== null ? Number(storeData.views || 0).toLocaleString() : "--";
+  document.getElementById("api-cart-rate").innerText = analyticsSupported && storeData.cartRate !== null ? `${storeData.cartRate || "0.0"}%` : "--";
+  document.getElementById("api-order-rate").innerText = analyticsSupported && storeData.orderRate !== null ? `${storeData.orderRate || "0.0"}%` : "--";
 
   const tableBody = document.getElementById("store-orders-table");
   const orders = storeData.orders || [];
@@ -3340,7 +3346,7 @@ async function renderStoreTab() {
       renderStoreCostBreakdown(getShopMockData(activeShop), "live");
       if (snapshot.ok) {
         const skuCount = skuAnalyticsResponse?.data?.result?.data?.length || 0;
-        setStoreApiStatus("live", `Etsy 个人访问 API 实时数据：${snapshot.dateFrom} 至 ${snapshot.dateTo}${skuCount ? `；SKU 作战台已同步 ${skuCount} 行真实 analytics` : ""}`);
+        setStoreApiStatus("live", `Etsy 个人访问 API 实时自营数据：${snapshot.dateFrom} 至 ${snapshot.dateTo}${snapshot.analytics?.supported === false ? "；个人 API 不提供流量/加购 analytics，相关指标显示为 --" : skuCount ? `；SKU 作战台已同步 ${skuCount} 行真实 analytics` : ""}`);
       } else {
         const reason = (storeMetrics.failures || []).map(formatStoreApiFailure).join("；");
         setStoreApiStatus("partial", `Etsy 个人访问 API 部分成功：${reason || "部分接口无数据"}`);

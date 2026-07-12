@@ -16,7 +16,8 @@
 | 能力 | 当前端点 | 数据落点 | 现状 |
 | --- | --- | --- | --- |
 | 店铺经营快照 | `GET_ETSY_STORE_SNAPSHOT` | `etsyStoreSnapshotCache` | 真实调用 Etsy Seller API，并缓存本地 |
-| SKU analytics | `GET_ETSY_SKU_ANALYTICS` | `etsySkuAnalyticsSnapshot` | 真实调用 Etsy Seller API，并作为全量轻体检输入 |
+| 自营商品快照 | `GET_ETSY_STORE_SNAPSHOT` / `etsy_api_get_products` | `etsyStoreSnapshotCache` | 真实调用个人卖家 API，读取当前授权店铺 listings、商品详情和 receipts/发货资料；不包含 Sessions 或加购 analytics |
+| API 能力矩阵 | `GET_ETSY_API_CAPABILITIES` / `etsy_api_get_capabilities` | 运行时返回 | 显式声明个人 API 支持和不支持的字段，避免把公开浏览器证据或模拟指标写成 API 数据 |
 | AI 技能运行 | `RUN_SKILL` | `savedResults` / `growthActionRuns` / `growthCases` | background/sidepanel/content 可真实运行；dashboard 画布动作已通过 port 接入，并可记录运行状态 |
 | 监控任务 | `monitorTasks` + `chrome.alarms` | `monitorTasks` / `monitorChangeEvents` / `monitorReports` | 可添加、删除、定时触发，属于系统任务能力 |
 | 报告库 | `GET_SAVED_RESULTS` / `DELETE_RESULT` / `EXPORT_RESULTS` | `savedResults` | 本地真实报告数据 |
@@ -64,7 +65,7 @@
 
 ## 下一步应补的真实端点
 
-1. 让 Seller API 刷新可以按案件需要拉取窗口数据，例如“实验前 7 天 vs 实验后 7 天”。
+1. 让个人卖家 API 按案件需要刷新自营 listings、receipts 和发货资料窗口；Sessions、点击率和加购率只能从公开页面/浏览器证据或未来明确开放的 API 能力获取，不能由 receipts 合成。
 2. 让监控事件进入对应竞品案件，而不是只进入系统任务表。
 3. 把 `growthCases` 从 dashboard 内部结构沉淀为更稳定的数据合同：`caseId / type / evidence / tasks / experiments / reports / status / nextReviewAt / runHistory`。
 4. 增加更多业务流测试：竞品跟踪、商品页转化、平台趋势、扩品机会、供应商货源、实验复盘和前台上下文失败降级。

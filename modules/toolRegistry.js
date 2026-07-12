@@ -1,7 +1,7 @@
 // modules/toolRegistry.js — Tool registry and content script bridge
 
 import { callLLM, getSettings, prepareCleanProductImage } from './llmClient.js';
-import { etsyGetProductList, etsyGetProductInfo, etsyGetAnalyticsData, etsyGetFbsPostingList, etsyGetFboPostingList, etsyGetStoreSnapshot } from './etsyApi.js';
+import { etsyGetProductList, etsyGetProductInfo, etsyGetAnalyticsData, etsyGetFbsPostingList, etsyGetFboPostingList, etsyGetStoreSnapshot, getEtsyApiCapabilities } from './etsyApi.js';
 import { getArtifactDataUrl, pruneArtifacts, putDataUrlArtifact } from './artifactStore.js';
 import { closeOwnedTab, createOwnedTab, createOwnedTabCallback } from './browserSessionManager.js';
 import { appendWorkflowEvent, isWorkflowCancellationRequested } from './workflowRuntime.js';
@@ -3110,6 +3110,11 @@ Object.assign(tools, {
     }
   },
 
+  etsy_api_get_capabilities: async () => ({
+    ok: true,
+    result: getEtsyApiCapabilities(),
+  }),
+
   etsy_api_get_transactions: async (args) => {
     const { dateFrom, dateTo, offset, pageSize } = args || {};
     try {
@@ -3117,7 +3122,8 @@ Object.assign(tools, {
       const fbo = await etsyGetFboPostingList(dateFrom, dateTo, offset || 0, pageSize || 20);
       const result = {
         source: "posting_api_compat",
-        note: "finance transaction list is not used by default; this compatibility tool returns Etsy 发货资料 postings.",
+        accessModel: "personal_seller_api",
+        note: "仅返回当前授权自营店铺 receipts/发货资料；finance transaction ledger 和平台仓履约数据不在当前个人 API 能力范围内。",
         fbs,
         fbo,
       };

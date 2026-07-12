@@ -9,14 +9,14 @@
 本 Skill 的核心任务是 **Etsy 店铺经营诊断与 ABC 分级优化方案**，不是 1688 寻源任务。
 
 ### 全量体检与深度体检的正确边界
-- **全量商品体检不是逐个打开所有商品详情页**。全量层必须优先通过 Etsy 个人访问 API 对全部可获得 SKU 做轻量扫描，覆盖曝光、浏览、加购、订单、价格带、履约和商品结构。
+- **全量商品体检不是逐个打开所有商品详情页**。全量层可以通过 Etsy 个人访问 API 扫描当前授权店铺的 listings、商品详情、订单和发货资料；曝光、浏览、加购、点击率不属于当前个人 API 能力，必须由公开页面/搜索/截图补充或明确标记为待验证。
 - **深度体检只聚焦高价值/高风险/高机会对象**：从全量扫描中挑选低加购、低付款、低利润、履约风险、可放大和竞品异常相关的重点 SKU 或店铺模块，再结合当前页面、截图、Etsy 搜索、Google Trends / Etsy 搜索 做深度诊断。
 - **报告必须任务化**：每个方案都要输出可由运营人员确认的动作，例如“改首图”“重写标题”“调整价格”“补库存”“报名活动”“绑定竞品监控”“进入 7 天实验”。如果某一步需要人工完成，必须明确写成“人工确认点”，不能假装已经自动执行。
 - **闭环而非一次性报告**：输出时要说明本轮诊断会生成哪些任务、哪些任务完成后进入观察期、观察期应在什么时间窗口复盘。
 
 ### 必须优先完成的第一步
 1. 先读取当前 Etsy 店铺/商品页上下文：调用 `read_current_page`，结合截图判断页面类型、店铺视觉、商品结构、标题/描述/评论等真实信息。
-2. 如果用户已绑定 Etsy 个人访问 API，优先调用 `etsy_api_get_store_snapshot` 一次性获取店铺商品、流量与 发货资料 履约订单快照；必要时再调用 `etsy_api_get_products`、`etsy_api_get_analytics`、`etsy_api_get_transactions` 兼容工具补细节，但不得把已失效的 finance transaction 接口当作默认证据来源。
+2. 如果用户已绑定 Etsy 个人访问 API，优先调用 `etsy_api_get_capabilities` 确认能力边界，再调用 `etsy_api_get_store_snapshot` 获取当前授权自营店铺的 listings 和 receipts/发货资料快照；不得把个人 API 写成竞品后台、全平台市场数据或流量 analytics 接口。
 3. 基于页面文本/API 先抽取店铺平台属性、主营类目、目标人群、价格带、视觉调性/格调、标题与 attributes 填写状态；**不能只凭截图做店铺诊断**。
 4. 必须调用 `search_in_browser` 且 `engine="etsy"`，围绕核心类目词访问 Etsy 站内搜索、market 或热卖页面，提取同类高排名商品/店铺的价格、评价门槛、首图卖点、标题词、店铺定位与履约承诺。建议先用 `searchType="listing"` 获取高排名 listing，再用 `searchType="shop"` 筛出店铺。
 5. 必须在 Etsy 搜索后访问 2-3 个同类高排名竞品店铺或商品详情页，读取页面并结合打开后的实时截图做视觉分析。若 Etsy 搜索结果中已经拿到 2-3 个竞品店铺 URL，优先调用 `collect_etsy_competitor_shops` 一次性批量采集这些店铺；该工具会逐店打开、翻页读取页面文本/商品卡片/排序口径/分页状态、逐页截屏留证并自动关闭临时 tab，减少重复开页和 LLM 往返。若只有单个竞品店铺或需要补采某个特定店铺，再调用 `collect_etsy_shop_pages` 做 1-3 页的小循环采集。采集完成后必须调用 `analyze_etsy_shop_crawl_screenshots` 对已缓存的分页截图做独立视觉解读。该截图分析工具会按三步返回：`stage_observations`（逐截图视觉事实）、`stage_synthesis`（逐竞品方法归纳）、`stage_report_inputs`（可写入报告的证据账本、竞品草稿和诊断矩阵提示）。后续报告必须沿用这些阶段结论，而不是重新凭截图印象一次性写策略。`evidence_ledger` 中必须至少有一条 `screenshot_visual` 明确写明“竞品店铺/商品详情截图”的首图卖点、视觉调性、包装/场景图或画廊结构。只看搜索结果页截图、Google 摘要或当前自营店铺截图，不得声称“已完成头部店铺反向工程”。图中这类“Etsy 站内搜索/热卖榜未直接访问”不允许作为最终交付。
@@ -103,7 +103,7 @@
 为了确保整改方案具有可审计的商业合理性，你拟定的每个具体候选方案都**必须**建立在以下六层证据链比对上。不能访问某一层数据时，必须在 `evidence_ledger` 中写成 `assumption`，说明工具不可用、页面阻断或数据待验证；严禁把假设写成真实趋势、真实榜单或真实 API 结果。
 
 1. **第一层：自营店铺真实经营底账 (Owned Store Truth)**
-   - **逻辑**：优先使用 `etsy_api_get_store_snapshot` 获取商品、流量、加购、订单与 发货资料 posting 履约快照，并结合当前页面文本和截图确认店铺/商品真实状态。
+   - **逻辑**：优先使用 `etsy_api_get_store_snapshot` 获取自营商品、订单和发货资料快照；Sessions、页面浏览、点击率、加购率不属于当前个人 API 能力，必须改用公开页面/搜索/截图证据或待验证假设。
    - **证据链**：自营商品数、价格带、会话/加购/订单、发货资料 履约结构、当前页面标题/评论/价格/视觉陈列。旧版 finance transaction 链路不得作为默认订单证据；财务报表接口未验证时，只能写“待后续财务接口验证”。
 2. **第二层：Etsy 平台大盘与热卖榜对标 (Platform Rankings & Bestsellers)**
    - **逻辑**：通过 Etsy 站内搜索、market 页面、热卖榜或高排名结果评估目标品类的真实竞争环境。
@@ -248,7 +248,7 @@
     - `page_dom`: 当前页面真实文本、商品标题、价格、评论数、店铺类目等。
     - `screenshot_visual`: 当前店铺截图或竞品店铺/商品详情页截图中的视觉陈列、主图质量、首屏信息密度、英文卖点图、画廊结构、包装/场景图等。店铺优化报告必须至少包含一条明确来自竞品截图的 `screenshot_visual`。
       如果使用 Google Trends 或输出趋势/季节性判断，也必须包含一条明确来自 Google Trends 图表截图的 `screenshot_visual`，说明时间范围、曲线方向、峰值月份或 related queries。
-  - `etsy_api`: `etsy_api_get_store_snapshot` / `etsy_api_get_products` / `etsy_api_get_analytics` / `etsy_api_get_transactions` 兼容工具返回的自营 Etsy 个人访问 API 值，其中订单应来自 发货资料 posting，不能声称来自已失效的 finance transaction 默认接口。
+  - `etsy_api`: `etsy_api_get_capabilities` / `etsy_api_get_store_snapshot` / `etsy_api_get_products` / `etsy_api_get_product_info` / `etsy_api_get_transactions` 返回的当前授权自营 Etsy 个人 API 值；不得把 unsupported analytics、竞品页面或公开搜索样本写成 API 数据。
   - `etsy_search`: Etsy 站内搜索或榜单页面返回值。
   - `google_search`: Google Search US 搜索返回值。
   - `google_trends`: Google Trends US 趋势页面返回值。

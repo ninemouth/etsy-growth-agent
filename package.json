@@ -10,6 +10,7 @@
     "test:business": "node scripts/business-flow-smoke.mjs",
     "test:sourcing": "node scripts/sourcing-workflow-guard-smoke.mjs",
     "test:compliance": "node scripts/compliance-smoke.mjs",
+    "test:etsy-api": "node scripts/etsy-api-contract-smoke.mjs",
     "test:runtime": "node scripts/workflow-runtime-smoke.mjs",
     "format": "prettier --write ."
   },

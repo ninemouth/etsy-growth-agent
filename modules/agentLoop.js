@@ -505,6 +505,7 @@ const COMPLIANCE_ALLOWED_TOOLS = new Set([
   "collect_etsy_competitor_shops",
   "analyze_etsy_shop_crawl_screenshots",
   "collect_etsy_listing_reviews",
+  "etsy_api_get_capabilities",
   "etsy_api_get_store_snapshot",
   "etsy_api_get_products",
   "etsy_api_get_product_info",
@@ -520,6 +521,14 @@ function isReviewSkill(skillId = "") {
 
 function isOperationsSkill(skillId = "") {
   return /etsy_operations_tracker/.test(String(skillId || ""));
+}
+
+function hasSupportedEtsyAnalytics(toolHistory = []) {
+  return hasSuccessfulToolCall(toolHistory, (entry) => {
+    if (entry.tool === "etsy_api_get_analytics") return entry.result?.result?.supported === true;
+    if (entry.tool === "etsy_api_get_store_snapshot") return entry.result?.result?.analytics?.supported === true;
+    return false;
+  });
 }
 
 function getReviewEvidenceSummary(toolHistory = [], pageContext = {}) {
@@ -1657,6 +1666,9 @@ function validateOperationsReport(out, toolHistory = [], pageContext = {}) {
     if (!item?.next_observation_window || !item?.success_threshold) errors.push(`${label} 缺少 next_observation_window 或 success_threshold，下一轮必须有观察时间和成功标准。`);
     if (/提升|下降|增长|改善|成功|increase|decrease|improv|success/i.test(text) && !hasEvidenceSource(toolHistory, pageContext, "etsy_api") && !hasAssumptionFallback(item?.evidence_ledger || [], /API|基线|数据|指标|待验证/i)) {
       errors.push(`${label} 输出了指标变化或成功判断，但没有 Etsy 个人访问 API 证据或明确待验证假设。`);
+    }
+    if (/Sessions?|session_view|hits_view|页面浏览|曝光|点击率|加购率|conv_tocart|traffic/i.test(text) && !hasSupportedEtsyAnalytics(toolHistory) && !hasAssumptionFallback(item?.evidence_ledger || [], /个人 API 不支持|未提供|待验证|不可用|无法取得|unsupported/i)) {
+      errors.push(`${label} 使用了 Sessions、曝光、点击率或加购率等指标，但当前 Etsy 个人卖家 API 不提供这些 analytics；必须改为待验证假设或使用公开页面证据，不能填 0 冒充真实数据。`);
     }
   });
   return errors;

@@ -4,6 +4,32 @@ const ETSY_API_BASE = "https://openapi.etsy.com/v3/application";
 const ETSY_MIN_REQUEST_INTERVAL_MS = 1100;
 const ETSY_RATE_LIMIT_RETRY_MS = 1600;
 
+export const ETSY_PERSONAL_API_CAPABILITIES = Object.freeze({
+  accessModel: "personal_seller_api",
+  scope: "仅当前授权店主及其自营店铺",
+  supported: [
+    "active_listings",
+    "listing_details",
+    "seller_receipts",
+    "seller_fulfillment_posting_compatibility",
+  ],
+  unsupported: [
+    "competitor_private_shop_data",
+    "platform_wide_search_volume",
+    "sessions_or_page_views",
+    "click_through_rate",
+    "add_to_cart_rate",
+    "advertising_attribution",
+    "finance_transaction_ledger",
+    "platform_fulfilled_warehouse_metrics",
+  ],
+  publicBrowserBoundary: "竞品和 Etsy 搜索只能通过公开浏览器页面取证，不能从个人 API 读取竞品后台数据。",
+});
+
+export function getEtsyApiCapabilities() {
+  return JSON.parse(JSON.stringify(ETSY_PERSONAL_API_CAPABILITIES));
+}
+
 let lastEtsyRequestAt = 0;
 let etsyRequestQueue = Promise.resolve();
 
@@ -316,37 +342,17 @@ export async function etsyGetProductInfo(productIds = [], skus = []) {
 }
 
 export async function etsyGetAnalyticsData(dateFrom, dateTo, dimension = ["sku"], metrics = ["sessions", "orders", "revenue"]) {
-  const range = dateFrom && dateTo ? { dateFrom, dateTo } : getDefaultEtsyDateRange(14);
-  const receipts = await etsyGetReceipts(range.dateFrom, range.dateTo, 0, 100);
-  const bySku = new Map();
-
-  receipts.receipts.forEach((receipt) => {
-    const row = normalizeReceipt(receipt);
-    const key = row.sku || "unknown";
-    const current = bySku.get(key) || {
-      dimensions: [{ id: key, name: key }],
-      metrics: Array(metrics.length).fill(0),
-      sku: key,
-      orderedUnits: 0,
-      revenue: 0,
-    };
-    current.orderedUnits += row.qty;
-    current.revenue += row.price;
-    metrics.forEach((metric, idx) => {
-      if (/order|unit/i.test(metric)) current.metrics[idx] += row.qty;
-      else if (/revenue|sales|amount|price/i.test(metric)) current.metrics[idx] += row.price;
-      else current.metrics[idx] += 0;
-    });
-    bySku.set(key, current);
-  });
-
   return {
-    data: [...bySku.values()],
-    metrics,
+    supported: false,
+    accessModel: ETSY_PERSONAL_API_CAPABILITIES.accessModel,
+    data: [],
+    metrics: [],
+    requestedMetrics: metrics,
     dimension,
-    dateFrom: range.dateFrom,
-    dateTo: range.dateTo,
-    note: "Etsy Open API does not expose the same Etsy funnel metrics here; rows are synthesized from authorized receipts when available.",
+    dateFrom: dateFrom || "",
+    dateTo: dateTo || "",
+    limitation: "Etsy 个人卖家 API 当前不提供 Sessions、页面浏览、点击率或加购率 analytics；不能从 receipts 合成这些指标。",
+    nextStep: "使用公开 Etsy 页面和浏览器证据分析曝光/转化方向；使用个人 API 仅核对自营 listings、订单和发货资料。",
   };
 }
 
@@ -386,22 +392,11 @@ export async function etsyGetFboPostingList() {
   };
 }
 
-function sumMetricRows(rows = [], metricNames = []) {
-  const totals = Object.fromEntries(metricNames.map((name) => [name, 0]));
-  rows.forEach((row) => {
-    metricNames.forEach((metric, idx) => {
-      const value = Number(row.metrics?.[idx] ?? row[metric] ?? 0);
-      if (Number.isFinite(value)) totals[metric] += value;
-    });
-  });
-  return totals;
-}
-
 export async function etsyGetStoreSnapshot(args = {}) {
   const { dateFrom, dateTo } = args.dateFrom && args.dateTo
     ? args
     : getDefaultEtsyDateRange(args.days || 14);
-  const metrics = args.metrics || ["sessions", "ordered_units", "revenue"];
+  const metrics = args.metrics || ["ordered_units", "revenue"];
 
   const runSettled = async (fn) => {
     try {
@@ -412,17 +407,25 @@ export async function etsyGetStoreSnapshot(args = {}) {
   };
 
   const products = await runSettled(() => etsyGetProductList(args.productLimit || 100, args.offset || 0));
-  const analytics = await runSettled(() => etsyGetAnalyticsData(dateFrom, dateTo, args.dimension || ["sku"], metrics));
   const receipts = await runSettled(() => etsyGetReceipts(dateFrom, dateTo, args.offset || 0, args.pageSize || 20));
 
   const failures = [];
   const result = {
     ok: true,
-    source: "etsy_open_api",
+    source: "etsy_personal_seller_api",
+    accessModel: ETSY_PERSONAL_API_CAPABILITIES.accessModel,
+    capabilities: getEtsyApiCapabilities(),
     dateFrom,
     dateTo,
     products: { items: [], total: 0 },
-    analytics: { data: [], totals: {}, metrics },
+    analytics: {
+      supported: false,
+      data: [],
+      totals: {},
+      metrics: [],
+      requestedMetrics: metrics,
+      limitation: "个人卖家 API 不提供 Sessions、页面浏览、点击率或加购率 analytics；以下快照不填充这些指标。",
+    },
     postings: { fbs: [], fbo: [], count: 0 },
     receipts: [],
     orders: [],
@@ -433,14 +436,6 @@ export async function etsyGetStoreSnapshot(args = {}) {
     result.products = products.value;
   } else {
     failures.push({ endpoint: "etsyGetProductList", error: products.reason?.message || String(products.reason) });
-  }
-
-  if (analytics.status === "fulfilled") {
-    result.analytics.data = analytics.value.data || [];
-    result.analytics.totals = sumMetricRows(result.analytics.data, metrics);
-    result.analytics.note = analytics.value.note;
-  } else {
-    failures.push({ endpoint: "etsyGetAnalyticsData", error: analytics.reason?.message || String(analytics.reason) });
   }
 
   if (receipts.status === "fulfilled") {
