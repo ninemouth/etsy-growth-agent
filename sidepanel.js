@@ -494,6 +494,8 @@ async function runSkill() {
             addLog("info", "↩", msg.message || "已恢复上次中断的 workflow");
           } else if (msg.type === "tool_heartbeat") {
             addLog("info", "⏱", msg.message || `${msg.toolName || "工具"} 仍在执行`);
+          } else if (msg.type === "llm_heartbeat") {
+            addLog("info", "⏱", msg.message || "AI 正在基于已采集证据规划下一步");
           } else if (msg.type === "auto_fix") {
             addLog("info", "✓", msg.message || "已完成自动修正");
           } else if (msg.type === "reflection" || msg.type === "thinking") {

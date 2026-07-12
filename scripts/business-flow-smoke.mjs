@@ -28,6 +28,8 @@ const artifactStoreSource = fs.readFileSync(path.join(root, "modules", "artifact
 const shopOptimizerSkillSource = fs.readFileSync(path.join(root, "skills", "etsy_global_shop_optimizer.skill.md"), "utf8");
 
 assert.match(agentLoopSource, /type:\s*"tool_heartbeat"/, "long-running tool calls should emit heartbeat progress");
+assert.match(agentLoopSource, /type:\s*"llm_heartbeat"/, "long-running LLM planning calls should emit heartbeat progress between tool calls");
+assert.match(sidepanelSource, /msg\.type === "llm_heartbeat"[\s\S]*AI 正在基于已采集证据规划下一步/, "sidepanel should show LLM heartbeat progress instead of appearing stuck between tool calls");
 assert.match(agentLoopSource, /etsyAgentCheckpoint:/, "agent loop should persist resumable workflow checkpoints");
 assert.match(agentLoopSource, /CHECKPOINT_IMAGE_PLACEHOLDER/, "persisted checkpoints should omit base64 screenshot payloads");
 assert.match(agentLoopSource, /type:\s*"checkpoint_restored"/, "agent loop should notify the UI when a checkpoint is restored");
@@ -102,6 +104,7 @@ assert.match(agentLoopSource, /competitor_benchmarks/, "critic should require st
 assert.match(agentLoopSource, /collect_etsy_shop_pages[\s\S]*completedFullCrawl/, "critic should recognize completed Etsy shop pagination crawl evidence for full-shop coverage claims");
 assert.match(agentLoopSource, /collect_etsy_competitor_shops[\s\S]*competitorsCollected[\s\S]*cacheHits/, "agent loop should compress batch competitor crawl results before sending them back to the LLM");
 assert.match(agentLoopSource, /collect_etsy_competitor_shops[\s\S]*internal_runaway_guard/, "agent loop should know batch competitor collection without reintroducing fixed max-loop failures");
+assert.match(agentLoopSource, /skipImmediateLoopScreenshotTools[\s\S]*collect_etsy_shop_pages[\s\S]*collect_etsy_competitor_shops/, "bulk Etsy shop crawls should not attach redundant immediate screenshots to the next LLM planning call");
 assert.match(agentLoopSource, /MAX_LLM_CRAWL_PRODUCT_CARDS\s*=\s*16/, "shop diagnosis compression should preserve enough visible product samples for competitor structure analysis");
 assert.match(agentLoopSource, /productEvidenceSummary/, "shop diagnosis compression should preserve aggregate product evidence for pricing, reviews, promotions and titles");
 assert.match(agentLoopSource, /analyze_etsy_shop_crawl_screenshots[\s\S]*独立截图解读/, "critic should require independent visual analysis after cached shop crawl screenshots are captured");

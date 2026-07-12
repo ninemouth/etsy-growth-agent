@@ -1985,9 +1985,24 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
 
     let assistantContent = "";
     const llmMessages = compactMessagesForLLM(messages);
-    assistantContent = await callLLM(llmMessages, ({ chunk, fullText, isReasoning }) => {
-      sendProgress({ type: "streaming", step, chunk, fullText, isReasoning });
-    }, highRandomness);
+    const llmStartedAt = Date.now();
+    let llmHeartbeatTimer = null;
+    try {
+      llmHeartbeatTimer = setInterval(() => {
+        const elapsedSeconds = Math.max(1, Math.round((Date.now() - llmStartedAt) / 1000));
+        sendProgress({
+          type: "llm_heartbeat",
+          step,
+          elapsedSeconds,
+          message: `AI 正在基于已采集证据规划下一步，已运行 ${elapsedSeconds} 秒。`,
+        });
+      }, 30000);
+      assistantContent = await callLLM(llmMessages, ({ chunk, fullText, isReasoning }) => {
+        sendProgress({ type: "streaming", step, chunk, fullText, isReasoning });
+      }, highRandomness);
+    } finally {
+      if (llmHeartbeatTimer) clearInterval(llmHeartbeatTimer);
+    }
 
     sendProgress({ type: "llm_done", step, content: assistantContent });
     await saveCheckpoint({
@@ -2280,7 +2295,11 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
 
       let nextScreenshot = null;
       const pageModifyingTools = ["open_new_tab", "navigate_to", "search_in_browser", "collect_etsy_shop_pages", "collect_etsy_competitor_shops", "click_by_text", "input_text_and_search", "click_by_selector", "image_search_1688", "image_search_taobao", "image_search_in_browser", "click_by_coordinate"];
-      if (pageModifyingTools.includes(toolName)) {
+      const skipImmediateLoopScreenshotTools = new Set([
+        "collect_etsy_shop_pages",
+        "collect_etsy_competitor_shops",
+      ]);
+      if (pageModifyingTools.includes(toolName) && !skipImmediateLoopScreenshotTools.has(toolName)) {
         try {
           const tId = (toolResult && toolResult.tabId) ? toolResult.tabId : tabId;
           const t = await new Promise((resTab) => {
