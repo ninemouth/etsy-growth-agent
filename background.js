@@ -46,6 +46,7 @@ async function loadSkill(skillPath) {
 
 const ETSY_SKILL_PATHS = new Set([
   "skills/etsy_product_opportunity_explorer.skill.md",
+  "skills/etsy_platform_trends.skill.md",
   "skills/etsy_sourcing_finder.skill.md",
   "skills/etsy_global_shop_optimizer.skill.md",
   "skills/etsy_operations_tracker.skill.md",
@@ -67,7 +68,7 @@ const GROWTH_ACTION_SKILL_MAP = {
   filter_supplier_sources: ["skills/etsy_sourcing_finder.skill.md"],
   detect_fulfillment_risk: ["skills/etsy_operations_tracker.skill.md"],
   find_expansion_opportunities: ["skills/etsy_product_opportunity_explorer.skill.md", "skills/etsy_sourcing_finder.skill.md"],
-  explore_platform_trends: ["skills/etsy_product_opportunity_explorer.skill.md"],
+  explore_platform_trends: ["skills/etsy_platform_trends.skill.md"],
   create_growth_experiment: ["skills/etsy_operations_tracker.skill.md"],
   review_experiment_result: ["skills/etsy_operations_tracker.skill.md"],
   audit_compliance: ["skills/etsy_compliance_auditor.skill.md"],
@@ -174,7 +175,7 @@ async function dispatchEtsySkills(userInstruction, pageContext = {}) {
         const classificationPrompt = [
         {
           role: "system",
-          content: `你是一个 Etsy 跨境电商运营智能路由器。请根据用户的输入需求，从以下 7 个专有 AI 技能路径中选择所有最相关的技能路径：
+          content: `你是一个 Etsy 跨境电商运营智能路由器。请根据用户的输入需求，从以下 9 个专有 AI 技能路径中选择所有最相关的技能路径：
 1. "skills/etsy_product_opportunity_explorer.skill.md" (Etsy选品、类目需求分析、合规性风险审计)
 2. "skills/etsy_sourcing_finder.skill.md" (1688货源开发、美元跨境利润套利测算、运费关税核算)
 3. "skills/etsy_global_shop_optimizer.skill.md" (Etsy店铺经营诊断、自营 listings/订单/发货资料对账、ABC分级优化)
@@ -183,6 +184,7 @@ async function dispatchEtsySkills(userInstruction, pageContext = {}) {
 6. "skills/etsy_review_analyzer.skill.md" (买家原声差评剖析、退换货与商品缺陷分析)
 7. "skills/etsy_compliance_auditor.skill.md" (Etsy 商品发布前合规、IP、产品安全与目的地法规审查)
 8. "skills/etsy_keyword_analysis.skill.md" (Etsy 站内搜索词、买家意图和标签证据分析)
+9. "skills/etsy_platform_trends.skill.md" (Etsy 平台公开搜索、Google Search/Trends 和趋势机会分析)
 
 请直接输出一个包含路径字符串的 JSON 数组（例如：["skills/etsy_sourcing_finder.skill.md"]），不要包含任何其他说明字符，格式必须是标准的 JSON 数组。`
         },
@@ -234,6 +236,13 @@ async function listSkills() {
       name: "Etsy 多维智能选品决策专家 (Auto)",
       description: "一键分析当前商品或搜索页，提取欧美本土需求、CE/CPC/FDA/IP合规准入、泡货运费风险及痛点，输出高胜率爆品蓝图",
       icon: "🛍️",
+    },
+    {
+      id: "etsy_platform_trends",
+      path: "skills/etsy_platform_trends.skill.md",
+      name: "Etsy 平台趋势与公开需求研究专家",
+      description: "基于 Etsy 搜索、Google Search、Google Trends 和公开竞品页面分析平台级需求窗口，不把自营 API 数据冒充平台大盘",
+      icon: "📊",
     },
     {
       id: "etsy_sourcing_finder",
@@ -677,6 +686,29 @@ chrome.runtime.onConnect.addListener((port) => {
               });
             },
           });
+
+          if (!result?.ok && result?.type === "interrupted") {
+            await setWorkflowCheckpoint(checkpointKey, {
+              status: "interrupted",
+              lastStage: "agent_interrupted",
+              interruptionReason: result.result || "workflow_interrupted",
+              interruptedAt: new Date().toISOString(),
+            });
+            port.postMessage({
+              type: "INTERRUPTED",
+              result,
+              skillId: matchedSkills.join("+"),
+              skillName: matchedNames.join(" + "),
+              resumable: true,
+              resumeHint: "已保存断点。发送“继续”从当前节点恢复。",
+            });
+            activeCheckpointKey = "";
+            clearInterval(leaseRenewTimer);
+            leaseRenewTimer = null;
+            await releaseWorkflowLease(checkpointKey, portId, "interrupted");
+            await cleanupOwnedTabs(checkpointKey);
+            return;
+          }
 
           if (!isCancelled) {
             if (matchedSkills.some((skillPath) => skillPath.includes("etsy_compliance_auditor"))) {

@@ -540,6 +540,13 @@ async function runSkill() {
         }
         showError(message.error);
         cleanupPort();
+      } else if (message.type === "INTERRUPTED") {
+        if (typeof removeCaptchaAlertBanner === "function") removeCaptchaAlertBanner();
+        const reason = message.result?.result || message.resumeHint || "工作流已保存断点，可发送“继续”恢复。";
+        addLog("warning", "⏸", reason);
+        addLog("info", "↩", message.resumeHint || "发送“继续”从当前节点恢复。");
+        showError(reason);
+        cleanupPort();
       }
     });
 

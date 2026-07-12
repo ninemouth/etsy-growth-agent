@@ -17,7 +17,6 @@ const MAX_LLM_CRAWL_PAGES = 6;
 const MAX_LLM_MESSAGE_CHARS = 26000;
 const MAX_LLM_HISTORY_MESSAGES = 24;
 const MAX_LLM_TOTAL_CHARS = 140000;
-const MAX_CONTINUOUS_RUNTIME_MS = 15 * 60 * 1000;
 
 function checkpointStorageAvailable() {
   return typeof chrome !== "undefined" && chrome.storage?.local;
@@ -2102,7 +2101,6 @@ export async function runAgentLoop({ tabId, skillId, skillMarkdown, userInstruct
   });
   const availableTools = filteredToolList.join(", ");
   let toolHistory = Array.isArray(resumeState?.toolHistory) ? [...resumeState.toolHistory] : [];
-  const continuousRunStartedAt = Date.now();
 
   const actualTargetImageUrl = pageContext?.targetImageUrl || "";
   const ctxForPrompt = buildPromptContext(pageContext);
@@ -2287,27 +2285,6 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         ok: false,
         type: "interrupted",
         result: "workflow 已收到取消信号，已保存当前断点。发送“继续”可恢复未完成节点。",
-        steps: step - 1,
-      };
-    }
-    const runtimeMs = Date.now() - continuousRunStartedAt;
-    if (runtimeMs >= MAX_CONTINUOUS_RUNTIME_MS) {
-      await saveCheckpoint({
-        status: "runtime_budget_paused",
-        step: step - 1,
-        lastNode: "continuous_runtime_budget",
-        runtimeMs,
-      });
-      sendProgress({
-        type: "workflow_timeout",
-        step: step - 1,
-        elapsedSeconds: Math.round(runtimeMs / 1000),
-        message: "本次连续运行已达到 15 分钟运行预算，已保存断点并暂停。发送“继续”后将从当前节点恢复。",
-      });
-      return {
-        ok: false,
-        type: "interrupted",
-        result: "工作流已达到本次连续运行预算，已保存断点。请发送“继续”从当前节点恢复。",
         steps: step - 1,
       };
     }

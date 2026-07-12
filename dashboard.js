@@ -104,7 +104,7 @@ const GROWTH_ACTIONS = {
   },
   explore_platform_trends: {
     title: "Etsy 平台趋势机会",
-    skillPath: "skills/etsy_product_opportunity_explorer.skill.md",
+    skillPath: "skills/etsy_platform_trends.skill.md",
     instruction: "扫描当前 Etsy 搜索、类目、品牌或热卖页面，专注判断平台级商品机会和趋势窗口。请输出价格带、评价门槛、头部商品共性、英文关键词、季节性需求、Google Trends / Etsy 搜索 待验证或真实证据，并区分平台趋势机会与本店扩品动作。",
   },
   create_growth_experiment: {
@@ -149,6 +149,11 @@ function growthCaseIdFor(actionId, shopId = "", sku = "") {
   const caseType = GROWTH_ACTION_CASE_TYPE[actionId] || "store_health";
   const scope = sku ? stableHash(sku) : "shop";
   return `${caseType}_${shopId || "no_shop"}_${scope}`;
+}
+
+function isInterruptedSavedResult(entry = {}) {
+  const result = entry?.result;
+  return result?.type === "interrupted" || /工作流已达到本次连续运行预算|工作流已收到取消信号|已保存断点/.test(String(result?.result || ""));
 }
 
 const GROWTH_CONTRACT_VERSION = 1;
@@ -581,7 +586,7 @@ async function refreshAllData() {
   };
 
   const filteredTracked = filterByActiveShop(data.trackedProducts || []);
-  const filteredSavedResults = filterByActiveShop(data.savedResults || []);
+  const filteredSavedResults = filterByActiveShop(data.savedResults || []).filter((entry) => !isInterruptedSavedResult(entry));
   const filteredTasks = filterByActiveShop(data.monitorTasks || []);
   const filteredEvents = filterByActiveShop(data.monitorChangeEvents || []).map((event) => ({
     ...event,
@@ -2626,6 +2631,16 @@ function startDashboardGrowthRun(run) {
           }, { status: "failed" });
           port.disconnect?.();
           reject(new Error(message.error || "运行失败"));
+        }
+        if (message.type === "INTERRUPTED") {
+          settled = true;
+          await persistGrowthRunUpdate(run.caseId, run.id, {
+            status: "interrupted",
+            error: message.result?.result || message.resumeHint || "工作流已保存断点",
+            interruptedAt: new Date().toISOString(),
+          }, { status: "interrupted" });
+          port.disconnect?.();
+          reject(new Error(message.result?.result || message.resumeHint || "工作流已保存断点"));
         }
       } catch (err) {
         settled = true;

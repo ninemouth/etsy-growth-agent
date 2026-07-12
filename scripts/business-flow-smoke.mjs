@@ -30,7 +30,12 @@ const shopOptimizerSkillSource = fs.readFileSync(path.join(root, "skills", "etsy
 assert.match(agentLoopSource, /type:\s*"tool_heartbeat"/, "long-running tool calls should emit heartbeat progress");
 assert.match(agentLoopSource, /type:\s*"llm_heartbeat"/, "long-running LLM planning calls should emit heartbeat progress between tool calls");
 assert.match(agentLoopSource, /MAX_LLM_TOTAL_CHARS\s*=\s*140000/, "LLM planning requests should have a total history payload budget");
-assert.match(agentLoopSource, /MAX_CONTINUOUS_RUNTIME_MS\s*=\s*15 \* 60 \* 1000/, "continuous workflows should save a checkpoint before becoming an unbounded run");
+assert.doesNotMatch(agentLoopSource, /MAX_CONTINUOUS_RUNTIME_MS\s*=\s*15 \* 60 \* 1000/, "normal workflows must not be hard-interrupted by a fixed continuous runtime budget");
+assert.doesNotMatch(agentLoopSource, /工作流已达到本次连续运行预算/, "normal workflow delivery must not stop at a fixed continuous runtime budget");
+assert.match(backgroundSource, /type:\s*"INTERRUPTED"[\s\S]*不.*saved|type:\s*"INTERRUPTED"/, "interrupted workflows must be delivered as resumable state, not success reports");
+assert.match(js, /isInterruptedSavedResult[\s\S]*filter\(\(entry\) => !isInterruptedSavedResult/, "legacy interrupted pseudo-reports must not appear in the report center");
+assert.match(backgroundSource, /etsy_platform_trends\.skill\.md/, "platform trend action must use a dedicated trend skill");
+assert.match(js, /explore_platform_trends[\s\S]*etsy_platform_trends\.skill\.md/, "dashboard platform trend action must route to dedicated trend skill");
 assert.match(agentLoopSource, /newestImageMessage/, "older screenshot data URLs should not be resent on every planning turn");
 assert.match(backgroundSource, /runInFlight/, "background should reject duplicate concurrent workflow starts on one port");
 assert.match(backgroundSource, /acquireWorkflowLease[\s\S]*releaseWorkflowLease/, "background should use a global workflow lease instead of a per-port lock only");

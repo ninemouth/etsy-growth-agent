@@ -3736,6 +3736,14 @@
               log(`↩ ${message.resumeHint}`);
             }
             finishGrowthRun("failed", message.error || "unknown error").catch((err) => console.warn("Failed to finish growth run:", err.message));
+          } else if (message.type === "INTERRUPTED") {
+            statusDot.className = "status-dot";
+            sendBtn.disabled = false;
+            inputEl.disabled = false;
+            const reason = message.result?.result || message.resumeHint || "工作流已保存断点，可发送“继续”恢复。";
+            log(`⏸ ${reason}`);
+            log(`↩ ${message.resumeHint || "发送“继续”从当前节点恢复。"}`);
+            finishGrowthRun("interrupted", reason).catch((err) => console.warn("Failed to save interrupted growth run:", err.message));
           }
         });
 
