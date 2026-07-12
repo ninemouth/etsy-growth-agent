@@ -9,9 +9,10 @@ const CHECKPOINT_LATEST_KEY = "etsyAgentCheckpointLatest";
 const CHECKPOINT_IMAGE_PLACEHOLDER = "__CHECKPOINT_IMAGE_OMITTED__";
 const MAX_LLM_TEXT_FIELD = 900;
 const MAX_LLM_PRODUCT_CARDS = 8;
-const MAX_LLM_CRAWL_PAGES = 4;
-const MAX_LLM_MESSAGE_CHARS = 18000;
-const MAX_LLM_HISTORY_MESSAGES = 18;
+const MAX_LLM_CRAWL_PRODUCT_CARDS = 16;
+const MAX_LLM_CRAWL_PAGES = 6;
+const MAX_LLM_MESSAGE_CHARS = 26000;
+const MAX_LLM_HISTORY_MESSAGES = 24;
 
 function checkpointStorageAvailable() {
   return typeof chrome !== "undefined" && chrome.storage?.local;
@@ -95,6 +96,49 @@ function compactProductCardForLLM(card = {}, index = 0) {
   };
 }
 
+function compactCrawlPageForLLM(page = {}, productLimit = MAX_LLM_CRAWL_PRODUCT_CARDS, textLimit = 900) {
+  return {
+    competitorName: page.competitorName,
+    competitorUrl: page.competitorUrl,
+    pageIndex: page.pageIndex,
+    url: page.url,
+    title: page.title,
+    shopName: page.shopName,
+    sortLabel: page.sortLabel,
+    visibleProductOrderBasis: page.visibleProductOrderBasis,
+    pagination: page.pagination,
+    productCardsVisible: page.productCardsVisible,
+    productCards: Array.isArray(page.productCards) ? page.productCards.slice(0, productLimit).map(compactProductCardForLLM) : [],
+    visibleTextSnippet: truncateText(page.visibleTextSnippet || "", textLimit),
+    pageHealth: page.pageHealth,
+    screenshotCaptured: page.screenshotCaptured,
+    screenshotRef: page.screenshotRef,
+    screenshotStorage: page.screenshotStorage,
+    screenshotExpiresAt: page.screenshotExpiresAt,
+    screenshotError: page.screenshotError,
+  };
+}
+
+function summarizeShopPagesForLLM(pages = []) {
+  const cards = pages.flatMap((page) => Array.isArray(page?.productCards) ? page.productCards : []);
+  const sampleCards = cards.slice(0, 24).map(compactProductCardForLLM);
+  const values = (selector, limit = 12) => Array.from(new Set(
+    cards.map(selector).filter(Boolean).map((value) => String(value).trim()).filter(Boolean)
+  )).slice(0, limit);
+  return {
+    pages: pages.length,
+    visibleProducts: pages.reduce((sum, page) => sum + Number(page?.productCardsVisible || 0), 0),
+    sortLabels: Array.from(new Set(pages.map((page) => page?.sortLabel).filter(Boolean))),
+    priceSamples: values((card) => card.price, 16),
+    ratingSamples: values((card) => card.rating, 8),
+    reviewSamples: values((card) => card.reviewCount || card.reviews, 8),
+    promotionSamples: values((card) => card.promotionText || card.discountText || card.saleText, 12),
+    shippingSamples: values((card) => card.shippingText || card.shipping, 12),
+    titleSamples: sampleCards.map((card) => card.title).filter(Boolean).slice(0, 16),
+    productSamples: sampleCards,
+  };
+}
+
 function compactPageDataForLLM(pageData = {}) {
   if (!pageData || typeof pageData !== "object") return pageData;
   const cards = Array.isArray(pageData.productCards) ? pageData.productCards : [];
@@ -163,24 +207,8 @@ function compactToolResultForLLM(toolName = "", result = {}) {
     base.sortLabels = result.sortLabels;
     base.artifactStore = result.artifactStore;
     base.screenshotPolicy = result.screenshotPolicy;
-    base.pages = result.pages.slice(0, MAX_LLM_CRAWL_PAGES).map((page) => ({
-      pageIndex: page.pageIndex,
-      url: page.url,
-      title: page.title,
-      shopName: page.shopName,
-      sortLabel: page.sortLabel,
-      visibleProductOrderBasis: page.visibleProductOrderBasis,
-      pagination: page.pagination,
-      productCardsVisible: page.productCardsVisible,
-      productCards: Array.isArray(page.productCards) ? page.productCards.slice(0, MAX_LLM_PRODUCT_CARDS).map(compactProductCardForLLM) : [],
-      visibleTextSnippet: truncateText(page.visibleTextSnippet || "", 700),
-      pageHealth: page.pageHealth,
-      screenshotCaptured: page.screenshotCaptured,
-      screenshotRef: page.screenshotRef,
-      screenshotStorage: page.screenshotStorage,
-      screenshotExpiresAt: page.screenshotExpiresAt,
-      screenshotError: page.screenshotError,
-    }));
+    base.productEvidenceSummary = summarizeShopPagesForLLM(result.pages);
+    base.pages = result.pages.slice(0, MAX_LLM_CRAWL_PAGES).map((page) => compactCrawlPageForLLM(page));
     if (result.pages.length > MAX_LLM_CRAWL_PAGES) {
       base.omittedPages = result.pages.length - MAX_LLM_CRAWL_PAGES;
     }
@@ -196,20 +224,9 @@ function compactToolResultForLLM(toolName = "", result = {}) {
     base.artifactStore = result.artifactStore;
     base.screenshotPolicy = result.screenshotPolicy;
     base.nextStep = result.nextStep;
-    base.allPages = Array.isArray(result.allPages) ? result.allPages.slice(0, 8).map((page) => ({
-      competitorName: page.competitorName,
-      competitorUrl: page.competitorUrl,
-      pageIndex: page.pageIndex,
-      url: page.url,
-      shopName: page.shopName,
-      sortLabel: page.sortLabel,
-      visibleProductOrderBasis: page.visibleProductOrderBasis,
-      productCardsVisible: page.productCardsVisible,
-      screenshotCaptured: page.screenshotCaptured,
-      screenshotRef: page.screenshotRef,
-      screenshotStorage: page.screenshotStorage,
-      screenshotExpiresAt: page.screenshotExpiresAt,
-    })) : [];
+    base.allPages = Array.isArray(result.allPages)
+      ? result.allPages.slice(0, 12).map((page) => compactCrawlPageForLLM(page, 10, 500))
+      : [];
     base.shops = result.shops.slice(0, 4).map((shop) => ({
       ok: shop.ok,
       competitorName: shop.competitorName,
@@ -222,24 +239,8 @@ function compactToolResultForLLM(toolName = "", result = {}) {
       totalVisibleProductCards: shop.totalVisibleProductCards,
       uniqueListingCount: shop.uniqueListingCount,
       sortLabels: shop.sortLabels,
-      pages: Array.isArray(shop.pages) ? shop.pages.slice(0, MAX_LLM_CRAWL_PAGES).map((page) => ({
-        pageIndex: page.pageIndex,
-        url: page.url,
-        title: page.title,
-        shopName: page.shopName,
-        sortLabel: page.sortLabel,
-        visibleProductOrderBasis: page.visibleProductOrderBasis,
-        pagination: page.pagination,
-        productCardsVisible: page.productCardsVisible,
-        productCards: Array.isArray(page.productCards) ? page.productCards.slice(0, MAX_LLM_PRODUCT_CARDS).map(compactProductCardForLLM) : [],
-        visibleTextSnippet: truncateText(page.visibleTextSnippet || "", 500),
-        pageHealth: page.pageHealth,
-        screenshotCaptured: page.screenshotCaptured,
-        screenshotRef: page.screenshotRef,
-        screenshotStorage: page.screenshotStorage,
-        screenshotExpiresAt: page.screenshotExpiresAt,
-        screenshotError: page.screenshotError,
-      })) : [],
+      productEvidenceSummary: summarizeShopPagesForLLM(Array.isArray(shop.pages) ? shop.pages : []),
+      pages: Array.isArray(shop.pages) ? shop.pages.slice(0, MAX_LLM_CRAWL_PAGES).map((page) => compactCrawlPageForLLM(page)) : [],
     }));
     if (Array.isArray(result.allPages) && result.allPages.length > MAX_LLM_CRAWL_PAGES) {
       base.omittedPages = result.allPages.length - MAX_LLM_CRAWL_PAGES;
@@ -986,6 +987,46 @@ function validateCompetitorBenchmarks(out, toolHistory = [], pageContext = {}) {
   return errors;
 }
 
+function validateDiagnosticDepthMatrix(out) {
+  const errors = [];
+  const matrix = out.diagnostic_depth_matrix || out.depth_matrix || out.diagnosis_dimensions;
+  if (!Array.isArray(matrix) || matrix.length < 6) {
+    errors.push("店铺优化报告缺少 diagnostic_depth_matrix 深度诊断矩阵，至少需要覆盖定位/阶段、视觉、SEO/文本、商品矩阵、竞品对标、站外需求、信任/履约等 6 个以上维度，避免报告只停留在浅层建议。");
+    return errors;
+  }
+  const combinedDimensions = matrix.map((item) => [
+    item?.dimension,
+    item?.name,
+    item?.topic,
+    item?.finding,
+    item?.current_state,
+    item?.diagnosis,
+  ].filter(Boolean).join(" ")).join(" ");
+  const requiredTopics = [
+    [/定位|阶段|stage|position/i, "定位/阶段"],
+    [/视觉|首图|画廊|visual|image|gallery/i, "视觉/首图"],
+    [/SEO|标题|关键词|描述|attribute|text/i, "SEO/文本"],
+    [/商品矩阵|SKU|价格|price|product mix|category/i, "商品矩阵/价格"],
+    [/竞品|对标|competitor|benchmark/i, "竞品对标"],
+    [/Google|趋势|站外|需求|trend|search/i, "站外需求/趋势"],
+    [/信任|履约|物流|评价|policy|shipping|review|trust/i, "信任/履约"],
+  ];
+  requiredTopics.forEach(([regex, label]) => {
+    if (!regex.test(combinedDimensions)) {
+      errors.push(`diagnostic_depth_matrix 缺少 ${label} 维度。店铺体检必须展示维度、证据、缺口和动作，而不是只输出泛化建议。`);
+    }
+  });
+  matrix.forEach((item, index) => {
+    const prefix = `diagnostic_depth_matrix 第 ${index + 1} 项`;
+    if (!hasValue(item?.dimension || item?.name || item?.topic)) errors.push(`${prefix} 缺少 dimension / name / topic。`);
+    if (!hasValue(item?.finding || item?.current_state || item?.diagnosis)) errors.push(`${prefix} 缺少 finding / current_state / diagnosis。`);
+    if (!hasValue(item?.evidence || item?.evidence_ref || item?.source)) errors.push(`${prefix} 缺少 evidence / evidence_ref / source。`);
+    if (!hasValue(item?.gap || item?.risk || item?.issue)) errors.push(`${prefix} 缺少 gap / risk / issue。`);
+    if (!hasValue(item?.action || item?.recommendation || item?.next_step)) errors.push(`${prefix} 缺少 action / recommendation / next_step。`);
+  });
+  return errors;
+}
+
 function hasFullShopProductCrawlEvidence(toolHistory = [], pageContext = {}) {
   if (hasEvidenceSource(toolHistory, pageContext, "etsy_api")) return true;
   const currentShopUrl = normalizeEtsyCompetitorUrl(pageContext?.url || pageContext?.etsyShopProductContext?.currentPageUrl || "");
@@ -1455,6 +1496,7 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
     if (!/竞品店铺|头部店铺|高排名店铺|高销店铺|best[-\s]?seller|top shop|同类高排名/i.test(combinedReportText)) {
       errors.push("店铺优化报告缺少同类高排名/高销竞品店铺的反向学习结论。必须搜索并对标 2-3 个头部店铺或高排名商品，再提炼其定位、调性、首图、标题和履约承诺。");
     }
+    errors.push(...validateDiagnosticDepthMatrix(out));
     errors.push(...validateShopProductCoverageClaims(out, toolHistory, pageContext));
     const hasPrematureScaleAdvice = /1\s*[-–—到至]\s*2\s*周内.*第三方海外仓|立即.*第三方海外仓|海外仓.*第一优先级|大额广告|广告放量/i.test(fullReportText);
     const isWarningAgainstPrematureScale = /不建议[^。；\n]{0,24}(?:第三方海外仓|海外仓|大额广告|广告放量)|不得[^。；\n]{0,24}(?:第三方海外仓|海外仓|大额广告|广告放量)|避免[^。；\n]{0,24}(?:第三方海外仓|海外仓|大额广告|广告放量)/i.test(fullReportText);

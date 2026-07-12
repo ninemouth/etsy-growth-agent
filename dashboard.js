@@ -1639,6 +1639,84 @@ function reportItemTitle(item = {}, fallback = "诊断项") {
   return fallback;
 }
 
+function markdownCell(value) {
+  return valueToReadableMarkdown(value)
+    .replace(/\n+/g, "<br>")
+    .replace(/\|/g, "\\|")
+    .trim() || "未记录";
+}
+
+function markdownTable(headers = [], rows = []) {
+  if (!headers.length || !rows.length) return "";
+  return [
+    `| ${headers.map(markdownCell).join(" |")} |`,
+    `| ${headers.map(() => "---").join(" |")} |`,
+    ...rows.map((row) => `| ${row.map(markdownCell).join(" |")} |`),
+  ].join("\n");
+}
+
+function competitorName(benchmark = {}) {
+  return benchmark.competitor_name || benchmark.shop_name || benchmark.name || benchmark.competitor_url || "竞品店铺";
+}
+
+function renderCompetitorBenchmarksMarkdown(benchmarks = []) {
+  if (!Array.isArray(benchmarks) || benchmarks.length === 0) return "";
+  const rows = benchmarks.map((item) => [
+    competitorName(item),
+    item.visible_sku_count_estimate || item.sampled_products_count || "未记录",
+    item.price_distribution,
+    item.category_mix || item.category_structure,
+    item.promotion_signals,
+    item.shop_review_signal || item.review_signal || item.rating_signal,
+    item.listing_order_insight || item.visible_order_insight || item.product_order_insight,
+    item.visual_method,
+    item.seo_method,
+    item.competitor_url || item.shop_url || item.url,
+  ]);
+  const sections = [
+    "### 竞品店铺商品结构解析",
+    markdownTable(
+      ["竞品", "可见 SKU/样本", "价格分布", "类别/场景结构", "促销/信任信号", "评论/评分", "可见排序口径", "视觉方法", "SEO 方法", "URL"],
+      rows
+    ),
+  ];
+  benchmarks.forEach((item, index) => {
+    const samples = Array.isArray(item.product_samples || item.sample_products || item.visible_products)
+      ? (item.product_samples || item.sample_products || item.visible_products)
+      : [];
+    if (samples.length === 0) return;
+    sections.push(`#### ${index + 1}. ${valueToPlainText(competitorName(item))} 商品样本`);
+    sections.push(markdownTable(
+      ["商品", "价格", "类别/场景", "促销信号", "可见顺序"],
+      samples.slice(0, 6).map((sample) => [
+        sample.title || sample.name,
+        sample.price,
+        sample.category_or_scenario || sample.category || sample.scenario,
+        sample.promotion_signal || sample.promotion || sample.badge,
+        sample.visible_order_rank || sample.rank,
+      ])
+    ));
+  });
+  return sections.filter(Boolean).join("\n\n");
+}
+
+function renderDepthMatrixMarkdown(matrix = []) {
+  if (!Array.isArray(matrix) || matrix.length === 0) return "";
+  return [
+    "### 店铺体检深度矩阵",
+    markdownTable(
+      ["维度", "当前判断", "证据来源", "风险/缺口", "建议动作"],
+      matrix.map((item) => [
+        item.dimension || item.name || item.topic,
+        item.finding || item.current_state || item.diagnosis,
+        item.evidence || item.evidence_ref || item.source,
+        item.gap || item.risk || item.issue,
+        item.action || item.recommendation || item.next_step,
+      ])
+    ),
+  ].join("\n\n");
+}
+
 function workflowReportToMarkdown(report) {
   if (!report) return "还没有关联报告。运行或更新此流程后，AI 报告会作为根节点证据进入画布。";
   const result = normalizeFinalOutput(report.result || report);
@@ -1767,6 +1845,11 @@ function resultToReportMarkdown(result = {}) {
   const lines = [];
   if (data.overview) lines.push(`### 分析概述\n\n${valueToReadableMarkdown(data.overview)}`);
   if (data.analysis) lines.push(`### 深度商业诊断\n\n${valueToReadableMarkdown(data.analysis)}`);
+  const depthMatrix = data.diagnostic_depth_matrix || data.depth_matrix || data.diagnosis_dimensions;
+  const depthMarkdown = renderDepthMatrixMarkdown(depthMatrix);
+  if (depthMarkdown) lines.push(depthMarkdown);
+  const competitorMarkdown = renderCompetitorBenchmarksMarkdown(data.competitor_benchmarks);
+  if (competitorMarkdown) lines.push(competitorMarkdown);
   if (data.summary) lines.push(`### 核心运营建议\n\n${valueToReadableMarkdown(data.summary)}`);
   if (Array.isArray(data.data) && data.data.length) {
     lines.push("### 结构化行动项");

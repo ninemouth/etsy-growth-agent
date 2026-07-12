@@ -100,6 +100,8 @@ assert.match(agentLoopSource, /competitor_benchmarks/, "critic should require st
 assert.match(agentLoopSource, /collect_etsy_shop_pages[\s\S]*completedFullCrawl/, "critic should recognize completed Etsy shop pagination crawl evidence for full-shop coverage claims");
 assert.match(agentLoopSource, /collect_etsy_competitor_shops[\s\S]*competitorsCollected[\s\S]*cacheHits/, "agent loop should compress batch competitor crawl results before sending them back to the LLM");
 assert.match(agentLoopSource, /collect_etsy_competitor_shops[\s\S]*internal_runaway_guard/, "agent loop should know batch competitor collection without reintroducing fixed max-loop failures");
+assert.match(agentLoopSource, /MAX_LLM_CRAWL_PRODUCT_CARDS\s*=\s*16/, "shop diagnosis compression should preserve enough visible product samples for competitor structure analysis");
+assert.match(agentLoopSource, /productEvidenceSummary/, "shop diagnosis compression should preserve aggregate product evidence for pricing, reviews, promotions and titles");
 assert.match(agentLoopSource, /analyze_etsy_shop_crawl_screenshots[\s\S]*独立截图解读/, "critic should require independent visual analysis after cached shop crawl screenshots are captured");
 assert.match(shopOptimizerSkillSource, /collect_etsy_competitor_shops[\s\S]*减少重复开页和 LLM 往返/, "shop optimizer should prefer batch competitor shop collection when multiple competitor URLs are available");
 assert.match(shopOptimizerSkillSource, /collect_etsy_shop_pages[\s\S]*边读 DOM 边累积商品卡片/, "shop optimizer should require browser pagination collection when competitor shop API data is unavailable");
@@ -299,10 +301,12 @@ const hugeCrawlResult = {
 };
 const compactHugeCrawlResult = __testInternals.compactToolResultForLLM("collect_etsy_shop_pages", hugeCrawlResult);
 assert.equal(compactHugeCrawlResult.totalVisibleProductCards, 360, "compressed crawl result should preserve aggregate product counts");
-assert.equal(compactHugeCrawlResult.pages.length, 4, "compressed crawl result should keep only a bounded number of pages");
-assert.equal(compactHugeCrawlResult.pages[0].productCards.length, 8, "compressed crawl result should keep only bounded product samples per page");
+assert.equal(compactHugeCrawlResult.pages.length, 6, "compressed crawl result should keep enough pages for shop diagnosis breadth");
+assert.equal(compactHugeCrawlResult.pages[0].productCards.length, 16, "compressed crawl result should keep enough product samples per page for price/category analysis");
+assert.equal(compactHugeCrawlResult.productEvidenceSummary.productSamples.length, 24, "compressed crawl result should keep a cross-page product evidence summary");
+assert.ok(compactHugeCrawlResult.productEvidenceSummary.priceSamples.includes("$42.00"), "compressed crawl result should preserve price samples");
 assert.ok(
-  JSON.stringify(compactHugeCrawlResult).length < JSON.stringify(hugeCrawlResult).length / 4,
+  JSON.stringify(compactHugeCrawlResult).length < JSON.stringify(hugeCrawlResult).length / 2,
   "compressed crawl result should be much smaller than raw crawl evidence"
 );
 const hugeBatchCrawlResult = {
@@ -334,9 +338,11 @@ const hugeBatchCrawlResult = {
 const compactHugeBatchCrawlResult = __testInternals.compactToolResultForLLM("collect_etsy_competitor_shops", hugeBatchCrawlResult);
 assert.equal(compactHugeBatchCrawlResult.competitorsCollected, 3, "compressed batch crawl result should preserve competitor counts");
 assert.equal(compactHugeBatchCrawlResult.cacheHits, 1, "compressed batch crawl result should preserve cache-hit counts");
-assert.equal(compactHugeBatchCrawlResult.shops[0].pages[0].productCards.length, 8, "compressed batch crawl result should bound product samples per page");
+assert.equal(compactHugeBatchCrawlResult.shops[0].pages[0].productCards.length, 16, "compressed batch crawl result should preserve enough product samples per page");
+assert.ok(compactHugeBatchCrawlResult.shops[0].productEvidenceSummary.productSamples.length > 0, "compressed batch crawl result should preserve per-shop product evidence summaries");
+assert.ok(compactHugeBatchCrawlResult.allPages[0].productCards.length > 0, "compressed batch crawl allPages should retain product samples for screenshot-analysis handoff");
 assert.ok(
-  JSON.stringify(compactHugeBatchCrawlResult).length < JSON.stringify(hugeBatchCrawlResult).length / 4,
+  JSON.stringify(compactHugeBatchCrawlResult).length < JSON.stringify(hugeBatchCrawlResult).length / 2,
   "compressed batch crawl result should be much smaller than raw batch crawl evidence"
 );
 assert.equal(hasValidEtsySearchEvidence({
@@ -391,6 +397,15 @@ const shopOptimizerReportWithEtsyEvidence = {
     overview: "## Etsy 店铺优化诊断\n目标市场为Etsy 主要欧美礼品市场，当前为 B 级低评价成长店，需要补齐信任资产。",
     analysis: "已读取当前店铺页面文本和截图，并对标同类高排名竞品店铺。竞品店铺商品结构解析：TopBridalStudio 可见 12+ SKU，主价格带 $49-$89；BellaOliviaGifts 可见 16+ SKU，主价格带 $24.99-$79.98。Google Search US 已验证 wedding clutch 站外表达。",
     summary: "优先执行 B-1 婚礼场景首图与标题改版，7 天后复盘点击和加购。",
+    diagnostic_depth_matrix: [
+      { dimension: "店铺定位与经营阶段", finding: "低评价成长店，主营婚礼手拿包与伴娘礼品", evidence: "当前店铺页文本与 Etsy 店铺上下文", gap: "信任资产与垂直定位仍需强化", action: "先补 About、政策、FAQ 和婚礼场景定位" },
+      { dimension: "视觉首图与画廊", finding: "当前视觉统一但缺少尺寸、包装和婚礼场景信号", evidence: "当前店铺截图与竞品截图", gap: "首图点击理由不足", action: "重做首图、模特手持图和包装/尺寸图" },
+      { dimension: "SEO 标题与 Attributes", finding: "需围绕 wedding clutch / bridesmaid gift clutch 重构标题前 60 字", evidence: "Etsy 搜索与 Google Search US", gap: "关键词结构和属性填写需要复核", action: "重写标题并补齐 Color、Material、Occasion 等 attributes" },
+      { dimension: "商品矩阵与价格带", finding: "竞品主价格带集中在 $24.99-$89，并有高价定制款", evidence: "competitor_benchmarks 的 product_samples 和 price_distribution", gap: "当前店铺需要区分引流款、主推款和利润款", action: "建立引流款/定制主推款/利润款矩阵" },
+      { dimension: "竞品对标与可见排序", finding: "TopBridalStudio 和 BellaOliviaGifts 均把个性化婚礼场景款前置", evidence: "collect_etsy_shop_pages 截图和页面文本", gap: "当前陈列顺序缺少明确场景层级", action: "按 bride/bridesmaid/wedding guest 场景重排第一屏" },
+      { dimension: "Google/Trends 站外需求", finding: "Google Trends 页面可读，related queries 与 bridal / bridesmaid 场景相关", evidence: "Google Search US 与 Google Trends US", gap: "趋势曲线只能作为可见图表方向，需后续导出复核", action: "围绕婚礼季窗口安排标题和首图实验" },
+      { dimension: "信任资产、评价与履约", finding: "低评价阶段不适合立即广告放量，优先补政策、FAQ、发货说明", evidence: "当前店铺阶段、竞品评价门槛和政策信号", gap: "物流时效和承运商需实时确认", action: "完善 Shipping Profile，实时确认目的地时效后再更新描述" },
+    ],
     data: [{
       plan_id: "B-1",
       title: "婚礼场景首图与标题改版",
@@ -1194,6 +1209,32 @@ storage.savedResults.unshift({
       summary: {
         immediate_priority: "先补 About、FAQ、Shipping Profile 和首图画廊",
       },
+      diagnostic_depth_matrix: [
+        { dimension: "店铺定位与经营阶段", finding: "新店冷启动", evidence: "页面文本", gap: "信任资产不足", action: "补 About 与政策" },
+        { dimension: "视觉首图与画廊", finding: "缺少尺寸/包装信号", evidence: "截图", gap: "点击理由不足", action: "重做首图" },
+        { dimension: "SEO 标题与 Attributes", finding: "关键词结构待优化", evidence: "Etsy 搜索", gap: "长尾词覆盖不足", action: "重写标题" },
+        { dimension: "商品矩阵与价格带", finding: "价格层级待拆分", evidence: "竞品样本", gap: "引流/利润款角色不清", action: "重组矩阵" },
+        { dimension: "竞品对标与可见排序", finding: "竞品前置个性化婚礼款", evidence: "竞品店铺采集", gap: "陈列层级不足", action: "重排第一屏" },
+        { dimension: "Google/Trends 站外需求", finding: "婚礼场景需求可见", evidence: "Google Trends", gap: "需导出复核", action: "按季节窗口实验" },
+        { dimension: "信任资产、评价与履约", finding: "低评价阶段", evidence: "页面和竞品评价", gap: "政策/物流说明不足", action: "完善 Shipping Profile" },
+      ],
+      competitor_benchmarks: [{
+        competitor_name: "JuniperAndLace",
+        competitor_url: "https://www.etsy.com/shop/JuniperAndLace",
+        sampled_products_count: 2,
+        visible_sku_count_estimate: "首屏 16 个可见商品",
+        category_mix: ["lace clutch", "bridal clutch"],
+        price_distribution: { min: "$36", max: "$240", main_band: "$60-$90" },
+        promotion_signals: ["Star Seller", "free shipping"],
+        shop_review_signal: { rating: "5.0", review_count: "1.1k reviews" },
+        listing_order_insight: { visible_sort_order: "Lace clutch first", observed_order_basis: "Sort: Most Recent", interpretation_limit: "可见排序不能证明销量" },
+        visual_method: "婚礼场景和细节微距",
+        seo_method: "Personalized Bridal Clutch",
+        product_samples: [
+          { title: "Lace Bridal Clutch", price: "$68", category_or_scenario: "bride", promotion_signal: "free shipping", visible_order_rank: 1 },
+          { title: "Custom Fabric Clutch", price: "$88", category_or_scenario: "bridesmaid", promotion_signal: "Star Seller", visible_order_rank: 2 },
+        ],
+      }],
       data: [{
         plan_id: "A-1",
         title: { zh: "新店信任基石", en: "Trust Foundation" },
@@ -1212,6 +1253,10 @@ assert.match(nestedObjectReportText, /新店冷启动/, "nested overview object 
 assert.match(nestedObjectReportText, /信任资产不足/, "nested overview object details should be preserved");
 assert.match(nestedObjectReportText, /JuniperAndLace/, "nested analysis object values should render");
 assert.match(nestedObjectReportText, /新店信任基石|Trust Foundation/, "nested card title objects should render as readable text");
+assert.match(nestedObjectReportText, /店铺体检深度矩阵/, "report center should render diagnostic depth matrix as a structured section");
+assert.match(nestedObjectReportText, /竞品店铺商品结构解析/, "report center should render competitor benchmarks as a structured section");
+assert.match(nestedObjectReportText, /价格分布/, "competitor benchmark table should expose pricing distribution columns");
+assert.match(nestedObjectReportText, /Lace Bridal Clutch/, "competitor benchmark product samples should render");
 
 assert.match(css, /\.report-viewer\s*\{[\s\S]*?overflow:\s*hidden;/, "report viewer shell should not rely on page-level overflow");
 assert.match(css, /\.report-viewer-content\s*>\s*\.md-report\s*\{[\s\S]*?overflow:\s*auto;/, "report body should own vertical scrolling for long reports");

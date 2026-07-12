@@ -656,11 +656,14 @@ function showResult(response) {
       }
       
       // Render Report
-      let hasReport = false;
-      for (const key in rawData) {
-        if (rawData[key] !== null && typeof rawData[key] !== 'object') {
-          hasReport = true;
-          break;
+      const reportKeys = ["overview", "analysis", "summary", "competitor_benchmarks", "diagnostic_depth_matrix", "depth_matrix", "diagnosis_dimensions"];
+      let hasReport = reportKeys.some((key) => rawData && rawData[key] !== undefined && rawData[key] !== null);
+      if (!hasReport) {
+        for (const key in rawData) {
+          if (rawData[key] !== null && typeof rawData[key] !== 'object') {
+            hasReport = true;
+            break;
+          }
         }
       }
       
@@ -677,6 +680,8 @@ function showResult(response) {
         targetArray = rawData;
       } else if (rawData.data && Array.isArray(rawData.data)) {
         targetArray = rawData.data;
+      } else if (rawData.competitor_benchmarks && Array.isArray(rawData.competitor_benchmarks)) {
+        targetArray = rawData.competitor_benchmarks;
       } else if (rawData && typeof rawData === 'object') {
         for (const key in rawData) {
           if (Array.isArray(rawData[key])) {
@@ -817,6 +822,84 @@ function valueToPlainText(value, maxLength = 120) {
   return text.slice(0, maxLength) || "未命名分析项";
 }
 
+function markdownCell(value) {
+  return valueToReadableMarkdown(value)
+    .replace(/\n+/g, "<br>")
+    .replace(/\|/g, "\\|")
+    .trim() || "未记录";
+}
+
+function markdownTable(headers = [], rows = []) {
+  if (!headers.length || !rows.length) return "";
+  return [
+    `| ${headers.map(markdownCell).join(" |")} |`,
+    `| ${headers.map(() => "---").join(" |")} |`,
+    ...rows.map((row) => `| ${row.map(markdownCell).join(" |")} |`),
+  ].join("\n");
+}
+
+function competitorName(benchmark = {}) {
+  return benchmark.competitor_name || benchmark.shop_name || benchmark.name || benchmark.competitor_url || "竞品店铺";
+}
+
+function renderCompetitorBenchmarksMarkdown(benchmarks = []) {
+  if (!Array.isArray(benchmarks) || benchmarks.length === 0) return "";
+  const rows = benchmarks.map((item) => [
+    competitorName(item),
+    item.visible_sku_count_estimate || item.sampled_products_count || "未记录",
+    item.price_distribution,
+    item.category_mix || item.category_structure,
+    item.promotion_signals,
+    item.shop_review_signal || item.review_signal || item.rating_signal,
+    item.listing_order_insight || item.visible_order_insight || item.product_order_insight,
+    item.visual_method,
+    item.seo_method,
+    item.competitor_url || item.shop_url || item.url,
+  ]);
+  const sections = [
+    "### 竞品店铺商品结构解析",
+    markdownTable(
+      ["竞品", "可见 SKU/样本", "价格分布", "类别/场景结构", "促销/信任信号", "评论/评分", "可见排序口径", "视觉方法", "SEO 方法", "URL"],
+      rows
+    ),
+  ];
+  benchmarks.forEach((item, index) => {
+    const samples = Array.isArray(item.product_samples || item.sample_products || item.visible_products)
+      ? (item.product_samples || item.sample_products || item.visible_products)
+      : [];
+    if (samples.length === 0) return;
+    sections.push(`#### ${index + 1}. ${valueToPlainText(competitorName(item))} 商品样本`);
+    sections.push(markdownTable(
+      ["商品", "价格", "类别/场景", "促销信号", "可见顺序"],
+      samples.slice(0, 6).map((sample) => [
+        sample.title || sample.name,
+        sample.price,
+        sample.category_or_scenario || sample.category || sample.scenario,
+        sample.promotion_signal || sample.promotion || sample.badge,
+        sample.visible_order_rank || sample.rank,
+      ])
+    ));
+  });
+  return sections.filter(Boolean).join("\n\n");
+}
+
+function renderDepthMatrixMarkdown(matrix = []) {
+  if (!Array.isArray(matrix) || matrix.length === 0) return "";
+  return [
+    "### 店铺体检深度矩阵",
+    markdownTable(
+      ["维度", "当前判断", "证据来源", "风险/缺口", "建议动作"],
+      matrix.map((item) => [
+        item.dimension || item.name || item.topic,
+        item.finding || item.current_state || item.diagnosis,
+        item.evidence || item.evidence_ref || item.source,
+        item.gap || item.risk || item.issue,
+        item.action || item.recommendation || item.next_step,
+      ])
+    ),
+  ].join("\n\n");
+}
+
 function renderReport(resultObj) {
   let html = '';
   const standardKeys = ['overview', 'analysis', 'summary'];
@@ -840,10 +923,15 @@ function renderReport(resultObj) {
   const skipKeys = ['type', 'output', 'guides', 'data'];
   // Render any remaining readable keys (like verdict, total_score, nested report objects)
   for (const key in resultObj) {
+    if (["competitor_benchmarks", "diagnostic_depth_matrix", "depth_matrix", "diagnosis_dimensions"].includes(key)) continue;
     if (!renderedKeys.has(key) && !skipKeys.includes(key) && resultObj[key] !== undefined && resultObj[key] !== null) {
       html += renderSection(key, resultObj[key]);
     }
   }
+  const depthMarkdown = renderDepthMatrixMarkdown(resultObj.diagnostic_depth_matrix || resultObj.depth_matrix || resultObj.diagnosis_dimensions);
+  if (depthMarkdown) html += `<div class="report-section" style="padding:10px;background:var(--bg3);border-radius:6px;margin-bottom:10px;">${renderMarkdown(depthMarkdown)}</div>`;
+  const competitorMarkdown = renderCompetitorBenchmarksMarkdown(resultObj.competitor_benchmarks);
+  if (competitorMarkdown) html += `<div class="report-section" style="padding:10px;background:var(--bg3);border-radius:6px;margin-bottom:10px;">${renderMarkdown(competitorMarkdown)}</div>`;
   return html;
 }
 
@@ -1763,6 +1851,14 @@ function convertResultToMarkdown(obj) {
   }
   if (obj.analysis) {
     md += `## 💡 深度分析\n\n${valueToReadableMarkdown(obj.analysis)}\n\n`;
+  }
+  const depthMarkdown = renderDepthMatrixMarkdown(obj.diagnostic_depth_matrix || obj.depth_matrix || obj.diagnosis_dimensions);
+  if (depthMarkdown) {
+    md += `${depthMarkdown}\n\n`;
+  }
+  const competitorMarkdown = renderCompetitorBenchmarksMarkdown(obj.competitor_benchmarks);
+  if (competitorMarkdown) {
+    md += `${competitorMarkdown}\n\n`;
   }
   if (obj.summary) {
     md += `## 🏁 核心结论\n\n${valueToReadableMarkdown(obj.summary)}\n\n`;

@@ -215,6 +215,24 @@
      - `visual_method`、`seo_method`、`fulfillment_signal`：分别总结视觉方法、标题/关键词方法、履约/配送承诺。
      - `evidence_refs` 或 `evidence_ledger_refs`: 指向 `etsy_search`、`page_dom`、`screenshot_visual` 等证据来源。
 
+6. **diagnostic_depth_matrix (店铺体检深度矩阵，必须输出)**：
+   - 顶层字段 `diagnostic_depth_matrix` 必须是数组，至少 7 个维度，避免报告只给浅层运营建议。
+   - 每个对象必须包含：
+     - `dimension`: 诊断维度。
+     - `finding`: 当前判断。
+     - `evidence`: 证据来源或观察值，必须能对应页面/API/搜索/截图/竞品。
+     - `gap`: 风险、缺口或机会点。
+     - `action`: 对应可执行动作或人工确认点。
+   - 默认必须覆盖这些维度：
+     1. 店铺定位与经营阶段。
+     2. 视觉调性、首图与画廊。
+     3. SEO 标题、描述与 Attributes。
+     4. 商品矩阵、SKU 结构与价格带。
+     5. 竞品店铺商品结构与可见排序。
+     6. Etsy 站内搜索与 Google/Trends 站外需求。
+     7. 信任资产、评价、政策与履约/物流。
+   - `analysis` 正文必须与 `diagnostic_depth_matrix`、`competitor_benchmarks` 中的数据一致；不能正文写了比较表但结构化字段缺失。
+
 ## 🔐 结构化证据账本硬规则
 
 每个 A/B/C 优化方案都必须带 `evidence_ledger`，用于把“对比数据”和“推导依据”拆成可审计来源：
