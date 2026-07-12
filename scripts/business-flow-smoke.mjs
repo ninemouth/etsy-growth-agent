@@ -131,6 +131,10 @@ assert.match(agentLoopSource, /analyze_etsy_shop_crawl_screenshots[\s\S]*独立�
 assert.match(agentLoopSource, /stage_observations[\s\S]*stage_synthesis[\s\S]*stage_report_inputs/, "agent loop compression should preserve staged screenshot analysis conclusions for the next reasoning step");
 assert.match(agentLoopSource, /validateOperationsReport[\s\S]*baseline_window[\s\S]*attribution_confidence/, "operations reports should require baseline windows and attribution confidence");
 assert.match(agentLoopSource, /isReviewSkill[\s\S]*sampleCount[\s\S]*主要反馈/, "review reports should not generalize from insufficient samples");
+assert.match(js, /GROWTH_CONTRACT_VERSION/);
+assert.match(js, /normalizeGrowthCaseRecord[\s\S]*runHistory[\s\S]*nextReviewAt[\s\S]*eventIds/, "growth cases should use a versioned stable contract");
+assert.match(toolRegistrySource, /growthCaseId = ""[\s\S]*event\.growthCaseId/, "monitor change events should retain their growth case association");
+assert.match(backgroundSource, /GET_ETSY_API_CONNECTION_STATUS/);
 assert.match(shopOptimizerSkillSource, /collect_etsy_competitor_shops[\s\S]*减少重复开页和 LLM 往返/, "shop optimizer should prefer batch competitor shop collection when multiple competitor URLs are available");
 assert.match(shopOptimizerSkillSource, /stage_observations[\s\S]*stage_synthesis[\s\S]*stage_report_inputs/, "shop optimizer should require staged screenshot conclusions to flow into final report fields");
 assert.match(shopOptimizerSkillSource, /collect_etsy_shop_pages[\s\S]*边读 DOM 边累积商品卡片/, "shop optimizer should require browser pagination collection when competitor shop API data is unavailable");

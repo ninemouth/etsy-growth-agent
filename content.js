@@ -3150,6 +3150,7 @@
         shop_nature: shopNature,
         target_url: window.location.href,
         target_entity_key: `etsy:${targetType}:${generateHash(window.location.href).slice(0, 8)}`,
+        growthCaseId: `store_health_${storage.activeShopId || "no_shop"}_shop`,
         frequency: "6h",
         last_run_at: new Date().toLocaleString(),
         status: "active",

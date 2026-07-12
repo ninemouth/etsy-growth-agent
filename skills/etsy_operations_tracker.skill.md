@@ -7,7 +7,7 @@
 ## 🛠/⚙️ Etsy API 数据对接与审计规范
 
 为了获取客观的数据指标，你在执行分析时必须优先调用以下 Etsy API 接口：
-1. **调用 `etsy_api_get_capabilities`**：先确认当前接入的是 Etsy 个人卖家 API，只能读取当前授权自营店铺范围。
+1. **调用 `etsy_api_get_capabilities` 和 `etsy_api_get_connection_status`**：先确认当前接入的是 Etsy 个人卖家 API、Shop ID 和 OAuth 状态，只能读取当前授权自营店铺范围。
 2. **调用 `etsy_api_get_products` / `etsy_api_get_product_info`**：读取自营 listings、商品详情和库存/可见状态。
 3. **调用 `etsy_api_get_transactions`**：读取当前授权店铺的 receipts/发货资料兼容快照；它不是财务总账，也不代表平台仓履约数据。
 4. **不得调用或假设 `etsy_api_get_analytics` 提供 Sessions、页面浏览、点击率或加购率**：当前个人卖家 API 不提供这些指标，工具会明确返回 unsupported。需要流量/转化方向时，使用公开 Etsy 页面、搜索和截图证据，并在报告中标注覆盖限制。
@@ -24,7 +24,7 @@
    - 分析数据历史记录，识别出重大调整的事件节点（例如：`2026-07-01 替换了高分辨率首图` 或 `2026-07-05 价格从 1500$ 降为 1290$`）。
    - 将整个生命周期划分为不同阶段（如：`阶段一：基线期` ➔ `阶段二：视觉优化期` ➔ `阶段三：价格促销期`）。
 2. **多阶段边际效应分析 (Phase Comparison & Marginal Effects)**:
-   - 对比各阶段由 API 提供的 **Session View (曝光点击数)**、**Conv to Cart (加购转化率)**、**Ordered Units (实际销量)** 的环比与同比变动。
+   - 对比个人 API 可提供的 **Ordered Units (实际销量)**、receipts/发货资料，以及由公开 Etsy 页面/搜索证据支持的曝光和转化方向；不得把 Session View 或 Conv to Cart 写成个人 API 已返回指标。
    - 深入分析调整所带来的边际效用（例如：“首图替换后，Session View 提升了 35%，但转化率略有下降，说明首图吸引力强但产品描述仍需强化”）。
 3. **评论情绪变化追踪 (Review Sentiment Tracking)**:
    - 提取新阶段中欧美买家的最新英文评论。
@@ -60,4 +60,4 @@
 你最后的 JSON 报告中：
 1. **overview (概述)**：必须明确指出目标销售目的地为“Etsy 主要欧美礼品市场”，分析该商品阶段性优化的整体成效。
 2. **analysis (数据推演)**：必须包含一个 markdown 表格，清晰地列出【阶段一（优化前）】与【阶段二（优化后）】的流量、转化、运费及退单等 API 关键指标变化。
-3. **summary (下一步建议)**：基于上述对比，评估本次优化是否成功，并指出下一优化周期的行动路线。
+3. **summary (下一步建议)**：只有在真实基线和对照窗口存在时才评估本次优化是否成功；否则必须写明“无法归因，先建立基线”，并指出下一观察周期的行动路线。

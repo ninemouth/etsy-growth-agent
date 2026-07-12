@@ -60,7 +60,7 @@ const GROWTH_ACTIONS = {
   diagnose_sku_funnel: {
     title: "SKU 漏斗诊断",
     skillPath: "skills/etsy_operations_tracker.skill.md",
-    instruction: "诊断当前低转化 SKU 的漏斗瓶颈，区分曝光弱、点击弱、加购弱、付款弱、利润弱、履约风险和评论风险。",
+    instruction: "诊断当前 SKU 的公开页面转化线索和自营订单/发货资料瓶颈；个人 API 不提供 Sessions、点击率或加购率时，必须标记为待验证，不得伪造漏斗指标。",
   },
   rewrite_listing: {
     title: "商品页转化改版",
@@ -115,7 +115,7 @@ const GROWTH_ACTIONS = {
   review_experiment_result: {
     title: "复盘实验结果",
     skillPath: "skills/etsy_operations_tracker.skill.md",
-    instruction: "复盘执行中和观察中的增长实验，比较优化前后曝光、加购、订单、利润和履约指标，判断成功、无效或需二次优化。",
+    instruction: "复盘执行中和观察中的增长实验，比较真实自营订单/发货资料与公开页面证据；没有基线或个人 API 不支持的曝光/加购指标必须标记待验证，不得直接判断成功。",
   },
 };
 
@@ -149,6 +149,47 @@ function growthCaseIdFor(actionId, shopId = "", sku = "") {
   const caseType = GROWTH_ACTION_CASE_TYPE[actionId] || "store_health";
   const scope = sku ? stableHash(sku) : "shop";
   return `${caseType}_${shopId || "no_shop"}_${scope}`;
+}
+
+const GROWTH_CONTRACT_VERSION = 1;
+
+function normalizeGrowthRunRecord(run = {}) {
+  const now = run.updatedAt || run.createdAt || new Date().toISOString();
+  return {
+    ...run,
+    contractVersion: Number(run.contractVersion || GROWTH_CONTRACT_VERSION),
+    id: run.id || `growth_run_${Date.now()}`,
+    caseId: run.caseId || "unassigned",
+    status: run.status || "queued",
+    evidence: run.evidence && typeof run.evidence === "object" ? run.evidence : {},
+    reportIds: Array.isArray(run.reportIds) ? run.reportIds.map(String) : [],
+    createdAt: run.createdAt || now,
+    updatedAt: now,
+  };
+}
+
+function normalizeGrowthCaseRecord(caseItem = {}) {
+  const now = caseItem.updatedAt || caseItem.createdAt || new Date().toISOString();
+  const runs = Array.isArray(caseItem.runs)
+    ? caseItem.runs.map(normalizeGrowthRunRecord)
+    : Array.isArray(caseItem.runHistory) ? caseItem.runHistory.map(normalizeGrowthRunRecord) : [];
+  return {
+    ...caseItem,
+    contractVersion: Number(caseItem.contractVersion || GROWTH_CONTRACT_VERSION),
+    id: caseItem.id || `growth_case_${Date.now()}`,
+    type: caseItem.type || "store_health",
+    status: caseItem.status || "queued",
+    evidence: caseItem.evidence && typeof caseItem.evidence === "object" ? caseItem.evidence : {},
+    taskIds: Array.isArray(caseItem.taskIds) ? caseItem.taskIds.map(String) : [],
+    reportIds: Array.isArray(caseItem.reportIds) ? caseItem.reportIds.map(String) : [],
+    eventIds: Array.isArray(caseItem.eventIds) ? caseItem.eventIds.map(String) : [],
+    experiments: Array.isArray(caseItem.experiments) ? caseItem.experiments.map(String) : [],
+    runs: runs.slice(0, 20),
+    runHistory: runs.slice(0, 20),
+    nextReviewAt: caseItem.nextReviewAt || null,
+    createdAt: caseItem.createdAt || now,
+    updatedAt: now,
+  };
 }
 
 // ── Tab Management ──
@@ -338,6 +379,7 @@ function bindEvents() {
       shop_nature: shopNature,
       target_url: url,
       target_entity_key: `etsy:${targetType}:${Math.random().toString(36).slice(2, 7)}`,
+      growthCaseId: growthCaseIdFor(targetType === "item" ? "diagnose_sku_funnel" : "scan_competitor_changes", activeShopId),
       frequency: frequency,
       last_run_at: "从未运行",
       status: "active"
@@ -541,7 +583,11 @@ async function refreshAllData() {
   const filteredTracked = filterByActiveShop(data.trackedProducts || []);
   const filteredSavedResults = filterByActiveShop(data.savedResults || []);
   const filteredTasks = filterByActiveShop(data.monitorTasks || []);
-  const filteredEvents = filterByActiveShop(data.monitorChangeEvents || []);
+  const filteredEvents = filterByActiveShop(data.monitorChangeEvents || []).map((event) => ({
+    ...event,
+    contractVersion: Number(event.contractVersion || GROWTH_CONTRACT_VERSION),
+    growthCaseId: event.growthCaseId || "",
+  }));
   const filteredReports = filterByActiveShop(data.monitorReports || []);
   const filteredExperiments = filterByActiveShop(data.growthExperiments || []);
   const activeShop = shops.find(s => s.id === activeId) || null;
@@ -581,7 +627,7 @@ async function refreshAllData() {
       skuAnalyticsSnapshot: data.etsySkuAnalyticsSnapshot || null,
       storeSnapshotCache: data.etsyStoreSnapshotCache || null,
     }),
-    growthCases: mergeGrowthCasesWithRoots(data.growthCases || [], workflowTasks, filteredSavedResults, activeShop),
+    growthCases: mergeGrowthCasesWithRoots((data.growthCases || []).map(normalizeGrowthCaseRecord), workflowTasks, filteredSavedResults, activeShop, filteredEvents),
     growthActionRuns: (data.growthActionRuns || []).filter(run => !run.shopId || run.shopId === activeId).slice(0, 50),
     skuRows,
     opportunities,
@@ -1152,7 +1198,7 @@ function statusFromCaseRuns(caseItem = {}) {
   return caseItem.status || "ready";
 }
 
-function mergeGrowthCasesWithRoots(storedCases = [], tasks = [], reports = [], activeShop = null) {
+function mergeGrowthCasesWithRoots(storedCases = [], tasks = [], reports = [], activeShop = null, events = []) {
   const byId = new Map();
   storedCases.forEach((caseItem) => {
     if (!caseItem?.id) return;
@@ -1189,7 +1235,9 @@ function mergeGrowthCasesWithRoots(storedCases = [], tasks = [], reports = [], a
       return false;
     });
     const existing = byId.get(id) || {};
+    const rootEvents = events.filter((event) => event.growthCaseId === id);
     byId.set(id, {
+      contractVersion: GROWTH_CONTRACT_VERSION,
       id,
       type: root.type,
       title: existing.title || GROWTH_CASE_LABELS[root.type] || "增长案件",
@@ -1198,13 +1246,18 @@ function mergeGrowthCasesWithRoots(storedCases = [], tasks = [], reports = [], a
       actionId: root.actionId,
       taskIds: Array.from(new Set([...(existing.taskIds || []), ...rootTasks.map(task => task.id)])),
       reportIds: Array.from(new Set([...(existing.reportIds || []), ...rootReports.map(report => String(report.id))])),
+      eventIds: Array.from(new Set([...(existing.eventIds || []), ...rootEvents.map(event => String(event.id))])),
+      experiments: Array.isArray(existing.experiments) ? existing.experiments : [],
+      nextReviewAt: existing.nextReviewAt || null,
       evidence: {
         ...(existing.evidence || {}),
         taskCount: rootTasks.length,
         reportCount: rootReports.length,
+        eventCount: rootEvents.length,
         updatedFromRuntimeAt: new Date().toISOString(),
       },
       runs: existing.runs || [],
+      runHistory: existing.runHistory || existing.runs || [],
       createdAt: existing.createdAt || new Date().toISOString(),
       updatedAt: existing.updatedAt || new Date().toISOString(),
     });
@@ -2484,20 +2537,23 @@ async function persistGrowthRunUpdate(caseId, runId, runPatch = {}, casePatch = 
   const runs = stored.growthActionRuns || [];
   const cases = stored.growthCases || [];
   const now = new Date().toISOString();
-  const nextRuns = runs.map((run) => run.id === runId ? { ...run, ...runPatch, updatedAt: now } : run);
+  const nextRuns = runs.map((run) => run.id === runId ? normalizeGrowthRunRecord({ ...run, ...runPatch, updatedAt: now }) : normalizeGrowthRunRecord(run));
   const nextCases = cases.map((caseItem) => {
     if (caseItem.id !== caseId) return caseItem;
-    const caseRuns = (caseItem.runs || []).map((run) => run.id === runId ? { ...run, ...runPatch, updatedAt: now } : run);
+    const normalizedCase = normalizeGrowthCaseRecord(caseItem);
+    const caseRuns = normalizedCase.runs.map((run) => run.id === runId ? normalizeGrowthRunRecord({ ...run, ...runPatch, updatedAt: now }) : normalizeGrowthRunRecord(run));
     const mergedReportIds = casePatch.reportIds
       ? Array.from(new Set([...(caseItem.reportIds || []), ...casePatch.reportIds.map(String)]))
       : (caseItem.reportIds || []);
     const cleanCasePatch = { ...casePatch };
     delete cleanCasePatch.reportIds;
     return {
-      ...caseItem,
+      ...normalizedCase,
       ...cleanCasePatch,
       reportIds: mergedReportIds,
       runs: caseRuns,
+      runHistory: caseRuns,
+      contractVersion: GROWTH_CONTRACT_VERSION,
       status: casePatch.status || statusFromCaseRuns({ ...caseItem, runs: caseRuns }),
       updatedAt: now,
     };
@@ -2605,6 +2661,7 @@ async function createGrowthCaseRun(actionId, sku = "") {
   const caseId = growthCaseIdFor(actionId, shopId, sku);
   const now = new Date().toISOString();
   const run = {
+    contractVersion: GROWTH_CONTRACT_VERSION,
     id: `growth_run_${Date.now()}`,
     caseId,
     caseType,
@@ -2615,15 +2672,18 @@ async function createGrowthCaseRun(actionId, sku = "") {
     instruction: sku ? `${action.instruction}\n目标 SKU: ${sku}` : action.instruction,
     skillPath: action.skillPath,
     status: "queued",
+    evidence: {},
+    reportIds: [],
     createdAt: now,
     updatedAt: now,
   };
   const runs = [run, ...(stored.growthActionRuns || [])].slice(0, 80);
   const cases = stored.growthCases || [];
   const existing = cases.find((caseItem) => caseItem.id === caseId);
-  const caseRun = { id: run.id, actionId, title: run.title, status: run.status, createdAt: now, updatedAt: now };
-  const nextCase = {
+  const caseRun = normalizeGrowthRunRecord({ id: run.id, caseId, actionId, title: run.title, status: run.status, createdAt: now, updatedAt: now });
+  const nextCase = normalizeGrowthCaseRecord({
     ...(existing || {}),
+    contractVersion: GROWTH_CONTRACT_VERSION,
     id: caseId,
     type: caseType,
     title: existing?.title || GROWTH_CASE_LABELS[caseType] || action.title,
@@ -2632,7 +2692,11 @@ async function createGrowthCaseRun(actionId, sku = "") {
     actionId,
     taskIds: existing?.taskIds || [],
     reportIds: existing?.reportIds || [],
+    eventIds: existing?.eventIds || [],
     runs: [caseRun, ...((existing?.runs || []).filter(item => item.id !== run.id))].slice(0, 20),
+    runHistory: [caseRun, ...((existing?.runHistory || existing?.runs || []).filter(item => item.id !== run.id))].slice(0, 20),
+    experiments: existing?.experiments || [],
+    nextReviewAt: existing?.nextReviewAt || null,
     evidence: {
       ...(existing?.evidence || {}),
       sku,
@@ -2641,7 +2705,7 @@ async function createGrowthCaseRun(actionId, sku = "") {
     },
     createdAt: existing?.createdAt || now,
     updatedAt: now,
-  };
+  });
   const nextCases = [nextCase, ...cases.filter((caseItem) => caseItem.id !== caseId)].slice(0, 80);
   await new Promise((r) => chrome.storage.local.set({ growthActionRuns: runs, growthCases: nextCases }, r));
   return run;

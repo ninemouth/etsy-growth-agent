@@ -506,6 +506,7 @@ const COMPLIANCE_ALLOWED_TOOLS = new Set([
   "analyze_etsy_shop_crawl_screenshots",
   "collect_etsy_listing_reviews",
   "etsy_api_get_capabilities",
+  "etsy_api_get_connection_status",
   "etsy_api_get_store_snapshot",
   "etsy_api_get_products",
   "etsy_api_get_product_info",

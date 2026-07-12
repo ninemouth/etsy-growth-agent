@@ -248,6 +248,7 @@ async function listSkills() {
       name: "Etsy 店铺运营多维对标与诊断优化专家 (Vision)",
       description: "分析 Etsy 店铺视觉陈列、商品结构、Seller API 指标、Etsy 大盘与Etsy 欧美趋势，输出 ABC 分级优化方案",
       icon: "🏬",
+      apiBoundaryDescription: "分析 Etsy 店铺视觉陈列、商品结构、自营 listings/订单/发货资料与公开市场证据，输出 ABC 分级优化方案",
     },
     {
       id: "etsy_operations_tracker",
@@ -291,7 +292,7 @@ async function listSkills() {
     try {
       const url = chrome.runtime.getURL(skill.path);
       const resp = await fetch(url);
-      if (resp.ok) available.push(skill);
+      if (resp.ok) available.push({ ...skill, description: skill.apiBoundaryDescription || skill.description });
     } catch (_) {}
   }
 
@@ -838,6 +839,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "GET_ETSY_API_CONNECTION_STATUS") {
+    tools
+      .etsy_api_get_connection_status()
+      .then((data) => sendResponse({ ok: data.ok, data }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
   if (message.type === "GET_ETSY_SKU_ANALYTICS") {
     const args = {
       ...(message.args || {}),
@@ -910,6 +919,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               target_type: creatorInfo ? "creator" : "shop",
               target_url: pageData.url,
               target_entity_key: creatorInfo ? `tiktok:creator:${creatorInfo.username}` : `tiktok:shop:${pageData.title}`,
+              growthCaseId: `store_health_${(await getActiveShopId()) || "no_shop"}_shop`,
               frequency: "6h",
               last_run_at: new Date().toISOString(),
               status: "active"
@@ -1014,6 +1024,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
                         items,
                         creatorInfo,
                         shopInfo,
+                        growthCaseId: task.growthCaseId || "",
                         platform: task.platform || "tiktok"
                       });
 

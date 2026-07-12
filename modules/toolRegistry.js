@@ -1,7 +1,7 @@
 // modules/toolRegistry.js — Tool registry and content script bridge
 
 import { callLLM, getSettings, prepareCleanProductImage } from './llmClient.js';
-import { etsyGetProductList, etsyGetProductInfo, etsyGetAnalyticsData, etsyGetFbsPostingList, etsyGetFboPostingList, etsyGetStoreSnapshot, getEtsyApiCapabilities } from './etsyApi.js';
+import { etsyGetProductList, etsyGetProductInfo, etsyGetAnalyticsData, etsyGetFbsPostingList, etsyGetFboPostingList, etsyGetStoreSnapshot, getEtsyApiCapabilities, getEtsySettings } from './etsyApi.js';
 import { getArtifactDataUrl, pruneArtifacts, putDataUrlArtifact } from './artifactStore.js';
 import { closeOwnedTab, createOwnedTab, createOwnedTabCallback } from './browserSessionManager.js';
 import { appendWorkflowEvent, isWorkflowCancellationRequested } from './workflowRuntime.js';
@@ -2677,7 +2677,7 @@ function extractTikTokProductId(url) {
 // ── Append Monitor Tools ──
 Object.assign(tools, {
   monitor_process_page_data: async (args) => {
-    const { items = [], creatorInfo = null, shopInfo = null, detailCreators = [], platform = "tiktok", shopId = null } = args || {};
+    const { items = [], creatorInfo = null, shopInfo = null, detailCreators = [], platform = "tiktok", shopId = null, growthCaseId = "" } = args || {};
 
     const activeShopStorage = await new Promise(res => chrome.storage.local.get(["activeShopId"], res));
     const finalShopId = shopId || activeShopStorage.activeShopId || '';
@@ -2958,6 +2958,10 @@ Object.assign(tools, {
     }
 
     if (newChangeEvents.length > 0) {
+      newChangeEvents.forEach((event) => {
+        event.growthCaseId = growthCaseId || event.growthCaseId || "";
+        event.contractVersion = 1;
+      });
       changeEvents.unshift(...newChangeEvents);
     }
 
@@ -3114,6 +3118,25 @@ Object.assign(tools, {
     ok: true,
     result: getEtsyApiCapabilities(),
   }),
+
+  etsy_api_get_connection_status: async () => {
+    const settings = await getEtsySettings();
+    return {
+      ok: true,
+      result: {
+        accessModel: "personal_seller_api",
+        configured: Boolean(settings.apiKey && settings.shopId),
+        shopIdConfigured: Boolean(settings.shopId),
+        apiKeyConfigured: Boolean(settings.apiKey),
+        oauthConfigured: Boolean(settings.oauthToken),
+        refreshTokenConfigured: Boolean(settings.refreshToken),
+        warehouseType: settings.warehouseType || "Etsy seller-fulfilled",
+        limitation: settings.oauthToken
+          ? "已配置 OAuth，可尝试读取当前授权店铺的 receipts/发货资料；最终权限以 Etsy 返回为准。"
+          : "未配置 OAuth Access Token，receipts/发货资料读取可能失败；商品公开字段仍需按 API 权限验证。",
+      },
+    };
+  },
 
   etsy_api_get_transactions: async (args) => {
     const { dateFrom, dateTo, offset, pageSize } = args || {};

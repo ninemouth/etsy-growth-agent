@@ -312,6 +312,26 @@ export async function etsyGetProductList(limit = 100, offset = 0) {
   };
 }
 
+export async function etsyGetAllProductListings({ pageSize = 100, maxPages = 20 } = {}) {
+  const items = [];
+  let total = 0;
+  let pagesFetched = 0;
+  for (let page = 0; page < Math.max(1, Math.min(Number(maxPages) || 20, 50)); page++) {
+    const result = await etsyGetProductList(pageSize, page * pageSize);
+    pagesFetched += 1;
+    total = Number(result.total || total || 0);
+    items.push(...(result.items || []));
+    if (!result.items?.length || result.items.length < pageSize || items.length >= total) break;
+  }
+  return {
+    items,
+    total: total || items.length,
+    pagesFetched,
+    complete: total > 0 ? items.length >= total : pagesFetched < maxPages,
+    coverage: `自营 active listings 分页读取 ${pagesFetched} 页，已获得 ${items.length} 条；API total=${total || "未返回"}`,
+  };
+}
+
 export async function etsyGetProductInfo(productIds = [], skus = []) {
   const ids = Array.isArray(productIds) ? productIds.filter(Boolean) : [];
   if (!ids.length && Array.isArray(skus) && skus.length) {
@@ -379,6 +399,28 @@ export async function etsyGetReceipts(dateFrom, dateTo, offset = 0, limit = 50) 
   };
 }
 
+export async function etsyGetReceiptWindow(dateFrom, dateTo, { pageSize = 100, maxPages = 20 } = {}) {
+  const receipts = [];
+  let total = 0;
+  let pagesFetched = 0;
+  const pageLimit = Math.max(1, Math.min(Number(maxPages) || 20, 50));
+  for (let page = 0; page < pageLimit; page++) {
+    const result = await etsyGetReceipts(dateFrom, dateTo, page * pageSize, pageSize);
+    pagesFetched += 1;
+    total = Number(result.count || total || 0);
+    receipts.push(...(result.receipts || []));
+    if (!result.receipts?.length || result.receipts.length < pageSize || receipts.length >= total) break;
+  }
+  return {
+    receipts,
+    count: total || receipts.length,
+    orders: receipts.map(normalizeReceipt),
+    pagesFetched,
+    complete: total > 0 ? receipts.length >= total : pagesFetched < pageLimit,
+    coverage: `自营 receipts 分页读取 ${pagesFetched} 页，已获得 ${receipts.length} 条；API total=${total || "未返回"}`,
+  };
+}
+
 export async function etsyGetFbsPostingList(dateFrom, dateTo, offset = 0, limit = 50) {
   return etsyGetReceipts(dateFrom, dateTo, offset, limit);
 }
@@ -406,8 +448,8 @@ export async function etsyGetStoreSnapshot(args = {}) {
     }
   };
 
-  const products = await runSettled(() => etsyGetProductList(args.productLimit || 100, args.offset || 0));
-  const receipts = await runSettled(() => etsyGetReceipts(dateFrom, dateTo, args.offset || 0, args.pageSize || 20));
+  const products = await runSettled(() => etsyGetAllProductListings({ pageSize: args.productPageSize || 100, maxPages: args.productMaxPages || 20 }));
+  const receipts = await runSettled(() => etsyGetReceiptWindow(dateFrom, dateTo, { pageSize: args.pageSize || 100, maxPages: args.receiptMaxPages || 20 }));
 
   const failures = [];
   const result = {
@@ -434,6 +476,8 @@ export async function etsyGetStoreSnapshot(args = {}) {
 
   if (products.status === "fulfilled") {
     result.products = products.value;
+    result.productCoverage = products.value.coverage;
+    result.productsComplete = products.value.complete;
   } else {
     failures.push({ endpoint: "etsyGetProductList", error: products.reason?.message || String(products.reason) });
   }
@@ -443,6 +487,8 @@ export async function etsyGetStoreSnapshot(args = {}) {
     result.orders = receipts.value.orders || [];
     result.postings.fbs = result.receipts;
     result.postings.count = result.receipts.length;
+    result.receiptCoverage = receipts.value.coverage;
+    result.receiptsComplete = receipts.value.complete;
   } else {
     failures.push({ endpoint: "etsyGetReceipts", error: receipts.reason?.message || String(receipts.reason) });
   }
