@@ -13,6 +13,8 @@ const MAX_LLM_CRAWL_PRODUCT_CARDS = 16;
 const MAX_LLM_CRAWL_PAGES = 6;
 const MAX_LLM_MESSAGE_CHARS = 26000;
 const MAX_LLM_HISTORY_MESSAGES = 24;
+const MAX_LLM_TOTAL_CHARS = 140000;
+const MAX_CONTINUOUS_RUNTIME_MS = 15 * 60 * 1000;
 
 function checkpointStorageAvailable() {
   return typeof chrome !== "undefined" && chrome.storage?.local;
@@ -348,10 +350,56 @@ function compactMessagesForLLM(messages = []) {
   const preserved = messages.length > MAX_LLM_HISTORY_MESSAGES
     ? [messages[0], ...messages.slice(-(MAX_LLM_HISTORY_MESSAGES - 1))]
     : messages;
-  return preserved.map((message) => ({
+  const compacted = preserved.map((message) => ({
     ...message,
     content: compactMessageContentForLLM(message.content),
   }));
+  // A screenshot is evidence for the current decision, not conversation
+  // history. Keep only the newest image part so every turn does not resend all
+  // prior full-size data URLs to the model.
+  let newestImageMessage = -1;
+  compacted.forEach((message, index) => {
+    if (Array.isArray(message.content) && message.content.some((part) => part?.type === "image_url")) {
+      newestImageMessage = index;
+    }
+  });
+  if (newestImageMessage >= 0) {
+    compacted.forEach((message, index) => {
+      if (index >= newestImageMessage || !Array.isArray(message.content)) return;
+      message.content = message.content.filter((part) => part?.type !== "image_url");
+    });
+  }
+  let totalChars = compacted.reduce((sum, message) => sum + JSON.stringify(message).length, 0);
+  if (totalChars <= MAX_LLM_TOTAL_CHARS) return compacted;
+
+  // Keep the system prompt, the initial request, and the newest evidence. Older
+  // tool turns are already persisted in toolHistory/checkpoints and should not
+  // make every later planning request grow without bound.
+  const result = [];
+  const pinned = new Set([0, Math.min(1, compacted.length - 1)]);
+  const newestFirst = compacted.map((message, index) => ({ message, index })).reverse();
+  const selected = new Set(pinned);
+  let budget = MAX_LLM_TOTAL_CHARS;
+  for (const { message, index } of newestFirst) {
+    if (selected.has(index)) continue;
+    const size = JSON.stringify(message).length;
+    if (size <= budget) {
+      selected.add(index);
+      budget -= size;
+    }
+  }
+  for (const index of pinned) {
+    budget -= JSON.stringify(compacted[index]).length;
+  }
+  for (const index of [...selected].sort((a, b) => a - b)) {
+    result.push(compacted[index]);
+  }
+  totalChars = result.reduce((sum, message) => sum + JSON.stringify(message).length, 0);
+  return totalChars <= MAX_LLM_TOTAL_CHARS ? result : result.map((message, index) => {
+    if (index < 2 || typeof message.content !== "string") return message;
+    const available = Math.max(1000, Math.floor(MAX_LLM_TOTAL_CHARS / result.length));
+    return { ...message, content: message.content.slice(0, available) + "\n...[older evidence compacted]" };
+  });
 }
 
 export const __testInternals = {
@@ -686,6 +734,26 @@ async function runToolWithTimeout(toolName, toolArgs) {
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
+}
+
+async function snapshotTabIds() {
+  if (typeof chrome === "undefined" || !chrome.tabs?.query) return new Set();
+  const tabs = await new Promise((resolve) => chrome.tabs.query({}, (items) => resolve(items || [])));
+  return new Set(tabs.map((tab) => tab.id).filter((id) => Number.isInteger(id)));
+}
+
+async function closeTabsCreatedDuringTimedOutTool(beforeTabIds = new Set()) {
+  if (typeof chrome === "undefined" || !chrome.tabs?.query) return [];
+  const tabs = await new Promise((resolve) => chrome.tabs.query({}, (items) => resolve(items || [])));
+  const candidates = tabs.filter((tab) => {
+    if (!Number.isInteger(tab.id) || beforeTabIds.has(tab.id)) return false;
+    const url = String(tab.url || "");
+    return /etsy\.com|google\.|bing\.com|1688\.com|taobao\.com/i.test(url);
+  });
+  await Promise.all(candidates.map((tab) => new Promise((resolve) => {
+    chrome.tabs.remove(tab.id, () => resolve());
+  })));
+  return candidates.map((tab) => tab.id);
 }
 
 function hasMeaningfulPageDom(pageContext = {}) {
@@ -1789,6 +1857,7 @@ export async function runAgentLoop({ tabId, skillId, skillMarkdown, userInstruct
   });
   const availableTools = filteredToolList.join(", ");
   let toolHistory = Array.isArray(resumeState?.toolHistory) ? [...resumeState.toolHistory] : [];
+  const continuousRunStartedAt = Date.now();
 
   const actualTargetImageUrl = pageContext?.targetImageUrl || "";
   const ctxForPrompt = buildPromptContext(pageContext);
@@ -1967,6 +2036,27 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
   sendProgress({ type: "start", step: 0, loopLimitDisabled: true });
 
   for (let step = 1; ; step++) {
+    const runtimeMs = Date.now() - continuousRunStartedAt;
+    if (runtimeMs >= MAX_CONTINUOUS_RUNTIME_MS) {
+      await saveCheckpoint({
+        status: "runtime_budget_paused",
+        step: step - 1,
+        lastNode: "continuous_runtime_budget",
+        runtimeMs,
+      });
+      sendProgress({
+        type: "workflow_timeout",
+        step: step - 1,
+        elapsedSeconds: Math.round(runtimeMs / 1000),
+        message: "本次连续运行已达到 15 分钟运行预算，已保存断点并暂停。发送“继续”后将从当前节点恢复。",
+      });
+      return {
+        ok: false,
+        type: "interrupted",
+        result: "工作流已达到本次连续运行预算，已保存断点。请发送“继续”从当前节点恢复。",
+        steps: step - 1,
+      };
+    }
     if (step > INTERNAL_RUNAWAY_GUARD_STEPS) {
       await saveCheckpoint({
         status: "runaway_guard_paused",
@@ -1985,6 +2075,15 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
 
     let assistantContent = "";
     const llmMessages = compactMessagesForLLM(messages);
+    const llmPayloadChars = JSON.stringify(llmMessages).length;
+    sendProgress({
+      type: "llm_started",
+      step,
+      messageCount: llmMessages.length,
+      payloadChars: llmPayloadChars,
+      estimatedTokens: Math.ceil(llmPayloadChars / 4),
+      message: `正在请求 AI（${llmMessages.length} 条消息，约 ${Math.ceil(llmPayloadChars / 4)} tokens）...`,
+    });
     const llmStartedAt = Date.now();
     let llmHeartbeatTimer = null;
     try {
@@ -2257,9 +2356,11 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       }
 
       let toolResult;
+      let toolTimedOut = false;
       let toolHeartbeatTimer = null;
       const toolStartedAt = Date.now();
       const toolTimeoutMs = getToolTimeoutMs(toolName);
+      const tabsBeforeTool = await snapshotTabIds();
       try {
         toolHeartbeatTimer = setInterval(() => {
           const elapsedSeconds = Math.max(1, Math.round((Date.now() - toolStartedAt) / 1000));
@@ -2274,7 +2375,24 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         }, 30000);
         toolResult = await runToolWithTimeout(toolName, toolArgs);
       } catch (err) {
-        toolResult = { error: err.message };
+        toolTimedOut = / timed out after /i.test(String(err.message || ""));
+        toolResult = {
+          ok: false,
+          error: err.message,
+          timedOut: toolTimedOut,
+          elapsedMs: Date.now() - toolStartedAt,
+        };
+        if (toolTimedOut) {
+          const closedTabIds = await closeTabsCreatedDuringTimedOutTool(tabsBeforeTool);
+          toolResult.closedTabIds = closedTabIds;
+          sendProgress({
+            type: "tool_timeout",
+            step,
+            toolName,
+            elapsedSeconds: Math.round((Date.now() - toolStartedAt) / 1000),
+            message: `${toolName} 已超时，已回收本次工具新增的临时标签页并继续保存断点。`,
+          });
+        }
       } finally {
         if (toolHeartbeatTimer) {
           clearInterval(toolHeartbeatTimer);
@@ -2283,7 +2401,12 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       toolHistory.push({ tool: toolName, arguments: toolArgs, result: toolResult });
 
       sendProgress({ type: "tool_result", step, toolName, toolResult });
-      await saveCheckpoint({ status: "tool_completed", step, lastNode: "tool_result", toolName });
+      await saveCheckpoint({
+        status: toolTimedOut ? "tool_timeout" : "tool_completed",
+        step,
+        lastNode: toolTimedOut ? "tool_timeout" : "tool_result",
+        toolName,
+      });
 
       if (toolResult && toolResult.isCaptcha) {
         sendProgress({

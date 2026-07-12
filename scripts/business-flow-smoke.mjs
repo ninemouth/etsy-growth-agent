@@ -29,6 +29,11 @@ const shopOptimizerSkillSource = fs.readFileSync(path.join(root, "skills", "etsy
 
 assert.match(agentLoopSource, /type:\s*"tool_heartbeat"/, "long-running tool calls should emit heartbeat progress");
 assert.match(agentLoopSource, /type:\s*"llm_heartbeat"/, "long-running LLM planning calls should emit heartbeat progress between tool calls");
+assert.match(agentLoopSource, /MAX_LLM_TOTAL_CHARS\s*=\s*140000/, "LLM planning requests should have a total history payload budget");
+assert.match(agentLoopSource, /MAX_CONTINUOUS_RUNTIME_MS\s*=\s*15 \* 60 \* 1000/, "continuous workflows should save a checkpoint before becoming an unbounded run");
+assert.match(agentLoopSource, /newestImageMessage/, "older screenshot data URLs should not be resent on every planning turn");
+assert.match(backgroundSource, /runInFlight/, "background should reject duplicate concurrent workflow starts on one port");
+assert.match(sidepanelSource, /msg\.type === "llm_started"/, "sidepanel should show LLM request payload telemetry");
 assert.match(sidepanelSource, /msg\.type === "llm_heartbeat"[\s\S]*AI 正在基于已采集证据规划下一步/, "sidepanel should show LLM heartbeat progress instead of appearing stuck between tool calls");
 assert.match(agentLoopSource, /etsyAgentCheckpoint:/, "agent loop should persist resumable workflow checkpoints");
 assert.match(agentLoopSource, /CHECKPOINT_IMAGE_PLACEHOLDER/, "persisted checkpoints should omit base64 screenshot payloads");
@@ -44,6 +49,7 @@ assert.match(agentLoopSource, /status:\s*"tool_guard_retry"/, "agent loop should
 assert.match(agentLoopSource, /getEtsyBrowserWorkflowGuardError[\s\S]*重复 open_new_tab[\s\S]*collect_etsy_shop_pages/, "Etsy browser workflow should prevent repeated tab opening loops and route shop pages into collection");
 assert.match(agentLoopSource, /本轮已有 3 个或以上已完成取证但未关闭的新标签页/, "Etsy browser workflow should require closing evidence tabs before opening more");
 assert.match(agentLoopSource, /runToolWithTimeout[\s\S]*timed out after[\s\S]*toolTimeoutMs/, "agent loop should enforce tool-level timeouts instead of waiting indefinitely");
+assert.match(agentLoopSource, /closeTabsCreatedDuringTimedOutTool[\s\S]*tool_timeout/, "timed-out browser tools should clean up newly created temporary tabs and expose a timeout state");
 assert.match(agentLoopSource, /timeoutSeconds[\s\S]*最长等待/, "tool heartbeat should expose the maximum wait time to the UI");
 assert.match(agentLoopSource, /loopLimitDisabled:\s*true/, "agent loop progress should no longer expose a user-configurable loop step limit");
 assert.match(agentLoopSource, /INTERNAL_RUNAWAY_GUARD_STEPS\s*=\s*200/, "agent loop should keep only a high internal runaway guard");

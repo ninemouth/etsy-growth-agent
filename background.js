@@ -307,6 +307,7 @@ chrome.runtime.onConnect.addListener((port) => {
     activePorts.set(portId, port);
     let isCancelled = false;
     let activeCheckpointKey = "";
+    let runInFlight = false;
 
     port.onDisconnect.addListener(() => {
       isCancelled = true;
@@ -323,6 +324,17 @@ chrome.runtime.onConnect.addListener((port) => {
 
     port.onMessage.addListener(async (message) => {
       if (message.type === "RUN_SKILL") {
+        if (runInFlight) {
+          try {
+            port.postMessage({
+              type: "ERROR",
+              error: "当前已有 workflow 正在执行。请等待当前任务完成，或发送“继续”恢复已保存断点，避免并发任务重复开页和重复调用 AI。",
+              resumable: true,
+            });
+          } catch (_) {}
+          return;
+        }
+        runInFlight = true;
         try {
           const tab = await getCurrentTab();
           if (!tab) throw new Error("无法获取当前活动的标签页，请确保浏览器焦点在目标网页上。");
@@ -545,6 +557,8 @@ chrome.runtime.onConnect.addListener((port) => {
               resumeHint: "本次 workflow 已尽量保存断点。可输入“继续”恢复上次中断节点。",
             });
           }
+        } finally {
+          runInFlight = false;
         }
       }
     });

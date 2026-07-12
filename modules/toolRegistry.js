@@ -1581,6 +1581,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
     const runAttempt = (attempt, attemptIndex) => new Promise((resolve) => {
       chrome.tabs.create({ url: safeEncodeURI(attempt.url), active: true }, (newTab) => {
         let settled = false;
+        let readInFlight = false;
         const finish = async (payload) => {
           if (settled) return;
           settled = true;
@@ -1601,6 +1602,8 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
 
         let pollCount = 0;
         const readResultPage = async () => {
+          if (settled || readInFlight) return;
+          readInFlight = true;
           pollCount++;
           try {
             const data = await sendToContentScript(newTab.id, { type: "READ_CURRENT_PAGE" });
@@ -1639,6 +1642,8 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
                 message: `Search completed but failed to read result page DOM: ${err.message}`,
               }, normalizedEngine));
             }
+          } finally {
+            readInFlight = false;
           }
         };
 
@@ -1702,12 +1707,16 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
           
           // Poll immediately for DOM readiness and product list elements
           let attempts = 0;
+          let readInFlight = false;
           const maxAttempts = 20; // up to 10 seconds total
           const checkLoad = setInterval(async () => {
+            if (readInFlight) return;
+            readInFlight = true;
             attempts++;
             chrome.tabs.get(targetTabId, async (t) => {
               if (chrome.runtime.lastError || !t) {
                 clearInterval(checkLoad);
+                readInFlight = false;
                 resolve({ ok: true, tabId: targetTabId, pageData: {}, message: "Tab closed or not found" });
                 return;
               }
@@ -1719,8 +1728,10 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
                 chrome.runtime.sendMessage({ type: "CAPTCHA_DETECTED", url: currentUrl });
                 if (attempts >= maxAttempts) {
                   clearInterval(checkLoad);
+                  readInFlight = false;
                   resolve({ ok: true, tabId: targetTabId, isCaptcha: true, pageData: {}, message: "Search redirected to verification wall." });
                 }
+                readInFlight = false;
                 return;
               }
 
@@ -1732,14 +1743,17 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
                 
                 if (hasProducts || attempts >= maxAttempts) {
                   clearInterval(checkLoad);
+                  readInFlight = false;
                   resolve({ ok: true, tabId: targetTabId, pageData, message: hasProducts ? "Search performed and results loaded." : "Search completed but timeout waiting for product links." });
                 }
               } catch (err) {
                 if (attempts >= maxAttempts) {
                   clearInterval(checkLoad);
+                  readInFlight = false;
                   resolve({ ok: true, tabId: targetTabId, pageData: {}, message: "Search performed but failed to read result page DOM" });
                 }
               }
+              readInFlight = false;
             });
           }, 500);
         })

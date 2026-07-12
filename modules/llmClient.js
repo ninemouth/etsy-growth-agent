@@ -9,11 +9,45 @@ export async function getSettings() {
   });
 }
 
-async function fetchWithRetry(url, options, maxRetries = 3) {
+const LLM_ATTEMPT_TIMEOUT_MS = 60_000;
+const LLM_MAX_RETRIES = 2;
+const LLM_BODY_READ_TIMEOUT_MS = 90_000;
+
+async function readJsonWithTimeout(response) {
+  let timeoutId;
+  try {
+    return await Promise.race([
+      response.json(),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(`LLM 响应读取超过 ${LLM_BODY_READ_TIMEOUT_MS / 1000} 秒`)), LLM_BODY_READ_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+async function readStreamChunkWithTimeout(reader) {
+  let timeoutId;
+  try {
+    return await Promise.race([
+      reader.read(),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(`LLM 流式响应超过 ${LLM_BODY_READ_TIMEOUT_MS / 1000} 秒未继续返回`)), LLM_BODY_READ_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+async function fetchWithRetry(url, options, maxRetries = LLM_MAX_RETRIES) {
   let delay = 1000;
   for (let i = 0; i < maxRetries; i++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LLM_ATTEMPT_TIMEOUT_MS);
     try {
-      const response = await fetch(url, options);
+      const response = await fetch(url, { ...options, signal: controller.signal });
       if (response.status === 429 || response.status >= 500) {
         if (i === maxRetries - 1) return response;
         console.warn(`LLM API returned HTTP ${response.status}. Retrying in ${delay}ms (Attempt ${i + 1}/${maxRetries})...`);
@@ -23,10 +57,13 @@ async function fetchWithRetry(url, options, maxRetries = 3) {
       }
       return response;
     } catch (err) {
-      if (i === maxRetries - 1) throw err;
-      console.warn(`LLM API network failure: ${err.message}. Retrying in ${delay}ms (Attempt ${i + 1}/${maxRetries})...`);
+      const reason = err.name === "AbortError" ? `请求超过 ${LLM_ATTEMPT_TIMEOUT_MS / 1000} 秒` : err.message;
+      if (i === maxRetries - 1) throw new Error(`LLM 请求超时或网络失败：${reason}`);
+      console.warn(`LLM API network failure: ${reason}. Retrying in ${delay}ms (Attempt ${i + 1}/${maxRetries})...`);
       await new Promise(r => setTimeout(r, delay));
       delay *= 2;
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 }
@@ -112,7 +149,7 @@ export async function prepareCleanProductImage(imageUrl, promptOverride = "") {
     throw new Error(`生图模型调用失败 (${response.status}) [${endpoint}]: ${text}`);
   }
 
-  const data = await response.json();
+  const data = await readJsonWithTimeout(response);
   const first = data.data?.[0] || {};
   const cleanedImageUrl = first.b64_json
     ? `data:image/png;base64,${first.b64_json}`
@@ -218,7 +255,7 @@ export async function callLLM(messages, streamCallback, isHighRandomness = false
       return await readSSEStream(response, streamCallback, "anthropic");
     }
 
-    const data = await response.json();
+    const data = await readJsonWithTimeout(response);
     return data.content?.[0]?.text || "";
   }
 
@@ -298,7 +335,7 @@ export async function callLLM(messages, streamCallback, isHighRandomness = false
   if (isStreaming) {
     const contentType = response.headers.get("content-type") || "";
     if (contentType.includes("application/json")) {
-      const data = await response.json();
+      const data = await readJsonWithTimeout(response);
       let chunk = "";
       if (data.output && data.output.text) chunk = data.output.text;
       else if (data.choices && data.choices[0] && data.choices[0].message) chunk = data.choices[0].message.content;
@@ -309,7 +346,7 @@ export async function callLLM(messages, streamCallback, isHighRandomness = false
     return await readSSEStream(response, streamCallback, "openai");
   }
 
-  const data = await response.json();
+  const data = await readJsonWithTimeout(response);
   return data.choices?.[0]?.message?.content || "";
 }
 
@@ -320,7 +357,7 @@ async function readSSEStream(response, callback, format) {
   let buffer = "";
 
   while (true) {
-    const { done, value } = await reader.read();
+    const { done, value } = await readStreamChunkWithTimeout(reader);
     if (done) break;
 
     buffer += decoder.decode(value, { stream: true });

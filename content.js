@@ -3637,6 +3637,12 @@
               log(`⚙️ 调用指令: ${data.toolName}`);
             } else if (data.type === "tool_heartbeat") {
               log(`⏱ ${data.message || `${data.toolName || "工具"} 仍在执行`}`);
+            } else if (data.type === "llm_heartbeat" || data.type === "llm_started") {
+              log(`⏱ ${data.message || "AI 正在规划下一步"}`);
+            } else if (data.type === "workflow_timeout") {
+              log(`⏸ ${data.message || "工作流已保存断点并暂停"}`);
+            } else if (data.type === "tool_timeout") {
+              log(`⏸ ${data.message || `${data.toolName || "工具"} 超时，已回收临时标签页`}`);
             } else if (data.type === "tool_result") {
               log(`📥 执行完毕，获取到相关数据。`);
             } else if (data.type === "reflection" && data.message) {
