@@ -506,6 +506,82 @@ async function readPageDataFromTab(tabId) {
   return pageData;
 }
 
+async function collectEtsyListingDetailsForShop({
+  workflowId = "default",
+  competitorName = "",
+  competitorUrl = "",
+  pages = [],
+  maxDetails = 2,
+} = {}) {
+  const listingUrls = Array.from(new Set(
+    pages.flatMap((page) => Array.isArray(page?.productCards) ? page.productCards : [])
+      .sort((a, b) => Number(a.visibleOrderRank || a.rank || 999) - Number(b.visibleOrderRank || b.rank || 999))
+      .map((card) => card.href || card.listingUrl || card.url)
+      .filter((url) => /etsy\.com\/listing\//i.test(String(url || "")))
+      .map((url) => String(url).split("?")[0])
+  )).slice(0, Math.max(1, Math.min(Number(maxDetails) || 2, 3)));
+  const details = [];
+
+  await appendWorkflowEvent(workflowId, "etsy_listing_detail_stage_started", {
+    competitorName,
+    competitorUrl,
+    requested: listingUrls.length,
+  });
+
+  for (let index = 0; index < listingUrls.length; index++) {
+    const listingUrl = listingUrls[index];
+    if (workflowId !== "default" && await isWorkflowCancellationRequested(workflowId)) {
+      await appendWorkflowEvent(workflowId, "etsy_listing_detail_stage_cancelled", { competitorName, completed: details.length });
+      throw new Error("Etsy listing detail collection cancelled by workflow runtime");
+    }
+    await appendWorkflowEvent(workflowId, "etsy_listing_detail_started", { competitorName, listingUrl, index: index + 1 });
+    let tabId = null;
+    try {
+      const tab = await createOwnedTab({ workflowId, url: safeEncodeURI(listingUrl), active: true });
+      tabId = tab.id;
+      const loaded = await waitForTabLoad(tabId);
+      await delay(700);
+      const pageData = await readPageDataFromTab(tabId);
+      const screenshot = await _captureTabScreenshot(tabId);
+      const screenshotArtifact = await putDataUrlArtifact(screenshot.dataUrl, {
+        namespace: "etsy-listing-detail-screenshot",
+        metadata: { workflowId, competitorName, competitorUrl, listingUrl, index: index + 1 },
+        ttlMs: 24 * 60 * 60 * 1000,
+      });
+      details.push({
+        ok: true,
+        competitorName,
+        competitorUrl,
+        listingUrl,
+        tabId,
+        loaded: Boolean(loaded),
+        pageData,
+        screenshotRef: screenshotArtifact.ref,
+        screenshotCaptureMode: screenshot.captureMode,
+        screenshotStorage: screenshotArtifact.storage,
+      });
+      await appendWorkflowEvent(workflowId, "etsy_listing_detail_completed", {
+        competitorName,
+        listingUrl,
+        screenshotRef: screenshotArtifact.ref,
+        captureMode: screenshot.captureMode,
+      });
+    } catch (err) {
+      details.push({ ok: false, competitorName, competitorUrl, listingUrl, error: err.message });
+      await appendWorkflowEvent(workflowId, "etsy_listing_detail_failed", { competitorName, listingUrl, error: err.message });
+    } finally {
+      if (tabId) await closeOwnedTab(workflowId, tabId);
+    }
+  }
+
+  await appendWorkflowEvent(workflowId, "etsy_listing_detail_stage_completed", {
+    competitorName,
+    requested: listingUrls.length,
+    completed: details.filter((detail) => detail.ok).length,
+  });
+  return details;
+}
+
 function summarizeVisibleText(text = "", maxLength = 1600) {
   return String(text || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 }
@@ -1144,6 +1220,7 @@ export const tools = {
       maxProductsPerPage = 32,
       delayMs = 700,
       useCache = true,
+      workflowId = "default",
     } = args;
     const rawCandidates = [
       ...urls.map((url) => ({ url })),
@@ -1190,6 +1267,13 @@ export const tools = {
           pages: Array.isArray(crawl.pages) ? crawl.pages : [],
           crawl,
         });
+        shops[shops.length - 1].listingDetails = await collectEtsyListingDetailsForShop({
+          workflowId,
+          competitorName: shops[shops.length - 1].competitorName,
+          competitorUrl: target.url,
+          pages: shops[shops.length - 1].pages,
+          maxDetails: args.maxDetailsPerShop || 2,
+        });
       } catch (err) {
         shops.push({
           ok: false,
@@ -1198,6 +1282,7 @@ export const tools = {
           error: err.message,
           pagesCollected: 0,
           pages: [],
+          listingDetails: [],
         });
       }
     }
@@ -1232,6 +1317,7 @@ export const tools = {
         uniqueListingCount: shop.uniqueListingCount,
         sortLabels: shop.sortLabels,
         pages: shop.pages,
+        listingDetails: Array.isArray(shop.listingDetails) ? shop.listingDetails : [],
       })),
       nextStep: "Pass allPages or screenshotRefs to analyze_etsy_shop_crawl_screenshots before final report delivery.",
       screenshotPolicy: "Per-page screenshots are stored as referenced artifacts; full base64 payloads are omitted from chrome.storage.local checkpoints.",

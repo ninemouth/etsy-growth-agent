@@ -246,6 +246,14 @@ function compactToolResultForLLM(toolName = "", result = {}) {
       sortLabels: shop.sortLabels,
       productEvidenceSummary: summarizeShopPagesForLLM(Array.isArray(shop.pages) ? shop.pages : []),
       pages: Array.isArray(shop.pages) ? shop.pages.slice(0, MAX_LLM_CRAWL_PAGES).map((page) => compactCrawlPageForLLM(page)) : [],
+      listingDetails: Array.isArray(shop.listingDetails) ? shop.listingDetails.slice(0, 3).map((detail) => ({
+        ok: detail.ok,
+        listingUrl: detail.listingUrl,
+        screenshotRef: detail.screenshotRef,
+        screenshotCaptureMode: detail.screenshotCaptureMode,
+        pageData: detail.pageData ? compactPageDataForLLM(detail.pageData) : undefined,
+        error: truncateText(detail.error || "", 180),
+      })) : [],
     }));
     if (Array.isArray(result.allPages) && result.allPages.length > MAX_LLM_CRAWL_PAGES) {
       base.omittedPages = result.allPages.length - MAX_LLM_CRAWL_PAGES;
@@ -1036,6 +1044,25 @@ function getOpenedEtsyCompetitorUrls(toolHistory = [], currentUrl = "") {
   return urls;
 }
 
+function getCompetitorListingDetailEvidence(toolHistory = []) {
+  const urls = new Set();
+  toolHistory.forEach((entry) => {
+    if (entry?.tool === "collect_etsy_competitor_shops" && entry.result?.ok !== false && Array.isArray(entry.result?.shops)) {
+      entry.result.shops.forEach((shop) => {
+        (Array.isArray(shop.listingDetails) ? shop.listingDetails : []).forEach((detail) => {
+          if (detail?.ok && detail?.screenshotRef && /etsy\.com\/listing\//i.test(String(detail.listingUrl || ""))) {
+            urls.add(String(detail.listingUrl).split("?")[0]);
+          }
+        });
+      });
+    }
+    if (entry?.tool === "open_new_tab" && entry.result?.ok !== false && entry.result?.screenshotRef && /etsy\.com\/listing\//i.test(String(entry.result?.finalUrl || entry.result?.url || entry.result?.pageData?.url || entry.arguments?.url || ""))) {
+      urls.add(String(entry.result.finalUrl || entry.result.url || entry.result.pageData?.url || entry.arguments.url).split("?")[0]);
+    }
+  });
+  return urls;
+}
+
 function countCompetitorVisualLedgerEntries(ledger = []) {
   const refs = new Set();
   ledger.forEach((entry) => {
@@ -1620,6 +1647,12 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
     errors.push(...validateCompetitorBenchmarks(out, toolHistory, pageContext));
     if (!hasLedgerType(allLedgerEntries, "etsy_search")) {
       errors.push("店铺优化报告缺少必须完成的 Etsy 站内搜索/热卖榜/高排名竞品店铺对标证据。该项不能降级为 assumption，请调用 search_in_browser(engine=etsy) 并学习同类高排名店铺/商品页面。");
+    }
+    if (toolHistory.some((entry) => entry?.tool === "collect_etsy_competitor_shops")) {
+      const detailEvidenceCount = getCompetitorListingDetailEvidence(toolHistory).size;
+      if (detailEvidenceCount < 2) {
+        errors.push("竞品店铺分页采集完成后，必须继续完成至少 2 个 Etsy 商品详情页的 DOM + 截图深度取证。当前只有店铺首页/商品卡片证据，不能称为竞品商品详情深度分析。");
+      }
     }
     if (!hasAnyLedgerType(allLedgerEntries, ["google_search", "google_trends"])) {
       errors.push("店铺优化报告缺少必须完成的 Google Trends US / Google Search 站外需求证据。该项不能降级为 assumption，请调用 search_in_browser(engine=google_us 或 google_trends) 获取真实检索/趋势证据。");

@@ -632,6 +632,7 @@ const batchCompetitorCrawlHistory = {
         totalVisibleProductCards: 24,
         uniqueListingCount: 24,
         pages: [],
+        listingDetails: [{ ok: true, listingUrl: "https://www.etsy.com/listing/101/top-bridal-clutch", screenshotRef: "__DETAIL_SCREENSHOT_TOP__" }],
       },
       {
         ok: true,
@@ -641,6 +642,7 @@ const batchCompetitorCrawlHistory = {
         totalVisibleProductCards: 18,
         uniqueListingCount: 18,
         pages: [],
+        listingDetails: [{ ok: true, listingUrl: "https://www.etsy.com/listing/102/bella-photo-clutch", screenshotRef: "__DETAIL_SCREENSHOT_BELLA__" }],
       },
     ],
   },
