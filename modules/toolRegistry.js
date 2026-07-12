@@ -1389,6 +1389,136 @@ export const tools = {
       };
   },
 
+  collect_etsy_listing_reviews: async (args = {}) => {
+    const {
+      url = "",
+      tabId = null,
+      maxPages = 3,
+      keepTab = false,
+      delayMs = 900,
+      workflowId = "default",
+    } = args;
+    const pageLimit = Math.max(1, Math.min(Number(maxPages) || 3, 8));
+    let targetTabId = tabId ? parseInt(tabId) : null;
+    let openedByTool = false;
+    let sourceUrl = url;
+    if (!targetTabId) {
+      if (url) {
+        const created = await createOwnedTab({ workflowId, url: safeEncodeURI(url), active: true });
+        targetTabId = created.id;
+        openedByTool = true;
+      } else {
+        const current = await getCurrentTab();
+        if (!current) throw new Error("No active tab found");
+        targetTabId = current.id;
+        sourceUrl = current.url || "";
+      }
+    }
+    if (!/etsy\.com\/listing\//i.test(String(sourceUrl || ""))) {
+      const tab = await chrome.tabs.get(targetTabId);
+      sourceUrl = tab?.url || sourceUrl;
+    }
+    if (!/etsy\.com\/listing\//i.test(String(sourceUrl || ""))) {
+      throw new Error("collect_etsy_listing_reviews requires an Etsy listing URL or active listing tab.");
+    }
+
+    const pages = [];
+    const seenUrls = new Set();
+    let nextUrl = sourceUrl;
+    let stoppedReason = "max_pages_reached";
+    let completedFullCrawl = false;
+    await appendWorkflowEvent(workflowId, "etsy_review_crawl_started", { sourceUrl, maxPages: pageLimit });
+    try {
+      for (let pageIndex = 1; pageIndex <= pageLimit && nextUrl; pageIndex++) {
+        if (workflowId !== "default" && await isWorkflowCancellationRequested(workflowId)) {
+          await appendWorkflowEvent(workflowId, "etsy_review_crawl_cancelled", { pageIndex, pagesCollected: pages.length });
+          throw new Error("Etsy review crawl cancelled by workflow runtime");
+        }
+        if (seenUrls.has(nextUrl)) {
+          stoppedReason = "duplicate_page_url";
+          completedFullCrawl = true;
+          break;
+        }
+        seenUrls.add(nextUrl);
+        await appendWorkflowEvent(workflowId, "etsy_review_page_started", { pageIndex, url: nextUrl });
+        await chrome.tabs.update(targetTabId, { url: safeEncodeURI(nextUrl) });
+        await waitForTabLoad(targetTabId);
+        await delay(Math.max(300, Number(delayMs) || 900));
+        const pageData = await readPageDataFromTab(targetTabId);
+        let screenshotRef = null;
+        let screenshotCaptureMode = "unknown";
+        try {
+          const capture = await _captureTabScreenshot(targetTabId);
+          const artifact = await putDataUrlArtifact(capture.dataUrl, {
+            kind: "etsy-review-page-screenshot",
+            workflowId,
+            metadata: { pageIndex, url: nextUrl, captureMode: capture.captureMode },
+          });
+          screenshotRef = artifact?.ref || null;
+          screenshotCaptureMode = capture.captureMode || "unknown";
+        } catch (error) {
+          await appendWorkflowEvent(workflowId, "etsy_review_screenshot_failed", { pageIndex, error: error.message });
+        }
+        const reviewPagination = pageData.reviewPagination || {};
+        const reviews = Array.isArray(pageData.reviews) ? pageData.reviews : [];
+        const explicitNext = (reviewPagination.paginationLinks || []).find((link) => !link.disabled && /next|下一页|more/i.test(`${link.text} ${link.href}`) && link.href);
+        const pageRecord = {
+          pageIndex,
+          url: nextUrl,
+          sampleCount: reviews.length,
+          lowStarCount: reviews.filter((review) => Number(review.rating) > 0 && Number(review.rating) <= 3).length,
+          reviews,
+          reviewPagination,
+          screenshotRef,
+          screenshotCaptureMode,
+          readRoute: pageData.pageEvidence?.readRoute || "content_script",
+        };
+        pages.push(pageRecord);
+        await appendWorkflowEvent(workflowId, "etsy_review_page_completed", {
+          pageIndex,
+          sampleCount: reviews.length,
+          lowStarCount: pageRecord.lowStarCount,
+          screenshotRef,
+        });
+        if (explicitNext && !seenUrls.has(explicitNext.href)) {
+          nextUrl = explicitNext.href;
+        } else {
+          stoppedReason = explicitNext ? "duplicate_or_unusable_next_page" : "no_visible_review_next_page";
+          completedFullCrawl = !reviewPagination.hasVisibleReviews || !explicitNext;
+          nextUrl = "";
+        }
+      }
+      const allReviews = pages.flatMap((page) => page.reviews || []);
+      const uniqueReviews = [...new Map(allReviews.map((review) => [review.reviewId || `${review.text}-${review.rating}`, review])).values()];
+      const result = {
+        ok: pages.length > 0,
+        tool: "collect_etsy_listing_reviews",
+        sourceUrl,
+        pagesCollected: pages.length,
+        completedFullCrawl,
+        stoppedReason,
+        sampleCount: uniqueReviews.length,
+        lowStarCount: uniqueReviews.filter((review) => Number(review.rating) > 0 && Number(review.rating) <= 3).length,
+        pages,
+        coverage: completedFullCrawl ? "当前可见评论分页已走完或页面未暴露下一页" : "仅覆盖已读取评论分页，不能代表全部评论",
+        screenshotRefs: pages.map((page) => page.screenshotRef).filter(Boolean),
+        nextStep: "仅在 sampleCount 达到报告要求后输出评论归纳；否则必须写明当前页样本量和覆盖限制。",
+        artifactStore: "indexeddb_blob_with_memory_fallback",
+      };
+      await appendWorkflowEvent(workflowId, "etsy_review_crawl_completed", {
+        pagesCollected: pages.length,
+        sampleCount: uniqueReviews.length,
+        lowStarCount: result.lowStarCount,
+        completedFullCrawl,
+      });
+      return result;
+    } finally {
+      if (openedByTool && !keepTab && targetTabId) {
+        await closeOwnedTab(workflowId, targetTabId).catch(() => {});
+      }
+    }
+  },
+
   analyze_etsy_shop_crawl_screenshots: async (args = {}) => {
     const {
       pages = [],

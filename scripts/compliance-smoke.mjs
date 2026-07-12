@@ -83,4 +83,10 @@ assert.ok(validateReport(invalidReport, "审查商品合规", skillId, [], pageC
 const source = fs.readFileSync("modules/agentLoop.js", "utf8");
 assert.match(source, /COMPLIANCE_ALLOWED_TOOLS/, "compliance tool whitelist must remain executable");
 assert.match(source, /compliance_tool_whitelist_guard/, "runtime must reject disallowed compliance tools");
+const backgroundSource = fs.readFileSync("background.js", "utf8");
+assert.match(backgroundSource, /COMPLIANCE_DECISIONS_KEY/, "compliance decisions must be persisted as a lightweight state index");
+assert.match(backgroundSource, /COMPLIANCE_DECISION_TTL_MS/, "compliance decisions must expire and be rechecked");
+assert.match(backgroundSource, /COMPLIANCE_AUDIT_REQUIRED/, "sensitive Listing and sourcing actions must require a prior compliance audit");
+assert.match(backgroundSource, /COMPLIANCE_ACTION_BLOCKED/, "high-risk compliance decisions must block downstream actions");
+assert.match(backgroundSource, /errorCode:\s*err\.code/, "compliance gate failures must expose machine-readable error codes to the UI");
 console.log("compliance smoke passed");

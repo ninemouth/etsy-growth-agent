@@ -1170,6 +1170,66 @@
     };
   }
 
+  function extractEtsyReviews() {
+    if (!window.location.hostname.includes("etsy.com")) return { reviews: [], reviewPagination: null };
+    const selectors = [
+      '[data-review-id]',
+      '[data-testid*="review"]',
+      '[class*="review-card"]',
+      '[class*="ReviewCard"]',
+      '[class*="review-item"]',
+      '[class*="ReviewItem"]',
+    ];
+    const nodes = [];
+    const seen = new Set();
+    selectors.forEach((selector) => {
+      document.querySelectorAll(selector).forEach((node) => {
+        if (!isVisibleElement(node) || seen.has(node)) return;
+        const text = String(node.innerText || "").replace(/\s+/g, " ").trim();
+        if (text.length < 24 || text.length > 1800) return;
+        seen.add(node);
+        nodes.push(node);
+      });
+    });
+    const reviews = nodes.slice(0, 40).map((node, index) => {
+      const text = String(node.innerText || "").replace(/\s+/g, " ").trim();
+      const aria = `${node.getAttribute("aria-label") || ""} ${node.innerHTML || ""}`;
+      const ratingMatch = aria.match(/([1-5])\s*(?:out of 5|stars?|\/\s*5)/i) || text.match(/(?:rating|stars?)\s*[:：]?\s*([1-5])/i);
+      const reviewId = node.getAttribute("data-review-id") || node.id || `visible-review-${index + 1}`;
+      const images = Array.from(node.querySelectorAll("img"))
+        .map((img) => img.currentSrc || img.src || img.getAttribute("data-src") || "")
+        .filter((src) => /^https?:\/\//i.test(src))
+        .slice(0, 6);
+      return {
+        reviewId,
+        rating: ratingMatch ? Number(ratingMatch[1]) : null,
+        text: text.slice(0, 1400),
+        images,
+        source: "visible_review_card",
+      };
+    });
+    const paginationLinks = Array.from(document.querySelectorAll('a[href], button'))
+      .filter((el) => isVisibleElement(el) && /review|评论|next|下一页|more/i.test(`${el.innerText || ""} ${el.getAttribute("aria-label") || ""} ${el.href || ""}`))
+      .map((el) => ({
+        text: String(el.innerText || el.getAttribute("aria-label") || "").trim().slice(0, 80),
+        href: el.href || "",
+        disabled: el.disabled === true || el.getAttribute("aria-disabled") === "true",
+      }))
+      .filter((item, index, list) => item.href || index === 0 ? list.findIndex((candidate) => candidate.href === item.href && candidate.text === item.text) === index : false)
+      .slice(0, 12);
+    return {
+      reviews,
+      reviewPagination: {
+        currentUrl: window.location.href,
+        hasVisibleReviews: reviews.length > 0,
+        sampleCount: reviews.length,
+        lowStarCount: reviews.filter((review) => Number(review.rating) > 0 && Number(review.rating) <= 3).length,
+        paginationLinks,
+        limitation: reviews.length > 0 ? "仅覆盖当前已渲染评论卡片；未点击或翻页前不能代表全部评论。" : "当前页面未读取到可识别的评论卡片。",
+      },
+    };
+  }
+
   function readCurrentPage(cachedSelectors = null) {
     closePopups();
     const title = document.title || "";
@@ -1291,6 +1351,7 @@
     } catch (_) {}
     const pageHealth = classifyPageHealth({ url, title, visibleText, productCards, productLinks });
     const etsyShopProductContext = extractEtsyShopProductControls();
+    const etsyReviewData = extractEtsyReviews();
 
     return {
       url,
@@ -1314,6 +1375,8 @@
       productLinks,
       productCards,
       etsyShopProductContext,
+      reviews: etsyReviewData.reviews,
+      reviewPagination: etsyReviewData.reviewPagination,
       pageHealth,
       creatorInfo,
       detailCreators

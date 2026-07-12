@@ -91,6 +91,8 @@ assert.match(toolRegistrySource, /buildBrowserSearchAttempts[\s\S]*etsy_market_f
 assert.match(toolRegistrySource, /hasValidGoogleTrendsEvidence/, "Google Trends search evidence should have a runtime validity gate");
 assert.match(toolRegistrySource, /\"google_trends\", \"bing\", \"etsy\"/, "Etsy search tabs should be auto-closed after evidence capture unless keepTab is set");
 assert.match(toolRegistrySource, /collect_etsy_shop_pages/, "tool registry should expose a traditional Etsy shop pagination collection loop");
+assert.match(toolRegistrySource, /collect_etsy_listing_reviews[\s\S]*reviewPagination[\s\S]*etsy_review_crawl_completed/, "tool registry should expose bounded Etsy review pagination collection with durable evidence events");
+assert.match(contentSource, /extractEtsyReviews[\s\S]*reviewPagination[\s\S]*lowStarCount/, "content script should expose visible Etsy review samples and low-star coverage");
 assert.match(toolRegistrySource, /collect_etsy_competitor_shops[\s\S]*collect_etsy_shop_pages[\s\S]*keepTab:\s*false/, "tool registry should expose batch competitor shop collection that reuses the pagination collector and closes temporary tabs");
 assert.match(toolRegistrySource, /etsyShopCrawlCache[\s\S]*cacheHit/, "Etsy shop collection should reuse in-session crawl evidence instead of reopening the same competitor shop");
 assert.match(toolRegistrySource, /screenshotCaptured[\s\S]*screenshotRef[\s\S]*completedFullCrawl/, "Etsy shop collection loop should capture per-page screenshot evidence without returning raw base64 in checkpoints");
@@ -127,6 +129,8 @@ assert.match(agentLoopSource, /MAX_LLM_CRAWL_PRODUCT_CARDS\s*=\s*16/, "shop diag
 assert.match(agentLoopSource, /productEvidenceSummary/, "shop diagnosis compression should preserve aggregate product evidence for pricing, reviews, promotions and titles");
 assert.match(agentLoopSource, /analyze_etsy_shop_crawl_screenshots[\s\S]*独立截图解读/, "critic should require independent visual analysis after cached shop crawl screenshots are captured");
 assert.match(agentLoopSource, /stage_observations[\s\S]*stage_synthesis[\s\S]*stage_report_inputs/, "agent loop compression should preserve staged screenshot analysis conclusions for the next reasoning step");
+assert.match(agentLoopSource, /validateOperationsReport[\s\S]*baseline_window[\s\S]*attribution_confidence/, "operations reports should require baseline windows and attribution confidence");
+assert.match(agentLoopSource, /isReviewSkill[\s\S]*sampleCount[\s\S]*主要反馈/, "review reports should not generalize from insufficient samples");
 assert.match(shopOptimizerSkillSource, /collect_etsy_competitor_shops[\s\S]*减少重复开页和 LLM 往返/, "shop optimizer should prefer batch competitor shop collection when multiple competitor URLs are available");
 assert.match(shopOptimizerSkillSource, /stage_observations[\s\S]*stage_synthesis[\s\S]*stage_report_inputs/, "shop optimizer should require staged screenshot conclusions to flow into final report fields");
 assert.match(shopOptimizerSkillSource, /collect_etsy_shop_pages[\s\S]*边读 DOM 边累积商品卡片/, "shop optimizer should require browser pagination collection when competitor shop API data is unavailable");

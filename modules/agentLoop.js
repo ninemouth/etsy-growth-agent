@@ -504,6 +504,7 @@ const COMPLIANCE_ALLOWED_TOOLS = new Set([
   "collect_etsy_shop_pages",
   "collect_etsy_competitor_shops",
   "analyze_etsy_shop_crawl_screenshots",
+  "collect_etsy_listing_reviews",
   "etsy_api_get_store_snapshot",
   "etsy_api_get_products",
   "etsy_api_get_product_info",
@@ -511,6 +512,32 @@ const COMPLIANCE_ALLOWED_TOOLS = new Set([
 
 function isSourcingSkill(skillId = "") {
   return SOURCING_SKILL_RE.test(String(skillId || ""));
+}
+
+function isReviewSkill(skillId = "") {
+  return /etsy_review_analyzer/.test(String(skillId || ""));
+}
+
+function isOperationsSkill(skillId = "") {
+  return /etsy_operations_tracker/.test(String(skillId || ""));
+}
+
+function getReviewEvidenceSummary(toolHistory = [], pageContext = {}) {
+  const sources = [
+    ...(Array.isArray(pageContext?.reviews) ? [{ result: { reviews: pageContext.reviews, reviewPagination: pageContext.reviewPagination } }] : []),
+    ...toolHistory.filter((entry) => entry?.tool === "collect_etsy_listing_reviews" && entry?.result?.ok !== false),
+  ];
+  const reviews = sources.flatMap((entry) => {
+    const result = entry.result || {};
+    if (Array.isArray(result.reviews)) return result.reviews;
+    return Array.isArray(result.pages) ? result.pages.flatMap((page) => page.reviews || []) : [];
+  });
+  const unique = [...new Map(reviews.map((review) => [review.reviewId || `${review.text}-${review.rating}`, review])).values()];
+  return {
+    sampleCount: unique.length,
+    lowStarCount: unique.filter((review) => Number(review.rating) > 0 && Number(review.rating) <= 3).length,
+    hasCollection: toolHistory.some((entry) => entry?.tool === "collect_etsy_listing_reviews" && entry?.result?.ok !== false),
+  };
 }
 
 function isImageSearchTool(toolName = "") {
@@ -1613,6 +1640,28 @@ function validateComplianceReport(out, toolHistory = [], pageContext = {}) {
   return errors;
 }
 
+function validateOperationsReport(out, toolHistory = [], pageContext = {}) {
+  const errors = [];
+  const items = Array.isArray(out.data) ? out.data : [];
+  if (items.length === 0) return ["运营追踪报告不能返回空 data，至少需要一个阶段或行动复盘项。"];
+  items.forEach((item, idx) => {
+    const label = `运营追踪第 ${idx + 1} 项`;
+    const text = JSON.stringify(item);
+    const baseline = item?.baseline_window || item?.baselineWindow;
+    const comparison = item?.comparison_window || item?.comparisonWindow;
+    const observation = item?.observation_window || item?.observationWindow;
+    if (!baseline || !comparison || !observation) errors.push(`${label} 必须包含 baseline_window、comparison_window 和 observation_window，且写明起止日期、时区和完整性。`);
+    if (!item?.baseline_metrics || !item?.comparison_metrics) errors.push(`${label} 缺少 baseline_metrics 或 comparison_metrics，不能证明优化前后变化。`);
+    if (!Array.isArray(item?.confounders) && !item?.confounders) errors.push(`${label} 缺少 confounders，必须声明价格、广告、库存、促销、季节性、评价和履约等干扰因素。`);
+    if (!item?.attribution_confidence) errors.push(`${label} 缺少 attribution_confidence，不能把相关性写成因果性。`);
+    if (!item?.next_observation_window || !item?.success_threshold) errors.push(`${label} 缺少 next_observation_window 或 success_threshold，下一轮必须有观察时间和成功标准。`);
+    if (/提升|下降|增长|改善|成功|increase|decrease|improv|success/i.test(text) && !hasEvidenceSource(toolHistory, pageContext, "etsy_api") && !hasAssumptionFallback(item?.evidence_ledger || [], /API|基线|数据|指标|待验证/i)) {
+      errors.push(`${label} 输出了指标变化或成功判断，但没有 Etsy 个人访问 API 证据或明确待验证假设。`);
+    }
+  });
+  return errors;
+}
+
 export function validateReport(parsed, userInstruction, skillId, toolHistory = [], pageContext = {}) {
   const errors = [];
   if (!parsed || parsed.type !== "final" || !parsed.output) {
@@ -1627,6 +1676,9 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
 
   if (isComplianceSkill(skillId)) {
     errors.push(...validateComplianceReport(out, toolHistory, pageContext));
+  }
+  if (isOperationsSkill(skillId)) {
+    errors.push(...validateOperationsReport(out, toolHistory, pageContext));
   }
 
   // 1. Check for technical jargon
@@ -1799,6 +1851,18 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
   }
 
   if (isEtsyBusinessSkill(skillId) && !isShopOptimizerOnly(skillId)) {
+    if (isReviewSkill(skillId)) {
+      const reviewEvidence = getReviewEvidenceSummary(toolHistory, pageContext);
+      if (!reviewEvidence.hasCollection && reviewEvidence.sampleCount < 1) {
+        errors.push("评论审查必须先读取 Etsy 商品页评论或执行评论分页采集；没有真实评论证据不能输出买家集中反馈或缺陷结论。");
+      }
+      if (reviewEvidence.sampleCount > 0 && reviewEvidence.sampleCount < 3 && /集中|主要|普遍|多数|高频|比例|频率|dominant|common|majority|rate|frequent/i.test(JSON.stringify(out.data))) {
+        errors.push(`评论审查当前只有 ${reviewEvidence.sampleCount} 条真实评论样本，不能输出“买家集中/主要反馈”或频率判断；请继续翻页，或明确降级为当前页样本。`);
+      }
+      if (reviewEvidence.lowStarCount > 0 && reviewEvidence.sampleCount < 3 && /差评率|低星比例|negative rate|low.?star rate/i.test(JSON.stringify(out.data))) {
+        errors.push("低星评论样本不足 3 条，不能计算差评率或低星比例；必须继续采集或改为样本观察。");
+      }
+    }
     out.data.forEach((item, idx) => {
       const title = item.title || item.name || item.plan_id || item.phase_id || item.keyword || `实体 #${idx + 1}`;
       const ledgerEntries = Array.isArray(item.evidence_ledger) ? item.evidence_ledger : [];

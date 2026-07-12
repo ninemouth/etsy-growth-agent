@@ -301,6 +301,86 @@ async function listSkills() {
 // ── Port Connection Handling (Streaming Progress) ──
 const activePorts = new Map();
 const WORKFLOW_CHECKPOINTS_KEY = "agentWorkflowCheckpoints";
+const COMPLIANCE_DECISIONS_KEY = "etsyComplianceDecisions";
+const COMPLIANCE_DECISION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+
+function normalizeComplianceResourceKey(url = "") {
+  try {
+    const parsed = new URL(String(url || ""));
+    parsed.hash = "";
+    parsed.search = "";
+    return `${parsed.origin}${parsed.pathname.replace(/\/$/, "")}`;
+  } catch (_) {
+    return String(url || "").split(/[?#]/)[0].replace(/\/$/, "");
+  }
+}
+
+function complianceContextText(pageContext = {}, userInstruction = "") {
+  return [
+    userInstruction,
+    pageContext?.url,
+    pageContext?.title,
+    pageContext?.h1,
+    pageContext?.visibleText,
+    pageContext?.text,
+  ].filter(Boolean).join(" ");
+}
+
+function isComplianceSensitiveContext(pageContext = {}, userInstruction = "") {
+  return /儿童|婴童|玩具|baby|child|kid|toy|cosmetic|化妆品|护肤|香氛|食品接触|餐厨|food contact|电器|灯具|电池|battery|electrical|电子|充电|品牌|商标|版权|角色|球队|影视|designer|trademark|copyright|ip|CE|CPC|FDA|FCC|RoHS|REACH|危险品|禁售/i.test(complianceContextText(pageContext, userInstruction));
+}
+
+function requiresComplianceGate({ message = {}, matchedSkills = [], pageContext = {} } = {}) {
+  const actionId = String(message.growthActionId || "");
+  const skills = matchedSkills.join("+");
+  if (skills.includes("etsy_compliance_auditor") || actionId === "audit_compliance") return false;
+  const actionRequiresGate = [
+    "rewrite_listing",
+    "filter_supplier_sources",
+    "calculate_profit_guardrail",
+    "find_expansion_opportunities",
+  ].includes(actionId);
+  const skillRequiresGate = /etsy_listing_generator|etsy_sourcing_finder/.test(skills);
+  return (actionRequiresGate || skillRequiresGate) && isComplianceSensitiveContext(pageContext, message.userInstruction);
+}
+
+async function getComplianceDecision(url = "") {
+  const key = normalizeComplianceResourceKey(url);
+  if (!key) return null;
+  const data = await new Promise((resolve) => chrome.storage.local.get([COMPLIANCE_DECISIONS_KEY], resolve));
+  const decision = (data[COMPLIANCE_DECISIONS_KEY] || {})[key] || null;
+  if (!decision) return null;
+  const checkedAt = Date.parse(decision.checkedAt || "");
+  if (!Number.isFinite(checkedAt) || Date.now() - checkedAt > COMPLIANCE_DECISION_TTL_MS) return null;
+  return decision;
+}
+
+async function saveComplianceDecision({ pageUrl = "", result = {}, workflowId = "" } = {}) {
+  const key = normalizeComplianceResourceKey(pageUrl);
+  if (!key || !result || typeof result !== "object") return;
+  const items = Array.isArray(result.data) ? result.data : [];
+  const levels = items.map((item) => String(item?.risk_level || "").toLowerCase()).filter(Boolean);
+  const decisions = items.map((item) => String(item?.publish_decision || "").toLowerCase()).filter(Boolean);
+  if (!levels.length && !decisions.length) return;
+  const riskRank = { low: 1, medium: 2, high: 3, blocked: 4 };
+  const decisionRank = { proceed: 1, proceed_after_evidence: 2, blocked: 3 };
+  const riskLevel = levels.sort((a, b) => (riskRank[b] || 0) - (riskRank[a] || 0))[0] || "medium";
+  const publishDecision = decisions.sort((a, b) => (decisionRank[b] || 0) - (decisionRank[a] || 0))[0] || "proceed_after_evidence";
+  const data = await new Promise((resolve) => chrome.storage.local.get([COMPLIANCE_DECISIONS_KEY], resolve));
+  const decisionsByKey = data[COMPLIANCE_DECISIONS_KEY] || {};
+  decisionsByKey[key] = {
+    pageUrl: key,
+    riskLevel,
+    publishDecision,
+    checkedAt: new Date().toISOString(),
+    workflowId,
+    categories: [...new Set(items.map((item) => item?.category).filter(Boolean))].slice(0, 12),
+  };
+  const entries = Object.entries(decisionsByKey)
+    .sort((a, b) => new Date(b[1]?.checkedAt || 0) - new Date(a[1]?.checkedAt || 0))
+    .slice(0, 200);
+  await new Promise((resolve) => chrome.storage.local.set({ [COMPLIANCE_DECISIONS_KEY]: Object.fromEntries(entries) }, resolve));
+}
 
 function buildWorkflowCheckpointKey({ tabId, matchedSkills = [], message = {} } = {}) {
   if (message.workflowSessionId) return String(message.workflowSessionId);
@@ -490,6 +570,24 @@ chrome.runtime.onConnect.addListener((port) => {
             ? [selectedSkillPath]
             : await dispatchEtsySkills(message.userInstruction, pageContext);
           console.log("Matched Etsy skills:", matchedSkills);
+          if (requiresComplianceGate({ message, matchedSkills, pageContext })) {
+            const complianceDecision = await getComplianceDecision(pageContext.url || tab.url || "");
+            if (!complianceDecision) {
+              const error = new Error("当前商品涉及儿童、IP、化妆品、食品接触、电器、电池或其他敏感合规场景，必须先完成 Etsy 商品合规审查，再生成 Listing、采购建议或扩品方案。");
+              error.code = "COMPLIANCE_AUDIT_REQUIRED";
+              throw error;
+            }
+            if (["high", "blocked"].includes(complianceDecision.riskLevel) || complianceDecision.publishDecision === "blocked") {
+              const error = new Error(`当前商品的合规决策为 ${complianceDecision.riskLevel}/${complianceDecision.publishDecision}，已阻断 Listing、采购和扩品动作。请先补齐证据并重新完成合规审查。`);
+              error.code = "COMPLIANCE_ACTION_BLOCKED";
+              throw error;
+            }
+            if (complianceDecision.publishDecision !== "proceed") {
+              const error = new Error(`当前商品合规审查结果为 ${complianceDecision.riskLevel}/${complianceDecision.publishDecision}，尚未满足直接发布条件。请先完成 required_evidence 后再继续。`);
+              error.code = "COMPLIANCE_EVIDENCE_REQUIRED";
+              throw error;
+            }
+          }
           const checkpointKey = buildWorkflowCheckpointKey({ tabId: tab.id, matchedSkills, message });
           activeCheckpointKey = checkpointKey;
           const lease = await acquireWorkflowLease(checkpointKey, portId);
@@ -580,6 +678,13 @@ chrome.runtime.onConnect.addListener((port) => {
           });
 
           if (!isCancelled) {
+            if (matchedSkills.some((skillPath) => skillPath.includes("etsy_compliance_auditor"))) {
+              await saveComplianceDecision({
+                pageUrl: tab.url || pageContext.url || "",
+                result: result.result,
+                workflowId: checkpointKey,
+              });
+            }
             // Automatically save successful runs to savedResults
             let savedEntry = null;
             try {
@@ -645,6 +750,7 @@ chrome.runtime.onConnect.addListener((port) => {
             port.postMessage({
               type: "ERROR",
               error: err.message,
+              errorCode: err.code || "WORKFLOW_ERROR",
               resumable: true,
               resumeHint: "本次 workflow 已尽量保存断点。可输入“继续”恢复上次中断节点。",
             });
