@@ -19,6 +19,13 @@
 
 ## 结构化证据账本要求
 
+## 发布前硬门槛
+
+- 生成标题、标签、属性和描述前，必须有当前商品详情页的页面文本证据，以及 Etsy 站内搜索结果或竞品 Listing 证据；不能只凭用户的一句话生成“高频词”。
+- 任何 `estimated_volume`、竞争强度、季节性、买家集中偏好必须绑定 `etsy_search`、`google_search` 或 `google_trends`；没有真实数值只能写“未取得”。
+- 涉及儿童、化妆品、食品接触、电器、电池、品牌/角色/IP 的 Listing，必须先调用 `etsy_compliance_auditor` 的合规审查；合规为 high/blocked 时禁止生成可直接发布版本。
+- 属性字段必须区分页面真实已有属性、用户提供事实和待确认字段，不得把模型补全写成“已填写”。
+
 `data` 数组中的每个标题、关键词、属性或描述方案必须包含 `evidence_ledger`，每条证据包含：
 
 - `source_type`: 允许 `page_dom`、`screenshot_visual`、`etsy_search`、`google_search`、`google_trends`、`supplier_page`、`assumption`。

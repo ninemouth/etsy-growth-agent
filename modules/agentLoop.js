@@ -156,6 +156,7 @@ function compactPageDataForLLM(pageData = {}) {
     visibleText: truncateText(pageData.visibleText || pageData.text || "", 1400),
     metaDescription: truncateText(pageData.metaDescription || "", 400),
     pageHealth: pageData.pageHealth,
+    pageEvidence: pageData.pageEvidence,
     etsyShopProductContext: pageData.etsyShopProductContext,
     productCardsCount: cards.length,
     productCards: cards.slice(0, MAX_LLM_PRODUCT_CARDS).map(compactProductCardForLLM),
@@ -488,6 +489,25 @@ function summarizeProductCards(cards = []) {
 
 const SOURCING_SKILL_RE = /domestic_sourcing_finder|etsy_sourcing_finder/;
 const IMAGE_SEARCH_TOOLS = ["image_search_1688", "image_search_taobao", "image_search_in_browser"];
+const COMPLIANCE_SKILL_RE = /etsy_compliance_auditor/;
+
+export function isComplianceSkill(skillId = "") {
+  return COMPLIANCE_SKILL_RE.test(String(skillId || ""));
+}
+
+const COMPLIANCE_ALLOWED_TOOLS = new Set([
+  "read_current_page",
+  "open_new_tab",
+  "close_tab",
+  "navigate_to",
+  "search_in_browser",
+  "collect_etsy_shop_pages",
+  "collect_etsy_competitor_shops",
+  "analyze_etsy_shop_crawl_screenshots",
+  "etsy_api_get_store_snapshot",
+  "etsy_api_get_products",
+  "etsy_api_get_product_info",
+]);
 
 function isSourcingSkill(skillId = "") {
   return SOURCING_SKILL_RE.test(String(skillId || ""));
@@ -904,6 +924,12 @@ function hasEvidenceSource(toolHistory = [], pageContext = {}, sourceType = "") 
         return /detail\.1688\.com|item\.taobao\.com|tmall\.com/i.test(url);
       });
   }
+  if (normalized === "official_policy" || normalized === "official_regulation") {
+    const evidenceText = JSON.stringify({ toolHistory, pageContext });
+    const officialPolicy = /etsy\.com\/(?:help|legal|seller-handbook|policies)\b/i.test(evidenceText);
+    const officialRegulation = /(?:fda\.gov|cpsc\.gov|ftc\.gov|ec\.europa\.eu|europa\.eu|gov\.uk|gov\.cn|iso\.org|unece\.org|legislation\.gov|law\.cornell\.edu)\b/i.test(evidenceText);
+    return normalized === "official_policy" ? officialPolicy : officialRegulation;
+  }
   if (normalized === "user_input") return true;
   if (normalized === "assumption") return true;
   return false;
@@ -1287,7 +1313,7 @@ function validateEvidenceLedgerEntries({
   label,
   toolHistory,
   pageContext,
-  allowedTypes = ["page_dom", "screenshot_visual", "etsy_api", "etsy_search", "google_search", "google_trends", "sourcing_search", "supplier_page", "user_input", "assumption"],
+  allowedTypes = ["page_dom", "screenshot_visual", "etsy_api", "etsy_search", "google_search", "google_trends", "sourcing_search", "supplier_page", "official_policy", "official_regulation", "user_input", "assumption"],
 }) {
   const errors = [];
   if (!Array.isArray(entries) || entries.length === 0) {
@@ -1524,6 +1550,69 @@ export function autoRepairFinalReportForDelivery(parsed, {
   };
 }
 
+function validateComplianceReport(out, toolHistory = [], pageContext = {}) {
+  const errors = [];
+  const allText = `${out.overview || ""}\n${out.analysis || ""}\n${out.summary || ""}\n${JSON.stringify(out.data || [])}`;
+  const validLevels = new Set(["low", "medium", "high", "blocked"]);
+  const validDecisions = new Set(["proceed", "proceed_after_evidence", "blocked"]);
+
+  if (!Array.isArray(out.data) || out.data.length === 0) {
+    errors.push("合规审查报告至少需要一个风险项，不能返回空 data。");
+    return errors;
+  }
+
+  out.data.forEach((item, idx) => {
+    const label = `合规风险项第 ${idx + 1} 项`;
+    const level = String(item?.risk_level || "").toLowerCase();
+    const decision = String(item?.publish_decision || "").toLowerCase();
+    const category = String(item?.category || "").trim();
+    const ledger = Array.isArray(item?.evidence_ledger) ? item.evidence_ledger : [];
+    const itemText = JSON.stringify(item);
+
+    if (!validLevels.has(level)) errors.push(`${label} 的 risk_level 必须是 low / medium / high / blocked。`);
+    if (!category) errors.push(`${label} 缺少 category，必须明确风险类别。`);
+    if (!validDecisions.has(decision)) errors.push(`${label} 的 publish_decision 必须是 proceed / proceed_after_evidence / blocked。`);
+    if (!item.finding || !item.first_action) errors.push(`${label} 必须包含具体 finding 和 first_action。`);
+    if (!Array.isArray(item.required_evidence)) errors.push(`${label} 缺少 required_evidence 数组。`);
+    if (ledger.length === 0) errors.push(`${label} 缺少 evidence_ledger，合规结论必须可追溯。`);
+
+    errors.push(...validateEvidenceLedgerEntries({
+      entries: ledger,
+      label,
+      toolHistory,
+      pageContext,
+      allowedTypes: ["page_dom", "screenshot_visual", "etsy_api", "official_policy", "official_regulation", "user_input", "assumption"],
+    }));
+
+    if (["high", "blocked"].includes(level) && (!item.required_evidence?.length || !item.first_action)) {
+      errors.push(`${label} 为 ${level} 风险时必须列出 required_evidence 和 first_action。`);
+    }
+    if (level === "blocked" && decision !== "blocked") {
+      errors.push(`${label} 已判定 blocked，但 publish_decision 不是 blocked；必须阻断发布、Listing 生成和采购推荐。`);
+    }
+    if (level === "high" && decision === "proceed") {
+      errors.push(`${label} 为 high 风险时不能直接 proceed。`);
+    }
+    if (/已合规|完全合规|无风险|符合\s*(?:FDA|CE|CPC|FCC|RoHS|REACH)/i.test(String(item.finding || "")) && !ledger.some((entry) => ["official_policy", "official_regulation", "page_dom", "screenshot_visual", "user_input"].includes(String(entry?.source_type || "").toLowerCase()))) {
+      errors.push(`${label} 使用确定性合规表述，但没有商品证据或官方来源，必须降级为待补证据。`);
+    }
+    if (/\b(?:CE|CPC|FDA|FCC|RoHS|REACH)\b/i.test(itemText) && !hasAnyLedgerType(ledger, ["official_policy", "official_regulation"]) && !hasAssumptionFallback(ledger, /CE|CPC|FDA|FCC|RoHS|REACH/i)) {
+      errors.push(`${label} 引用了 CE/CPC/FDA/FCC/RoHS/REACH，但没有官方来源证据或明确 assumption 降级。`);
+    }
+    if (/手拿包|晚宴包|婚礼配饰|clutch|wedding accessory|purse|bag/i.test(itemText) && /\b(?:CE|CPC|FDA)\b/i.test(itemText) && !/儿童|电子|电池|食品接触|待确认|通常不适用|非核心/i.test(itemText)) {
+      errors.push(`${label} 把普通婚礼配饰与 CE/CPC/FDA 直接绑定，缺少适用场景证据。`);
+    }
+    if (/侵权|仿牌|商标|版权|角色|球队|影视|设计师|brand|trademark|copyright|counterfeit/i.test(itemText) && /style|inspired|风格|灵感/i.test(itemText) && level !== "high" && level !== "blocked") {
+      errors.push(`${label} 存在 IP/仿牌线索，却用 style/inspired 弱化风险；无法证明授权时必须至少判定 high。`);
+    }
+  });
+
+  if (/\b(?:CE|CPC|FDA|FCC|RoHS|REACH)\b/i.test(allText) && !hasEvidenceSource(toolHistory, pageContext, "official_policy") && !hasEvidenceSource(toolHistory, pageContext, "official_regulation") && !/待补证据|待验证|assumption|未取得|无法确认/i.test(allText)) {
+    errors.push("报告引用法规或认证，但没有官方政策/法规来源，也没有明确降级为待验证。不能把模型常识交付为合规结论。");
+  }
+  return errors;
+}
+
 export function validateReport(parsed, userInstruction, skillId, toolHistory = [], pageContext = {}) {
   const errors = [];
   if (!parsed || parsed.type !== "final" || !parsed.output) {
@@ -1534,6 +1623,10 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
   if (!out.overview || !out.analysis || !out.summary || !Array.isArray(out.data)) {
     errors.push("final 报告缺少必须的属性（overview, analysis, summary 或 data 数组）");
     return errors;
+  }
+
+  if (isComplianceSkill(skillId)) {
+    errors.push(...validateComplianceReport(out, toolHistory, pageContext));
   }
 
   // 1. Check for technical jargon
@@ -1598,7 +1691,7 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
         const observedValue = entry?.observed_value;
         const usedFor = entry?.used_for;
         const limitation = entry?.limitation;
-        const allowedTypes = ["page_dom", "screenshot_visual", "etsy_api", "etsy_search", "google_search", "google_trends", "assumption"];
+        const allowedTypes = ["page_dom", "screenshot_visual", "etsy_api", "etsy_search", "google_search", "google_trends", "official_policy", "official_regulation", "assumption"];
         if (!allowedTypes.includes(sourceType)) {
           errors.push(`${prefix} 的 source_type 无效，必须是 ${allowedTypes.join(" / ")}。`);
         }
@@ -1925,6 +2018,7 @@ export async function runAgentLoop({ tabId, skillId, skillMarkdown, userInstruct
   const isApiActive = !!(settings.helium10ApiKey || settings.sellerSpriteApiKey);
   const isFastMossActive = !!settings.fastmossApiKey;
   const filteredToolList = Object.keys(tools).filter(name => {
+    if (isComplianceSkill(skillId) && !COMPLIANCE_ALLOWED_TOOLS.has(name)) return false;
     if (name === "query_market_data") return isApiActive;
     if (name === "query_fastmoss_data") return isFastMossActive;
     return true;
@@ -2268,6 +2362,20 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     if (parsed.type === "tool_call") {
       const toolName = parsed.tool;
       const toolArgs = parsed.arguments || {};
+
+      if (isComplianceSkill(skillId) && !COMPLIANCE_ALLOWED_TOOLS.has(toolName)) {
+        messages.push({ role: "assistant", content: assistantContent });
+        messages.push({
+          role: "user",
+          content: JSON.stringify({
+            type: "tool_error",
+            tool: toolName,
+            error: "商品合规审查不允许调用采购、市场规模、广告或供应商工具。请只使用商品页面、店铺分页、截图视觉证据、Etsy 官方政策、目标市场官方法规和个人访问 API 读取工具完成审查。",
+          }),
+        });
+        await saveCheckpoint({ status: "tool_guard_retry", step, lastNode: "compliance_tool_whitelist_guard", toolName });
+        continue;
+      }
 
       if (toolName === "prepare_clean_product_image") {
         if ((!toolArgs.imageUrl || toolArgs.imageUrl === "__TARGET_IMAGE_URL__") && actualTargetImageUrl) {

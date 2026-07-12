@@ -403,7 +403,12 @@ async function readCompletePageData(tabId, message = {}) {
     String(contentData.visibleText || "").trim().length >= 120 ||
     Array.isArray(contentData.productCards) && contentData.productCards.length > 0 ||
     Array.isArray(contentData.productLinks) && contentData.productLinks.length > 0;
-  if (contentHealthy && !contentData?.pageHealth?.isLikelyBlocked) return contentResult;
+  if (contentHealthy && !contentData?.pageHealth?.isLikelyBlocked) {
+    return {
+      ...contentResult,
+      data: { ...contentData, pageEvidence: buildPageEvidence(contentData) },
+    };
+  }
 
   try {
     const fallback = await executeGenericDomSnapshot(tabId);
@@ -423,12 +428,60 @@ async function readCompletePageData(tabId, message = {}) {
           readRoute: contentResult?.ok ? "content_script_plus_dom_fallback" : "scripting_executeScript_dom_fallback",
           contentScriptError: contentError?.message || "",
         },
+        pageEvidence: buildPageEvidence({
+          ...fallback,
+          ...contentData,
+          pageHealth: {
+            ...(fallback.pageHealth || {}),
+            ...(contentData.pageHealth || {}),
+            readRoute: contentResult?.ok ? "content_script_plus_dom_fallback" : "scripting_executeScript_dom_fallback",
+            contentScriptError: contentError?.message || "",
+          },
+        }),
       },
     };
   } catch (fallbackError) {
     if (contentResult?.ok) return contentResult;
     throw new Error(contentError?.message || fallbackError.message);
   }
+}
+
+function buildPageEvidence(pageData = {}) {
+  const url = String(pageData.url || "");
+  const pageType = /etsy\.com\/listing\//i.test(url)
+    ? "etsy_listing"
+    : /etsy\.com\/shop\//i.test(url)
+    ? "etsy_shop"
+    : /etsy\.com\/search|etsy\.com\/market/i.test(url)
+    ? "etsy_search"
+    : /trends\.google\./i.test(url)
+    ? "google_trends"
+    : "web_page";
+  const health = pageData.pageHealth || {};
+  return {
+    pageType,
+    url,
+    readRoute: health.readRoute || "content_script",
+    frameCount: Number(health.frameCount || 1),
+    visibleTextLength: String(pageData.visibleText || "").length,
+    productCardCount: Array.isArray(pageData.productCards) ? pageData.productCards.length : 0,
+    productLinkCount: Array.isArray(pageData.productLinks) ? pageData.productLinks.length : 0,
+    imageCount: Array.isArray(pageData.images) ? pageData.images.length : 0,
+    hasStructuredData: Boolean(pageData.structuredData || pageData.structuredDataRaw?.length),
+    hasMeaningfulDom: Boolean(health.hasMeaningfulDom),
+    isLikelyBlocked: Boolean(health.isLikelyBlocked),
+    hasPagination: Boolean(pageData.etsyShopProductContext?.pagination?.hasPagination),
+    hasNextPage: Boolean(pageData.etsyShopProductContext?.pagination?.hasNextPage),
+    limitation: health.isLikelyBlocked
+      ? "页面疑似受阻或需要人工验证"
+      : pageType === "etsy_search"
+      ? "当前证据是搜索结果可见样本，不代表店铺全量商品"
+      : pageType === "etsy_shop"
+      ? "店铺首页是分页商品展示页，是否全量取决于分页完成状态"
+      : pageType === "etsy_listing"
+      ? "详情页字段仅代表当前可见页面和可访问结构"
+      : "当前页面的可见 DOM 证据",
+  };
 }
 
 async function _captureTabScreenshot(tabId) {

@@ -51,12 +51,15 @@ const ETSY_SKILL_PATHS = new Set([
   "skills/etsy_operations_tracker.skill.md",
   "skills/etsy_listing_generator.skill.md",
   "skills/etsy_review_analyzer.skill.md",
+  "skills/etsy_keyword_analysis.skill.md",
+  "skills/etsy_compliance_auditor.skill.md",
 ]);
 
 const GROWTH_ACTION_SKILL_MAP = {
   diagnose_store_growth: ["skills/etsy_global_shop_optimizer.skill.md"],
   diagnose_sku_funnel: ["skills/etsy_operations_tracker.skill.md", "skills/etsy_global_shop_optimizer.skill.md"],
   rewrite_listing: ["skills/etsy_listing_generator.skill.md"],
+  analyze_keywords: ["skills/etsy_keyword_analysis.skill.md"],
   diagnose_visual_conversion: ["skills/etsy_global_shop_optimizer.skill.md", "skills/etsy_listing_generator.skill.md"],
   scan_competitor_changes: ["skills/etsy_global_shop_optimizer.skill.md"],
   analyze_review_defects: ["skills/etsy_review_analyzer.skill.md"],
@@ -67,6 +70,7 @@ const GROWTH_ACTION_SKILL_MAP = {
   explore_platform_trends: ["skills/etsy_product_opportunity_explorer.skill.md"],
   create_growth_experiment: ["skills/etsy_operations_tracker.skill.md"],
   review_experiment_result: ["skills/etsy_operations_tracker.skill.md"],
+  audit_compliance: ["skills/etsy_compliance_auditor.skill.md"],
 };
 
 function normalizeSkillPath(skillPath) {
@@ -121,6 +125,9 @@ async function dispatchEtsySkills(userInstruction, pageContext = {}) {
     /1688|寻源|货源|采购|供应商|源头|工厂|拿样|比价|套利|采购直达|供货|批发|起批/.test(inst);
   const hasProductOpportunityIntent =
     /选品|开发|类目|爆品|机会|牙刷|合规|eac|准入/.test(inst);
+  const hasComplianceIntent =
+    /合规|法规|认证|证书|侵权|商标|版权|cpc|cpsia|gpsr|reach|rohs|fcc|moCRA|禁售|安全审查|发布前审查/.test(inst);
+  const hasKeywordIntent = /关键词|搜索词|keyword|seo|标签|tags?|标题词|长尾词|search intent/.test(inst);
   const isEtsyShopPage =
     /etsy\.com\/shop\//.test(pageUrl) ||
     /etsy\s+shop|shop\s+on\s+etsy|seller|店铺/.test(pageTitle);
@@ -128,12 +135,18 @@ async function dispatchEtsySkills(userInstruction, pageContext = {}) {
   if (isEtsyShopPage && !hasExplicitSourcingIntent && !hasProductOpportunityIntent) {
     pushUnique(matched, "skills/etsy_global_shop_optimizer.skill.md");
   }
+  if (hasComplianceIntent) {
+    pushUnique(matched, "skills/etsy_compliance_auditor.skill.md");
+  }
+  if (hasKeywordIntent) {
+    pushUnique(matched, "skills/etsy_keyword_analysis.skill.md");
+  }
   
   if (hasShopOptimizationIntent) {
     pushUnique(matched, "skills/etsy_global_shop_optimizer.skill.md");
   }
 
-  if (hasProductOpportunityIntent && !hasShopOptimizationIntent) {
+  if (hasProductOpportunityIntent && !hasShopOptimizationIntent && !hasComplianceIntent) {
     pushUnique(matched, "skills/etsy_product_opportunity_explorer.skill.md");
   }
 
@@ -158,16 +171,18 @@ async function dispatchEtsySkills(userInstruction, pageContext = {}) {
   // If nothing matched, use LLM to classify or load a default set
   if (matched.length === 0) {
     try {
-      const classificationPrompt = [
+        const classificationPrompt = [
         {
           role: "system",
-          content: `你是一个 Etsy 跨境电商运营智能路由器。请根据用户的输入需求，从以下 6 个专有 AI 技能路径中选择所有最相关的技能路径：
+          content: `你是一个 Etsy 跨境电商运营智能路由器。请根据用户的输入需求，从以下 7 个专有 AI 技能路径中选择所有最相关的技能路径：
 1. "skills/etsy_product_opportunity_explorer.skill.md" (Etsy选品、类目需求分析、合规性风险审计)
 2. "skills/etsy_sourcing_finder.skill.md" (1688货源开发、美元跨境利润套利测算、运费关税核算)
 3. "skills/etsy_global_shop_optimizer.skill.md" (Etsy店铺经营诊断、Seller API对账、ABC分级优化)
 4. "skills/etsy_operations_tracker.skill.md" (监控数据、对比优化阶段、流量曝光转化效果)
 5. "skills/etsy_listing_generator.skill.md" (英文 SEO Title/Description 商品详情文案生成)
 6. "skills/etsy_review_analyzer.skill.md" (买家原声差评剖析、退换货与商品缺陷分析)
+7. "skills/etsy_compliance_auditor.skill.md" (Etsy 商品发布前合规、IP、产品安全与目的地法规审查)
+8. "skills/etsy_keyword_analysis.skill.md" (Etsy 站内搜索词、买家意图和标签证据分析)
 
 请直接输出一个包含路径字符串的 JSON 数组（例如：["skills/etsy_sourcing_finder.skill.md"]），不要包含任何其他说明字符，格式必须是标准的 JSON 数组。`
         },
@@ -254,6 +269,20 @@ async function listSkills() {
       name: "Etsy 英文评论痛点与缺陷审计专家",
       description: "深度解析 Etsy 页面上欧美买家的真实原声差评，归纳核心质量/包装/物流问题，提供备货改良指导",
       icon: "⭐",
+    },
+    {
+      id: "etsy_keyword_analysis",
+      path: "skills/etsy_keyword_analysis.skill.md",
+      name: "Etsy SEO 关键词与搜索意图分析专家",
+      description: "基于 Etsy 搜索、Google 搜索和趋势证据拆解关键词、长尾词、标签和买家场景，禁止凭空估算搜索量",
+      icon: "🔎",
+    },
+    {
+      id: "etsy_compliance_auditor",
+      path: "skills/etsy_compliance_auditor.skill.md",
+      name: "Etsy 商品合规与发布风险审查专家",
+      description: "基于商品页面、截图和官方来源审查 Etsy 政策、IP、产品安全、标签与目的地法规风险，阻断高风险发布动作",
+      icon: "🛡️",
     }
   ];
 

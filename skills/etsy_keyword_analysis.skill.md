@@ -19,13 +19,14 @@
 ## Available tools
 
 - read_current_page：读取当前 Etsy 页面
-- extract_product_info：提取商品信息
+- search_in_browser：读取 Etsy、Google Search 或 Google Trends 的真实结果页和截图证据
 
 ## Workflow
 
 1. 调用 read_current_page
-2. 调用 extract_product_info
-3. 输出关键词分析报告
+2. 调用 Etsy 站内搜索，至少获取一个真实结果页；需要站外需求或季节性判断时，再调用 Google Search 和 Google Trends，并保留截图视觉证据。
+3. 仅从页面标题、标签、属性、真实搜索结果和趋势图提取词；没有工具返回的真实搜索量时，`estimated_volume` 必须写“未取得”，不得编造数值或“高频”。
+4. 输出关键词分析报告。每个关键词、竞争和季节性判断都必须带 evidence_ledger；只有 assumption 时只能写待验证假设。
 
 ## Output schema
 
