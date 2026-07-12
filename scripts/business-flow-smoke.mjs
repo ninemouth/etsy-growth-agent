@@ -35,6 +35,9 @@ assert.match(agentLoopSource, /newestImageMessage/, "older screenshot data URLs 
 assert.match(backgroundSource, /runInFlight/, "background should reject duplicate concurrent workflow starts on one port");
 assert.match(backgroundSource, /acquireWorkflowLease[\s\S]*releaseWorkflowLease/, "background should use a global workflow lease instead of a per-port lock only");
 assert.match(agentLoopSource, /isWorkflowCancellationRequested[\s\S]*workflow_cancellation_requested/, "agent loop should honor durable workflow cancellation at node boundaries");
+assert.match(agentLoopSource, /isWorkflowGenerationCurrent[\s\S]*stale_tool_result_discarded/, "late results from an older workflow generation must be discarded");
+assert.match(agentLoopSource, /putDataUrlArtifact[\s\S]*workflow-loop-screenshot/, "immediate workflow screenshots should be retained as evidence artifacts");
+assert.match(toolRegistrySource, /executeGenericDomSnapshot[\s\S]*allFrames: true[\s\S]*scripting_executeScript_dom_fallback/, "page reading should have an all-frame DOM fallback route");
 assert.match(toolRegistrySource, /createOwnedTab[\s\S]*closeOwnedTab/, "Etsy crawl tabs should have centralized workflow ownership");
 assert.match(toolRegistrySource, /createOwnedTabCallback[\s\S]*search_in_browser[\s\S]*google_trends/, "browser search tabs should use workflow ownership");
 assert.match(toolRegistrySource, /image_search_1688[\s\S]*createOwnedTabCallback/, "image search tabs should use workflow ownership");
@@ -534,12 +537,12 @@ const googleTrendsHistory = {
 const competitorOpenHistory = {
   tool: "open_new_tab",
   arguments: { url: "https://www.etsy.com/shop/TopBridalStudio" },
-  result: { ok: true, tabId: 9, pageData: { url: "https://www.etsy.com/shop/TopBridalStudio", visibleText: "TopBridalStudio wedding clutch personalized bridal bags" } },
+  result: { ok: true, tabId: 9, screenshotRef: "__OPEN_TAB_SCREENSHOT_TOP__", pageData: { url: "https://www.etsy.com/shop/TopBridalStudio", visibleText: "TopBridalStudio wedding clutch personalized bridal bags" } },
 };
 const competitorOpenHistory2 = {
   tool: "open_new_tab",
   arguments: { url: "https://www.etsy.com/shop/BellaOliviaGifts" },
-  result: { ok: true, tabId: 10, pageData: { url: "https://www.etsy.com/shop/BellaOliviaGifts", visibleText: "BellaOliviaGifts personalized photo clutch wedding party gifts" } },
+  result: { ok: true, tabId: 10, screenshotRef: "__OPEN_TAB_SCREENSHOT_BELLA__", pageData: { url: "https://www.etsy.com/shop/BellaOliviaGifts", visibleText: "BellaOliviaGifts personalized photo clutch wedding party gifts" } },
 };
 const competitorCrawlHistory = {
   tool: "collect_etsy_shop_pages",
@@ -901,6 +904,22 @@ assert.notDeepEqual(
   [],
   "shop optimizer critic should reject reports without per-competitor product structure benchmarks"
 );
+const contradictoryCompetitorReport = globalThis.structuredClone(shopOptimizerReportWithEtsyEvidence);
+contradictoryCompetitorReport.output.analysis += " 本轮未能完整抓取 3 个竞品店铺的完整页面文本与全屏截图，但已完成竞品画廊和视觉方法反向工程。";
+const searchOnlyCompetitorHistory = [
+  { ...competitorOpenHistory, result: { ...competitorOpenHistory.result, screenshotRef: undefined } },
+  { ...competitorOpenHistory2, result: { ...competitorOpenHistory2.result, screenshotRef: undefined } },
+];
+assert.notDeepEqual(
+  validateReport(contradictoryCompetitorReport, "", "skills/etsy_global_shop_optimizer.skill.md", [
+    { tool: "search_in_browser", arguments: { engine: "etsy", query: "wedding clutch" }, result: validEtsySearchResult },
+    googleSearchHistory,
+    googleTrendsHistory,
+    ...searchOnlyCompetitorHistory,
+  ], meaningfulPageContext),
+  [],
+  "shop optimizer critic should reject deep competitor claims that admit missing page-level capture"
+);
 const falseFullCoverageReport = globalThis.structuredClone(shopOptimizerReportWithEtsyEvidence);
 falseFullCoverageReport.output.analysis += " 已抓取全店所有商品和全部 SKU 的完整价格分布。";
 assert.notDeepEqual(
@@ -913,6 +932,19 @@ assert.notDeepEqual(
   ], meaningfulPageContext),
   [],
   "shop optimizer critic should reject full-shop product coverage claims without API or pagination crawl evidence"
+);
+const falseCountCoverageReport = globalThis.structuredClone(shopOptimizerReportWithEtsyEvidence);
+falseCountCoverageReport.output.overview += " 已读取全店 17 款商品。";
+assert.notDeepEqual(
+  validateReport(falseCountCoverageReport, "", "skills/etsy_global_shop_optimizer.skill.md", [
+    { tool: "search_in_browser", arguments: { engine: "etsy", query: "wedding clutch" }, result: validEtsySearchResult },
+    googleSearchHistory,
+    googleTrendsHistory,
+    competitorOpenHistory,
+    competitorOpenHistory2,
+  ], meaningfulPageContext),
+  [],
+  "shop optimizer critic should reject visible sample counts presented as full-shop counts"
 );
 assert.deepEqual(
   validateReport(falseFullCoverageReport, "", "skills/etsy_global_shop_optimizer.skill.md", [

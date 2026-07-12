@@ -502,6 +502,8 @@ async function runSkill() {
             addLog("warning", "⏸", msg.message || "工作流已保存断点并暂停");
           } else if (msg.type === "tool_timeout") {
             addLog("warning", "⏸", msg.message || `${msg.toolName || "工具"} 超时，已回收临时标签页`);
+          } else if (msg.type === "stale_tool_result_discarded") {
+            addLog("warning", "↩", msg.message || "已丢弃旧 workflow 的迟到结果");
           } else if (msg.type === "auto_fix") {
             addLog("info", "✓", msg.message || "已完成自动修正");
           } else if (msg.type === "reflection" || msg.type === "thinking") {

@@ -2,7 +2,8 @@
 
 import { callLLM, getSettings } from './llmClient.js';
 import { tools, hasValidEtsySearchEvidence } from './toolRegistry.js';
-import { isWorkflowCancellationRequested } from './workflowRuntime.js';
+import { isWorkflowCancellationRequested, isWorkflowGenerationCurrent } from './workflowRuntime.js';
+import { putDataUrlArtifact } from './artifactStore.js';
 
 const globalSessionCache = {};
 const CHECKPOINT_PREFIX = "etsyAgentCheckpoint:";
@@ -938,6 +939,32 @@ function hasEtsyShopCrawlScreenshotEvidence(toolHistory = []) {
   });
 }
 
+function hasPageLevelCompetitorVisualEvidence(toolHistory = []) {
+  return toolHistory.some((entry) => {
+    if (entry?.tool === "analyze_etsy_shop_crawl_screenshots") {
+      return Number(entry.result?.screenshotsAnalyzed || 0) > 0 ||
+        (Array.isArray(entry.result?.analyses) && entry.result.analyses.some((item) => item?.ok !== false && item?.screenshotRef));
+    }
+    if (["open_new_tab", "collect_etsy_shop_pages", "collect_etsy_competitor_shops"].includes(entry?.tool)) {
+      if (entry.result?.screenshotRef) return true;
+      const pages = entry.tool === "collect_etsy_competitor_shops" ? entry.result?.allPages : entry.result?.pages;
+      return Array.isArray(pages) && pages.some((page) => page?.screenshotCaptured && page?.screenshotRef);
+    }
+    return false;
+  });
+}
+
+function validateEvidenceCoverageConsistency(out, toolHistory = []) {
+  const errors = [];
+  const fullText = `${out.overview || ""}\n${out.analysis || ""}\n${out.summary || ""}\n${JSON.stringify(out.data || [])}\n${JSON.stringify(out.competitor_benchmarks || [])}`;
+  const admitsIncompleteCompetitorCapture = /未能|无法|未完成|未完整|只能基于.*搜索结果|完整.*竞品.*(?:文本|截图)|竞品.*(?:页面文本|全屏截图).*(?:缺失|未获得|无法)/i.test(fullText);
+  const makesPageLevelClaims = /竞品.{0,30}(?:画廊|首图|内里|包装|模特|视觉调性|页面结构|店铺公告|发货承诺|详情页)|(?:竞品|头部店铺).{0,30}(?:反向工程|完整分析|深度分析|方法学习)/i.test(fullText);
+  if (admitsIncompleteCompetitorCapture && makesPageLevelClaims && !hasPageLevelCompetitorVisualEvidence(toolHistory)) {
+    errors.push("报告承认竞品店铺页面/截图未完整获取，却继续输出竞品画廊、首图、视觉调性或详情页方法结论。必须先完成竞品页面级 DOM + 截图取证；否则只能输出搜索结果初筛和明确待验证项。");
+  }
+  return errors;
+}
+
 function getUnanalyzedEtsyShopCrawlScreenshotRefs(toolHistory = []) {
   const capturedRefs = new Set();
   const analyzedRefs = new Set();
@@ -1174,7 +1201,7 @@ function hasFullShopProductCrawlEvidence(toolHistory = [], pageContext = {}) {
 function validateShopProductCoverageClaims(out, toolHistory = [], pageContext = {}) {
   const errors = [];
   const text = `${out.overview || ""}\n${out.analysis || ""}\n${out.summary || ""}\n${JSON.stringify(out.data || [])}\n${JSON.stringify(out.competitor_benchmarks || [])}`;
-  const claimsFullCoverage = /(?:已|已经|完成|覆盖|抓取|读取|获取|分析|统计)[^。；\n]{0,24}(?:全店(?:所有|全部|完整|全量)|所有商品|全部商品|完整商品|全量商品|全部\s*SKU|所有\s*SKU|完整\s*SKU|完整价格分布|full\s+(?:shop|store).*(?:products|listings|sku)|all\s+(?:products|listings|skus))/i.test(text);
+  const claimsFullCoverage = /(?:已|已经|完成|覆盖|抓取|读取|获取|分析|统计)[^。；\n]{0,24}(?:全店(?:\s*\d+\s*(?:款|个|件|商品)|所有|全部|完整|全量)|所有商品|全部商品|完整商品|全量商品|全部\s*SKU|所有\s*SKU|完整\s*SKU|完整价格分布|full\s+(?:shop|store).*(?:products|listings|sku)|all\s+(?:products|listings|skus))/i.test(text);
   if (claimsFullCoverage && !hasFullShopProductCrawlEvidence(toolHistory, pageContext)) {
     errors.push("店铺优化报告声称已覆盖全店所有商品/全部 SKU/完整价格分布，但本轮没有 Etsy API 全量商品证据，也没有逐页分页抓取证据。请改为“当前可见样本/已打开页面样本”，或继续逐页打开分页并记录每页 URL 与商品数量。");
   }
@@ -1584,6 +1611,7 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
     if (!hasCompetitorVisualLedger(allLedgerEntries) || competitorVisualCount < (hasCompetitorBlocker ? 1 : 2)) {
       errors.push("店铺优化报告缺少足够的竞品店铺/商品详情页截图视觉证据。当前店铺截图不能替代竞品截图；默认必须在 evidence_ledger 的 screenshot_visual 中写明至少 2 个竞品店铺/商品详情截图观察到的首图卖点、视觉调性、包装/场景图或画廊结构。");
     }
+    errors.push(...validateEvidenceCoverageConsistency(parsed.output, toolHistory));
     const unanalyzedScreenshotRefs = getUnanalyzedEtsyShopCrawlScreenshotRefs(toolHistory);
     if (hasEtsyShopCrawlScreenshotEvidence(toolHistory) && unanalyzedScreenshotRefs.length > 0) {
       errors.push(`本轮已通过 collect_etsy_shop_pages 捕获竞品店铺分页截图，但仍有 ${unanalyzedScreenshotRefs.length} 张截图尚未调用 analyze_etsy_shop_crawl_screenshots 做独立截图解读。请先分析已缓存截图，再把视觉调性、首图/网格陈列、促销/信任信号和局限写入 evidence_ledger。`);
@@ -1841,7 +1869,7 @@ function buildPromptContext(pageContext = {}) {
 
 const INTERNAL_RUNAWAY_GUARD_STEPS = 200;
 
-export async function runAgentLoop({ tabId, skillId, skillMarkdown, userInstruction, pageContext, sendProgress, continueSession, highRandomness, negativeFilter, resumeState = null, onCheckpoint = null, workflowId = "" }) {
+export async function runAgentLoop({ tabId, skillId, skillMarkdown, userInstruction, pageContext, sendProgress, continueSession, highRandomness, negativeFilter, resumeState = null, onCheckpoint = null, workflowId = "", workflowGeneration = "" }) {
   const settings = await getSettings();
 
   let systemPrompt = skillMarkdown;
@@ -2202,7 +2230,10 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         }
       }
 
-      if (workflowId) toolArgs.workflowId = workflowId;
+      if (workflowId) {
+        toolArgs.workflowId = workflowId;
+        toolArgs.workflowGeneration = workflowGeneration;
+      }
 
       if (isImageSearchTool(toolName)) {
         if ((!toolArgs.imageUrl || toolArgs.imageUrl === "__TARGET_IMAGE_URL__") && actualTargetImageUrl) {
@@ -2386,6 +2417,14 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
           });
         }, 30000);
         toolResult = await runToolWithTimeout(toolName, toolArgs);
+        if (workflowId && !(await isWorkflowGenerationCurrent(workflowId, workflowGeneration))) {
+          toolResult = {
+            ok: false,
+            cancelled: true,
+            stale: true,
+            error: "workflow generation changed while the tool was running; late tool result discarded",
+          };
+        }
       } catch (err) {
         toolTimedOut = / timed out after /i.test(String(err.message || ""));
         toolResult = {
@@ -2409,6 +2448,21 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         if (toolHeartbeatTimer) {
           clearInterval(toolHeartbeatTimer);
         }
+      }
+      if (toolResult?.stale) {
+        await saveCheckpoint({ status: "stale_tool_result_discarded", step, lastNode: "stale_tool_result_discarded", toolName });
+        sendProgress({
+          type: "stale_tool_result_discarded",
+          step,
+          toolName,
+          message: "旧 workflow 的迟到工具结果已丢弃，未写入当前恢复任务。",
+        });
+        return {
+          ok: false,
+          type: "interrupted",
+          result: "检测到旧 workflow 迟到结果，已丢弃并保存断点。请继续当前 workflow。",
+          steps: step,
+        };
       }
       toolHistory.push({ tool: toolName, arguments: toolArgs, result: toolResult });
 
@@ -2453,6 +2507,26 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
           }
         } catch (err) {
           console.warn("Could not capture real-time loop screenshot:", err.message);
+        }
+      }
+
+      if (nextScreenshot && toolHistory.at(-1)?.tool === toolName) {
+        try {
+          const screenshotArtifact = await putDataUrlArtifact(nextScreenshot, {
+            namespace: "workflow-loop-screenshot",
+            metadata: { workflowId, toolName, step },
+            ttlMs: 24 * 60 * 60 * 1000,
+          });
+          const latestToolEntry = toolHistory.at(-1);
+          latestToolEntry.result = {
+            ...(latestToolEntry.result || {}),
+            screenshotCaptured: true,
+            screenshotRef: screenshotArtifact.ref,
+            screenshotStorage: screenshotArtifact.storage,
+            screenshotExpiresAt: screenshotArtifact.expiresAt,
+          };
+        } catch (err) {
+          console.warn("Could not persist workflow loop screenshot artifact:", err.message);
         }
       }
 

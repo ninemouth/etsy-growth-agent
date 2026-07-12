@@ -534,6 +534,7 @@ chrome.runtime.onConnect.addListener((port) => {
             negativeFilter: message.negativeFilter,
             resumeState: shouldResumeFromCheckpoint ? existingCheckpoint : null,
             workflowId: checkpointKey,
+            workflowGeneration: lease.generation,
             onCheckpoint: async (checkpoint) => {
               await setWorkflowCheckpoint(checkpointKey, {
                 ...checkpoint,

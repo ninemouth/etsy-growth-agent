@@ -26,6 +26,9 @@ export function resetSessionData() {
   pruneArtifacts({ namespace: ETSY_SHOP_CRAWL_SCREENSHOT_NAMESPACE }).catch((err) => {
     console.warn("Failed to prune Etsy shop screenshot artifacts:", err.message);
   });
+  pruneArtifacts({ namespace: "workflow-loop-screenshot", maxArtifacts: 120 }).catch((err) => {
+    console.warn("Failed to prune workflow screenshot artifacts:", err.message);
+  });
 }
 
 export function getAccumulatedSessionData() {
@@ -313,7 +316,7 @@ async function sendToContentScript(tabId, message) {
     if (isConnErr) {
       try {
         await chrome.scripting.executeScript({
-          target: { tabId },
+          target: { tabId, allFrames: true },
           files: ["content.js"],
         });
         return await sendMessagePromise();
@@ -326,6 +329,104 @@ async function sendToContentScript(tabId, message) {
     } else {
       throw err;
     }
+  }
+}
+
+async function executeGenericDomSnapshot(tabId) {
+  const snapshotFn = () => {
+      const bodyText = document.body?.innerText || "";
+      const links = Array.from(document.querySelectorAll("a[href]"))
+        .map((anchor) => ({ href: anchor.href, text: (anchor.innerText || anchor.getAttribute("aria-label") || "").trim().slice(0, 240) }))
+        .filter((link) => link.href && link.text)
+        .slice(0, 240);
+      const images = Array.from(document.images)
+        .map((image) => ({ src: image.currentSrc || image.src, alt: image.alt || "", width: image.naturalWidth || image.width || 0, height: image.naturalHeight || image.height || 0 }))
+        .filter((image) => image.src)
+        .slice(0, 120);
+      const jsonLd = Array.from(document.querySelectorAll('script[type="application/ld+json"]'))
+        .map((node) => node.textContent || "")
+        .filter(Boolean)
+        .slice(0, 8);
+      return {
+        url: location.href,
+        title: document.title || "",
+        h1: document.querySelector("h1")?.innerText?.trim() || "",
+        visibleText: bodyText.slice(0, 30000),
+        metaDescription: document.querySelector('meta[name="description"]')?.content || "",
+        productLinks: links.filter((link) => /etsy\.com\/(listing|shop)\//i.test(link.href) || /product|item|shop/i.test(link.href)),
+        links,
+        images,
+        structuredDataRaw: jsonLd,
+        pageHealth: {
+          hasMeaningfulDom: bodyText.trim().length >= 120 || links.length > 0,
+          visibleTextLength: bodyText.length,
+          frameUrl: location.href,
+          readRoute: "scripting_executeScript_dom_fallback",
+        },
+      };
+    };
+  let results;
+  try {
+    results = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: snapshotFn });
+  } catch (err) {
+    // A blocked cross-origin frame must not prevent reading the main document.
+    results = await chrome.scripting.executeScript({ target: { tabId }, func: snapshotFn });
+  }
+  const mainFrame = results.find((item) => item.frameId === 0)?.result || results[0]?.result || {};
+  const frameText = results
+    .filter((item) => item.frameId !== 0 && item.result?.visibleText)
+    .map((item) => item.result.visibleText)
+    .join("\n")
+    .slice(0, 30000);
+  return {
+    ...mainFrame,
+    visibleText: [mainFrame.visibleText, frameText].filter(Boolean).join("\n").slice(0, 30000),
+    frameCount: results.length,
+    pageHealth: {
+      ...(mainFrame.pageHealth || {}),
+      frameCount: results.length,
+    },
+  };
+}
+
+async function readCompletePageData(tabId, message = {}) {
+  let contentResult = null;
+  let contentError = null;
+  try {
+    contentResult = await sendToContentScript(tabId, message);
+  } catch (err) {
+    contentError = err;
+  }
+  const contentData = contentResult?.ok ? (contentResult.data || {}) : {};
+  const contentHealthy = contentData?.pageHealth?.hasMeaningfulDom ||
+    String(contentData.visibleText || "").trim().length >= 120 ||
+    Array.isArray(contentData.productCards) && contentData.productCards.length > 0 ||
+    Array.isArray(contentData.productLinks) && contentData.productLinks.length > 0;
+  if (contentHealthy && !contentData?.pageHealth?.isLikelyBlocked) return contentResult;
+
+  try {
+    const fallback = await executeGenericDomSnapshot(tabId);
+    return {
+      ok: Boolean(contentResult?.ok || fallback?.pageHealth?.hasMeaningfulDom),
+      data: {
+        ...fallback,
+        ...contentData,
+        visibleText: String(contentData.visibleText || fallback.visibleText || "").length >= String(fallback.visibleText || "").length
+          ? contentData.visibleText || fallback.visibleText || ""
+          : fallback.visibleText,
+        productLinks: (contentData.productLinks?.length ? contentData.productLinks : fallback.productLinks) || [],
+        images: (contentData.images?.length ? contentData.images : fallback.images) || [],
+        pageHealth: {
+          ...(fallback.pageHealth || {}),
+          ...(contentData.pageHealth || {}),
+          readRoute: contentResult?.ok ? "content_script_plus_dom_fallback" : "scripting_executeScript_dom_fallback",
+          contentScriptError: contentError?.message || "",
+        },
+      },
+    };
+  } catch (fallbackError) {
+    if (contentResult?.ok) return contentResult;
+    throw new Error(contentError?.message || fallbackError.message);
   }
 }
 
@@ -373,7 +474,7 @@ async function focusTab(tabId) {
 }
 
 async function readPageDataFromTab(tabId) {
-  const result = await sendToContentScript(tabId, { type: "READ_CURRENT_PAGE" });
+  const result = await readCompletePageData(tabId, { type: "READ_CURRENT_PAGE" });
   if (!result?.ok) throw new Error(result?.error || "Failed to read page");
   const pageData = result.data || {};
   if (Array.isArray(pageData.productCards)) {
@@ -786,7 +887,7 @@ export const tools = {
       cachedSelectors = memory[domain] || null;
     } catch (_) {}
 
-    const result = await sendToContentScript(tab.id, { 
+    const result = await readCompletePageData(tab.id, {
       type: "READ_CURRENT_PAGE",
       cachedSelectors
     });
@@ -1511,7 +1612,7 @@ Context:
                   let tabResults = [];
                   try {
                     const data = await Promise.race([
-                      sendToContentScript(newTab.id, { type: "READ_CURRENT_PAGE" }),
+                      readCompletePageData(newTab.id, { type: "READ_CURRENT_PAGE" }),
                       new Promise((_, rej) => setTimeout(() => rej(new Error("Timeout")), 3000))
                     ]);
                     const pageData = data?.data || {};
@@ -1645,7 +1746,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
           readInFlight = true;
           pollCount++;
           try {
-            const data = await sendToContentScript(newTab.id, { type: "READ_CURRENT_PAGE" });
+            const data = await readCompletePageData(newTab.id, { type: "READ_CURRENT_PAGE" });
             const pageData = data?.data || {};
             const payload = withSearchEvidenceStatus({
               ok: true,
@@ -1775,7 +1876,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
               }
 
               try {
-                const data = await sendToContentScript(targetTabId, { type: "READ_CURRENT_PAGE" });
+                const data = await readCompletePageData(targetTabId, { type: "READ_CURRENT_PAGE" });
                 const pageData = data?.data || {};
                 const hasProducts = (pageData.productLinks && pageData.productLinks.length > 0) ||
                   (pageData.productCards && pageData.productCards.length > 0);
@@ -1962,7 +2063,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
               }
 
               try {
-                const data = await sendToContentScript(targetTabId, { type: "READ_CURRENT_PAGE" });
+                const data = await readCompletePageData(targetTabId, { type: "READ_CURRENT_PAGE" });
                 const pageData = data?.data || {};
                 const hasProducts = (pageData.productLinks && pageData.productLinks.length > 0) ||
                   (pageData.productCards && pageData.productCards.length > 0);

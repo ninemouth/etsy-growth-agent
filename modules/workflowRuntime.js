@@ -92,6 +92,7 @@ function defaultWorkflow(workflowId) {
     updatedAt: now,
     leaseOwnerId: "",
     leaseExpiresAt: 0,
+    generation: "",
     cancelRequestedAt: null,
   };
 }
@@ -204,10 +205,11 @@ export async function acquireWorkflowLease(workflowId, ownerId, ttlMs = 45_000) 
   const next = await saveWorkflowSnapshot(workflowId, {
     leaseOwnerId: ownerId,
     leaseExpiresAt: now + ttlMs,
+    generation: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
     status: current.status === "created" ? "leased" : current.status,
   });
   await appendWorkflowEvent(workflowId, "lease_acquired", { ownerId, expiresAt: next.leaseExpiresAt });
-  return { ok: true, ownerId, expiresAt: next.leaseExpiresAt };
+  return { ok: true, ownerId, expiresAt: next.leaseExpiresAt, generation: next.generation };
 }
 
 export async function renewWorkflowLease(workflowId, ownerId, ttlMs = 45_000) {
@@ -248,6 +250,12 @@ export async function clearWorkflowCancellation(workflowId) {
 export async function isWorkflowCancellationRequested(workflowId) {
   const current = await readWorkflow(workflowId);
   return Boolean(current?.cancelRequestedAt);
+}
+
+export async function isWorkflowGenerationCurrent(workflowId, generation) {
+  if (!workflowId || !generation) return true;
+  const current = await readWorkflow(workflowId);
+  return current?.generation === generation && current?.status !== "cancellation_requested";
 }
 
 export const __testInternals = { defaultWorkflow, memoryWorkflows, memoryEvents };
