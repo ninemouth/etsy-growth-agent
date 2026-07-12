@@ -3703,6 +3703,10 @@
               log(`⏱ ${data.message || `${data.toolName || "工具"} 仍在执行`}`);
             } else if (data.type === "llm_heartbeat" || data.type === "llm_started") {
               log(`⏱ ${data.message || "AI 正在规划下一步"}`);
+            } else if (data.type === "llm_retry") {
+              log(`↻ ${data.message || "AI 网络请求暂时失败，正在保留证据后重试"}`);
+            } else if (data.type === "llm_error") {
+              log(`! ${data.message || "AI 网络请求失败，已保存断点"}`);
             } else if (data.type === "workflow_timeout") {
               log(`⏸ ${data.message || "工作流已保存断点并暂停"}`);
             } else if (data.type === "tool_timeout") {

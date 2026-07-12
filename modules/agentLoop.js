@@ -2082,6 +2082,11 @@ function buildPromptContext(pageContext = {}) {
 }
 
 const INTERNAL_RUNAWAY_GUARD_STEPS = 200;
+const LLM_RECOVERY_RETRIES = 1;
+
+function isRetryableLLMError(error) {
+  return /network|fetch failed|请求.*失败|请求.*超时|timeout|timed out|502|503|504|429|连接|socket|ECONN|ENET|EAI_AGAIN/i.test(String(error?.message || error || ""));
+}
 
 export async function runAgentLoop({ tabId, skillId, skillMarkdown, userInstruction, pageContext, sendProgress, continueSession, highRandomness, negativeFilter, resumeState = null, onCheckpoint = null, workflowId = "", workflowGeneration = "" }) {
   const settings = await getSettings();
@@ -2327,9 +2332,54 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
           message: `AI 正在基于已采集证据规划下一步，已运行 ${elapsedSeconds} 秒。`,
         });
       }, 30000);
-      assistantContent = await callLLM(llmMessages, ({ chunk, fullText, isReasoning }) => {
-        sendProgress({ type: "streaming", step, chunk, fullText, isReasoning });
-      }, highRandomness);
+      let recoveryAttempt = 0;
+      while (true) {
+        try {
+          assistantContent = await callLLM(llmMessages, ({ chunk, fullText, isReasoning }) => {
+            sendProgress({ type: "streaming", step, chunk, fullText, isReasoning });
+          }, highRandomness);
+          break;
+        } catch (error) {
+          if (!isRetryableLLMError(error) || recoveryAttempt >= LLM_RECOVERY_RETRIES) {
+            await saveCheckpoint({
+              status: "llm_network_error",
+              step,
+              lastNode: "llm_call_started",
+              error: error.message,
+              retryable: isRetryableLLMError(error),
+            });
+            sendProgress({
+              type: "llm_error",
+              step,
+              retryable: isRetryableLLMError(error),
+              message: `AI 网络请求未完成：${error.message}。已保存当前节点和工具证据，不会重复已完成的浏览器采集。`,
+            });
+            return {
+              ok: false,
+              type: "interrupted",
+              result: "AI 网络请求暂时失败，已保存当前节点和工具证据。请发送“继续”重试当前 AI 请求，不会从第一步重新采集。",
+              steps: step - 1,
+              retryable: isRetryableLLMError(error),
+              error: error.message,
+            };
+          }
+          recoveryAttempt += 1;
+          await saveCheckpoint({
+            status: "llm_retry_wait",
+            step,
+            lastNode: "llm_network_retry",
+            retryAttempt: recoveryAttempt,
+            error: error.message,
+          });
+          sendProgress({
+            type: "llm_retry",
+            step,
+            retryAttempt: recoveryAttempt,
+            message: `AI 网络请求暂时失败，${recoveryAttempt} 秒后自动重试；已保留当前证据。`,
+          });
+          await new Promise((resolve) => setTimeout(resolve, recoveryAttempt * 2000));
+        }
+      }
     } finally {
       if (llmHeartbeatTimer) clearInterval(llmHeartbeatTimer);
     }

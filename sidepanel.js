@@ -498,6 +498,10 @@ async function runSkill() {
             addLog("info", "⏱", msg.message || "AI 正在基于已采集证据规划下一步");
           } else if (msg.type === "llm_started") {
             addLog("info", "🧮", msg.message || `正在请求 AI（约 ${msg.estimatedTokens || "?"} tokens）`);
+          } else if (msg.type === "llm_retry") {
+            addLog("warning", "↻", msg.message || "AI 网络请求暂时失败，正在保留证据后重试");
+          } else if (msg.type === "llm_error") {
+            addLog("error", "!", msg.message || "AI 网络请求失败，已保存断点");
           } else if (msg.type === "workflow_timeout") {
             addLog("warning", "⏸", msg.message || "工作流已保存断点并暂停");
           } else if (msg.type === "tool_timeout") {

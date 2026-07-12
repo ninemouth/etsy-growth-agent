@@ -29,6 +29,8 @@ const shopOptimizerSkillSource = fs.readFileSync(path.join(root, "skills", "etsy
 
 assert.match(agentLoopSource, /type:\s*"tool_heartbeat"/, "long-running tool calls should emit heartbeat progress");
 assert.match(agentLoopSource, /type:\s*"llm_heartbeat"/, "long-running LLM planning calls should emit heartbeat progress between tool calls");
+assert.match(agentLoopSource, /LLM_RECOVERY_RETRIES/, "transient LLM network failures should have a bounded recovery retry");
+assert.match(agentLoopSource, /type:\s*"llm_error"[\s\S]*type:\s*"interrupted"/, "final LLM network failures should preserve the checkpoint instead of becoming a fake report");
 assert.match(agentLoopSource, /MAX_LLM_TOTAL_CHARS\s*=\s*140000/, "LLM planning requests should have a total history payload budget");
 assert.doesNotMatch(agentLoopSource, /MAX_CONTINUOUS_RUNTIME_MS\s*=\s*15 \* 60 \* 1000/, "normal workflows must not be hard-interrupted by a fixed continuous runtime budget");
 assert.doesNotMatch(agentLoopSource, /工作流已达到本次连续运行预算/, "normal workflow delivery must not stop at a fixed continuous runtime budget");
@@ -52,6 +54,7 @@ assert.match(toolRegistrySource, /etsy_crawl_page_started[\s\S]*etsy_crawl_page_
 assert.match(toolRegistrySource, /etsy_screenshot_observation_started[\s\S]*etsy_screenshot_observation_completed/, "screenshot analysis should expose durable per-page stage events");
 assert.match(sidepanelSource, /msg\.type === "llm_started"/, "sidepanel should show LLM request payload telemetry");
 assert.match(sidepanelSource, /msg\.type === "llm_heartbeat"[\s\S]*AI 正在基于已采集证据规划下一步/, "sidepanel should show LLM heartbeat progress instead of appearing stuck between tool calls");
+assert.match(sidepanelSource, /msg\.type === "llm_retry"[\s\S]*msg\.type === "llm_error"/, "sidepanel should show bounded LLM network recovery state");
 assert.match(agentLoopSource, /etsyAgentCheckpoint:/, "agent loop should persist resumable workflow checkpoints");
 assert.match(agentLoopSource, /CHECKPOINT_IMAGE_PLACEHOLDER/, "persisted checkpoints should omit base64 screenshot payloads");
 assert.match(agentLoopSource, /type:\s*"checkpoint_restored"/, "agent loop should notify the UI when a checkpoint is restored");
