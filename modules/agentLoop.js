@@ -2,7 +2,7 @@
 
 import { callLLM, getSettings } from './llmClient.js';
 import { tools, hasValidEtsySearchEvidence, hasValidGoogleTrendsEvidence } from './toolRegistry.js';
-import { isWorkflowCancellationRequested, isWorkflowGenerationCurrent } from './workflowRuntime.js';
+import { isWorkflowCancellationRequested, isWorkflowGenerationCurrent, requestWorkflowCancellation } from './workflowRuntime.js';
 import { putDataUrlArtifact } from './artifactStore.js';
 import { captureFullPageScreenshot } from './debuggerCapture.js';
 
@@ -18,6 +18,22 @@ const MAX_LLM_MESSAGE_CHARS = 26000;
 const MAX_LLM_HISTORY_MESSAGES = 24;
 const MAX_LLM_TOTAL_CHARS = 140000;
 const QUALITY_RETRY_LIMIT = 2;
+const inFlightToolRuns = new Map();
+
+function stableToolValue(value) {
+  if (Array.isArray(value)) return value.map(stableToolValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableToolValue(value[key])]));
+  }
+  return value;
+}
+
+function toolRunKey(toolName, toolArgs = {}) {
+  const workflowId = String(toolArgs.workflowId || "default");
+  const dedupeArgs = { ...toolArgs };
+  delete dedupeArgs.workflowGeneration;
+  return `${workflowId}:${toolName}:${JSON.stringify(stableToolValue(dedupeArgs))}`;
+}
 
 function checkpointStorageAvailable() {
   return typeof chrome !== "undefined" && chrome.storage?.local;
@@ -517,6 +533,17 @@ const COMPLIANCE_ALLOWED_TOOLS = new Set([
   "etsy_api_get_product_info",
 ]);
 
+const PLATFORM_TRENDS_ALLOWED_TOOLS = new Set([
+  "read_current_page",
+  "open_new_tab",
+  "close_tab",
+  "navigate_to",
+  "search_in_browser",
+  "collect_etsy_shop_pages",
+  "collect_etsy_competitor_shops",
+  "analyze_etsy_shop_crawl_screenshots",
+]);
+
 function isSourcingSkill(skillId = "") {
   return SOURCING_SKILL_RE.test(String(skillId || ""));
 }
@@ -742,6 +769,33 @@ function getRepeatedOpenEvidence(toolHistory = [], url = "") {
 
 function getEtsyBrowserWorkflowGuardError({ skillId = "", toolName = "", toolArgs = {}, toolHistory = [] } = {}) {
   if (!isEtsyBusinessSkill(skillId)) return null;
+  if (isPlatformTrendSkill(skillId) && toolName === "search_in_browser") {
+    const engine = String(toolArgs.engine || "google").toLowerCase();
+    const query = String(toolArgs.query || toolArgs.keyword || "").trim().replace(/\s+/g, " ").toLowerCase();
+    const searchType = String(toolArgs.searchType || "listing").toLowerCase();
+    const duplicate = toolHistory.find((entry) => {
+      if (entry?.tool !== "search_in_browser" || entry?.result?.ok === false || entry?.result?.error) return false;
+      const previousEngine = String(entry.arguments?.engine || "google").toLowerCase();
+      const previousQuery = String(entry.arguments?.query || entry.arguments?.keyword || "").trim().replace(/\s+/g, " ").toLowerCase();
+      const previousType = String(entry.arguments?.searchType || "listing").toLowerCase();
+      return previousEngine === engine && previousQuery === query && previousType === searchType;
+    });
+    if (duplicate) {
+      return {
+        type: "tool_error",
+        tool: toolName,
+        error: `趋势证据请求已完成，禁止重复打开同一搜索：${engine}/${query}。请复用已有 toolHistory 证据，转入下一项尚未完成的证据阶段或输出 final；不要重新开页。`,
+        reusedEvidence: true,
+        previousSearch: {
+          engine,
+          query,
+          searchType,
+          evidenceOk: duplicate.result?.evidenceOk !== false,
+          searchUrl: duplicate.result?.searchUrl || duplicate.result?.pageData?.url || "",
+        },
+      };
+    }
+  }
   if (toolName !== "open_new_tab") return null;
 
   const targetUrl = String(toolArgs.url || "");
@@ -803,11 +857,24 @@ function getToolTimeoutMs(toolName = "") {
 async function runToolWithTimeout(toolName, toolArgs) {
   const timeoutMs = getToolTimeoutMs(toolName);
   let timeoutId = null;
+  const key = toolRunKey(toolName, toolArgs);
+  let operation = inFlightToolRuns.get(key);
+  if (!operation) {
+    operation = Promise.resolve()
+      .then(() => tools[toolName](toolArgs))
+      .finally(() => {
+        if (inFlightToolRuns.get(key) === operation) inFlightToolRuns.delete(key);
+      });
+    inFlightToolRuns.set(key, operation);
+  }
   try {
     return await Promise.race([
-      tools[toolName](toolArgs),
+      operation,
       new Promise((_, reject) => {
-        timeoutId = setTimeout(() => {
+        timeoutId = setTimeout(async () => {
+          if (toolArgs.workflowId) {
+            await requestWorkflowCancellation(toolArgs.workflowId, `${toolName}_timeout`);
+          }
           reject(new Error(`${toolName} timed out after ${Math.round(timeoutMs / 1000)} seconds`));
         }, timeoutMs);
       }),
@@ -1809,6 +1876,42 @@ function validatePlatformTrendReport(out, toolHistory = [], pageContext = {}) {
   return errors;
 }
 
+function validatePlatformTrendToolResult(toolName, toolArgs = {}, toolResult = {}) {
+  const errors = [];
+  const engine = String(toolArgs.engine || "").toLowerCase();
+  if (toolName === "search_in_browser") {
+    if (engine === "etsy" && !hasValidEtsySearchEvidence(toolResult)) {
+      errors.push("Etsy 搜索结果没有通过可用证据校验，未获得可验证的商品/店铺卡片或页面文本。");
+    }
+    if (engine === "google_trends" && !hasValidGoogleTrendsEvidence(toolResult)) {
+      errors.push("Google Trends 页面没有通过可用证据校验，未获得可验证的趋势页面内容。");
+    }
+    if (["google", "google_us", "google_ru"].includes(engine)) {
+      const pageData = toolResult?.pageData || {};
+      if (toolResult?.ok === false || String(pageData.visibleText || "").trim().length < 80) {
+        errors.push("Google Search 页面内容不足，不能把空页面或搜索失败当成站外证据。");
+      }
+    }
+  }
+  if (["collect_etsy_shop_pages", "collect_etsy_competitor_shops"].includes(toolName)) {
+    const pages = toolName === "collect_etsy_competitor_shops" ? toolResult?.allPages : toolResult?.pages;
+    if (toolResult?.ok === false || !Array.isArray(pages) || pages.length === 0) {
+      errors.push("Etsy 店铺采集没有返回可分析的分页结果，不能进入趋势综合阶段。");
+    } else if (pages.every((page) => !page?.screenshotRef) && pages.every((page) => !page?.screenshotCaptured)) {
+      errors.push("Etsy 店铺分页没有形成截图 artifact，不能进入视觉分析阶段。");
+    }
+  }
+  if (toolName === "analyze_etsy_shop_crawl_screenshots") {
+    if (toolResult?.ok === false || Number(toolResult?.screenshotsAnalyzed || 0) < 1 || !Array.isArray(toolResult?.stage_observations) || !toolResult?.stage_synthesis || !toolResult?.stage_report_inputs) {
+      errors.push("截图分析没有完成 observations、synthesis 和 report_inputs 三阶段输出，不能把未完成视觉分析交给报告阶段。");
+    }
+  }
+  if (toolName === "open_new_tab" && /etsy\.com/i.test(String(toolResult?.url || toolResult?.finalUrl || toolArgs.url || "")) && toolResult?.evidenceOk !== true) {
+    errors.push("Etsy 详情页未形成可用页面证据，不能继续基于该标签页作趋势判断。");
+  }
+  return errors;
+}
+
 export function validateReport(parsed, userInstruction, skillId, toolHistory = [], pageContext = {}) {
   const errors = [];
   if (!parsed || parsed.type !== "final" || !parsed.output) {
@@ -2635,6 +2738,20 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       const toolName = parsed.tool;
       const toolArgs = parsed.arguments || {};
 
+      if (isPlatformTrendSkill(skillId) && !PLATFORM_TRENDS_ALLOWED_TOOLS.has(toolName)) {
+        messages.push({ role: "assistant", content: assistantContent });
+        messages.push({
+          role: "user",
+          content: JSON.stringify({
+            type: "tool_error",
+            tool: toolName,
+            error: "Etsy 趋势任务只允许使用当前页面、Etsy 公开搜索、Google Search/Trends、公开竞品分页采集和截图分析工具。不要调用静默泛搜索、寻源、广告、订单或其他与当前证据阶段无关的工具。",
+          }),
+        });
+        await saveCheckpoint({ status: "tool_quality_retry", step, lastNode: "platform_trends_tool_whitelist_guard", toolName });
+        continue;
+      }
+
       if (isComplianceSkill(skillId) && !COMPLIANCE_ALLOWED_TOOLS.has(toolName)) {
         messages.push({ role: "assistant", content: assistantContent });
         messages.push({
@@ -2902,6 +3019,42 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         lastNode: toolTimedOut ? "tool_timeout" : "tool_result",
         toolName,
       });
+
+      if (isPlatformTrendSkill(skillId)) {
+        const toolQualityErrors = validatePlatformTrendToolResult(toolName, toolArgs, toolResult);
+        if (toolQualityErrors.length > 0) {
+          const requestKey = toolRunKey(toolName, toolArgs);
+          const failedAttempts = toolHistory.filter((entry) =>
+            entry?.tool === toolName && toolRunKey(entry.tool, entry.arguments || {}) === requestKey &&
+            validatePlatformTrendToolResult(entry.tool, entry.arguments || {}, entry.result || {}).length > 0
+          ).length;
+          const qualityMessage = `【过程证据闸门拒绝】工具 ${toolName} 已返回，但结果不能作为可靠趋势证据：\n${toolQualityErrors.map((error, index) => `${index + 1}. ${error}`).join("\n")}\n请修复当前证据阶段或改为明确 blocked/assumption，不要继续生成基于空证据的结论。`;
+          if (failedAttempts >= 2) {
+            messages.push({ role: "assistant", content: assistantContent });
+            messages.push({ role: "user", content: qualityMessage });
+            await saveCheckpoint({
+              status: "step_quality_blocked",
+              step,
+              lastNode: "step_quality_blocked",
+              toolName,
+              toolQualityErrors,
+            });
+            sendProgress({ type: "step_quality_blocked", step, toolName, message: qualityMessage, toolQualityErrors });
+            return {
+              ok: false,
+              type: "interrupted",
+              result: `趋势证据阶段 ${toolName} 连续失败，已阻断后续分析并保存断点。请发送“继续”修复当前证据阶段。首个问题：${toolQualityErrors[0]}`,
+              steps: step,
+              qualityGateBlocked: true,
+              validationErrors: toolQualityErrors,
+            };
+          }
+          messages.push({ role: "assistant", content: assistantContent });
+          messages.push({ role: "user", content: qualityMessage });
+          await saveCheckpoint({ status: "tool_quality_retry", step, lastNode: "tool_quality_retry", toolName, toolQualityErrors });
+          continue;
+        }
+      }
 
       if (toolResult && toolResult.isCaptcha) {
         sendProgress({

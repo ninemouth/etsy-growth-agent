@@ -32,6 +32,10 @@ assert.match(agentLoopSource, /type:\s*"llm_heartbeat"/, "long-running LLM plann
 assert.match(agentLoopSource, /LLM_RECOVERY_RETRIES/, "transient LLM network failures should have a bounded recovery retry");
 assert.match(agentLoopSource, /type:\s*"llm_error"[\s\S]*type:\s*"interrupted"/, "final LLM network failures should preserve the checkpoint instead of becoming a fake report");
 assert.match(agentLoopSource, /QUALITY_RETRY_LIMIT\s*=\s*2/, "quality repair must have a bounded retry window");
+assert.match(agentLoopSource, /inFlightToolRuns[\s\S]*toolRunKey[\s\S]*requestWorkflowCancellation/, "timed-out tool work must be deduplicated and cancellation must propagate to the underlying operation");
+assert.match(agentLoopSource, /趋势证据请求已完成，禁止重复打开同一搜索/, "trend evidence searches must not repeat the same engine/query request");
+assert.match(agentLoopSource, /PLATFORM_TRENDS_ALLOWED_TOOLS[\s\S]*platform_trends_tool_whitelist_guard/, "trend workflows must reject unrelated tools before evidence collection drifts");
+assert.match(agentLoopSource, /validatePlatformTrendToolResult[\s\S]*step_quality_blocked/, "trend tool results must pass a per-step evidence gate before the next LLM turn");
 assert.match(agentLoopSource, /quality_gate_blocked[\s\S]*不得交付为成功报告/, "reports that still fail validation after retries must be blocked, not delivered");
 assert.match(agentLoopSource, /restoredCheckpoint\.status === "quality_gate_blocked"[\s\S]*\? 0/, "user continuation after a quality block must receive a fresh bounded repair window");
 assert.match(backgroundSource, /qualityGateBlocked[\s\S]*status: qualityGateBlocked \? "quality_gate_blocked"/, "background must preserve quality-gate interruption state for resumable repair");

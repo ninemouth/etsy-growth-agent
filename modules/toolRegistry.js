@@ -2020,8 +2020,8 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
     const maxPollAttempts = normalizedEngine === "google_trends" ? 44 : normalizedEngine === "etsy" ? 30 : 20;
     const pollDelayMs = 500;
 
-    const runAttempt = (attempt, attemptIndex) => new Promise((resolve) => {
-      createOwnedTabCallback({ workflowId, url: safeEncodeURI(attempt.url), active: true }, (newTab) => {
+      const runAttempt = (attempt, attemptIndex) => new Promise((resolve) => {
+        createOwnedTabCallback({ workflowId, url: safeEncodeURI(attempt.url), active: true }, (newTab) => {
         let settled = false;
         let readInFlight = false;
         const finish = async (payload) => {
@@ -2046,6 +2046,20 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
         let pollCount = 0;
         const readResultPage = async () => {
           if (settled || readInFlight) return;
+          if (workflowId !== "default" && await isWorkflowCancellationRequested(workflowId)) {
+            clearInterval(checkLoad);
+            await finish(withSearchEvidenceStatus({
+              ok: false,
+              cancelled: true,
+              tabId: newTab.id,
+              searchUrl: attempt.url,
+              queryOriginal: query,
+              queryUsed: targetQuery,
+              pageData: {},
+              message: "搜索已因 workflow 取消或超时而停止，未将未完成页面视为有效证据。",
+            }, normalizedEngine));
+            return;
+          }
           readInFlight = true;
           pollCount++;
           try {
