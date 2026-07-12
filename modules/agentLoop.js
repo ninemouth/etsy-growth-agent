@@ -1,7 +1,7 @@
 // modules/agentLoop.js — The Agent reasoning & tool loop logic
 
 import { callLLM, getSettings } from './llmClient.js';
-import { tools, hasValidEtsySearchEvidence } from './toolRegistry.js';
+import { tools, hasValidEtsySearchEvidence, hasValidGoogleTrendsEvidence } from './toolRegistry.js';
 import { isWorkflowCancellationRequested, isWorkflowGenerationCurrent } from './workflowRuntime.js';
 import { putDataUrlArtifact } from './artifactStore.js';
 import { captureFullPageScreenshot } from './debuggerCapture.js';
@@ -489,6 +489,11 @@ function summarizeProductCards(cards = []) {
 const SOURCING_SKILL_RE = /domestic_sourcing_finder|etsy_sourcing_finder/;
 const IMAGE_SEARCH_TOOLS = ["image_search_1688", "image_search_taobao", "image_search_in_browser"];
 const COMPLIANCE_SKILL_RE = /etsy_compliance_auditor/;
+const PLATFORM_TRENDS_SKILL_RE = /etsy_platform_trends/;
+
+export function isPlatformTrendSkill(skillId = "") {
+  return PLATFORM_TRENDS_SKILL_RE.test(String(skillId || ""));
+}
 
 export function isComplianceSkill(skillId = "") {
   return COMPLIANCE_SKILL_RE.test(String(skillId || ""));
@@ -944,7 +949,7 @@ function hasEvidenceSource(toolHistory = [], pageContext = {}, sourceType = "") 
   }
   if (normalized === "google_trends") {
     return hasSuccessfulToolCall(toolHistory, (entry) =>
-      entry.tool === "search_in_browser" && String(entry.arguments?.engine || "").toLowerCase() === "google_trends"
+      entry.tool === "search_in_browser" && String(entry.arguments?.engine || "").toLowerCase() === "google_trends" && hasValidGoogleTrendsEvidence(entry.result)
     );
   }
   if (normalized === "sourcing_search") {
@@ -1674,6 +1679,135 @@ function validateOperationsReport(out, toolHistory = [], pageContext = {}) {
   return errors;
 }
 
+const TREND_FORBIDDEN_PRIVATE_DATA_RE = /(?:竞品\s*(?:转化率|conversion|sessions?|订单|销售额|流量|加购率)|(?:竞品|其他店铺|平台)\s*(?:后台|analytics|分析数据)|(?:拉取|读取|获取|对比).{0,18}(?:竞品|其他店铺).{0,18}(?:API|订单|转化|sessions?|流量)|(?:平台|全平台)\s*(?:搜索量|搜索指数|analytics|流量|订单))/i;
+const TREND_STRONG_CLAIM_RE = /完整(?:市场|全平台)?(?:价格|商品|SKU)?(?:分布|数据)|全平台|全市场|主要竞品|头部竞品(?:均|都)|需求旺盛|显著峰值|点击率更高|转化率更高|买家(?:普遍|常见|集中)反馈|评论区常见|["“']?7\s*[-–—到至]\s*12\s*(?:个)?\s*(?:工作日|日|天)|香港发货.{0,18}\d+\s*[-–—到至]\s*\d+\s*(?:个)?\s*(?:工作日|日|天)|full market|entire market|complete price distribution|higher CTR|higher conversion|common buyer feedback|significant peak|strong demand/i;
+const TREND_LOGISTICS_RE = /配送|物流|发货|运输|时效|工作日|delivery|shipping|transit|fulfillment/i;
+const TREND_CERTIFICATION_RE = /\b(?:CE|CPC|FDA|FCC|RoHS|REACH)\b/i;
+
+function trendLedgerText(entries = []) {
+  return entries.map((entry) => [
+    entry?.source_ref,
+    entry?.observed_value,
+    entry?.used_for,
+    entry?.limitation,
+  ].filter(Boolean).join(" ")).join(" ");
+}
+
+function hasTrendSampleScope(item = {}) {
+  const coverage = item?.coverage || item?.sample_scope || item?.sampleCoverage;
+  const sampleCount = item?.sample_count ?? item?.sampleCount;
+  return Number.isFinite(Number(sampleCount)) && Number(sampleCount) > 0 && hasValue(coverage) &&
+    (hasValue(item?.limitation) || hasValue(item?.evidence_limitation));
+}
+
+function hasTrendCompetitorPageEvidence(ledger = []) {
+  const refs = new Set();
+  ledger.forEach((entry) => {
+    const sourceType = String(entry?.source_type || "").toLowerCase();
+    if (!['page_dom', 'screenshot_visual'].includes(sourceType)) return;
+    const text = [entry?.source_ref, entry?.observed_value, entry?.used_for].filter(Boolean).join(" ");
+    if (!/competitor|竞品|店铺|shop|listing|商品详情|高排名|best[-\s]?seller|top shop/i.test(text)) return;
+    const url = String(entry?.source_ref || "").match(/https?:\/\/[^\s)]+/i)?.[0];
+    refs.add(url || text.slice(0, 160));
+  });
+  return refs.size >= 2;
+}
+
+function hasTrendVisualForTrends(ledger = []) {
+  return ledger.some((entry) => {
+    if (String(entry?.source_type || "").toLowerCase() !== "screenshot_visual") return false;
+    return /Google Trends|trends\.google|Interest over time|related queries|related topics|趋势图|需求曲线|季节性/i.test(
+      [entry?.source_ref, entry?.observed_value, entry?.used_for, entry?.limitation].filter(Boolean).join(" ")
+    );
+  });
+}
+
+function hasPositiveUnsupportedPrivateDataClaim(text = "") {
+  return String(text || "").split(/[。！？!?.\n]/).some((sentence) =>
+    TREND_FORBIDDEN_PRIVATE_DATA_RE.test(sentence) &&
+    !/不能|不可|不包含|未取得|未获取|未读取|无法|禁止|不得|not available|unavailable|cannot|no access|不支持/i.test(sentence)
+  );
+}
+
+function validatePlatformTrendReport(out, toolHistory = [], pageContext = {}) {
+  const errors = [];
+  const items = Array.isArray(out.data) ? out.data : [];
+  const fullText = `${out.overview || ""}\n${out.analysis || ""}\n${out.summary || ""}\n${JSON.stringify(items)}`;
+  const allLedger = items.flatMap((item) => Array.isArray(item?.evidence_ledger) ? item.evidence_ledger : []);
+
+  if (items.length === 0) return ["Etsy 趋势报告至少需要一个结构化机会项，不能返回空 data。"];
+  if (hasPositiveUnsupportedPrivateDataClaim(fullText)) {
+    errors.push("趋势报告引用了竞品后台、竞品订单/转化率或平台搜索量等不可得数据。Etsy 个人卖家 API 只能读取当前授权自营店铺；竞品和平台趋势必须使用公开页面、Etsy 搜索、Google Search 或 Google Trends。");
+  }
+  if (!hasLedgerType(allLedger, "etsy_search")) {
+    errors.push("趋势报告缺少 Etsy 公开搜索证据。Search Grid 只能作为本轮可见样本，必须先完成真实 Etsy 搜索并记录查询口径。");
+  }
+
+  const usesTrend = /Google Trends|谷歌趋势|趋势图|搜索趋势|搜索热度|季节性|需求曲线|Interest over time|related queries|related topics|峰值|peak/i.test(fullText);
+  if (usesTrend && !hasLedgerType(allLedger, "google_trends")) {
+    errors.push("报告使用了 Google Trends/季节性/需求曲线结论，但 evidence_ledger 缺少 google_trends 工具证据。");
+  }
+  if (usesTrend && !hasTrendVisualForTrends(allLedger)) {
+    errors.push("报告使用了趋势或季节性结论，但没有 Google Trends 截图视觉解读。必须记录地区、时间范围、查询词、曲线方向、related queries/topics 和截图局限。");
+  }
+  if (/Google Search|谷歌搜索|站外搜索|搜索结果|欧美市场|市场调研/i.test(fullText) && !hasLedgerType(allLedger, "google_search")) {
+    errors.push("报告使用了 Google Search/站外市场结论，但 evidence_ledger 缺少 google_search 证据。");
+  }
+  if (TREND_CERTIFICATION_RE.test(fullText) && !hasAnyLedgerType(allLedger, ["official_policy", "official_regulation"]) && !hasAssumptionFallback(allLedger, /CE|CPC|FDA|FCC|RoHS|REACH/i)) {
+    errors.push("趋势报告引用 CE/CPC/FDA/FCC/RoHS/REACH，但没有官方法规/平台政策证据，也没有明确降级为待验证假设；不能把普通婚礼手拿包默认绑定这些认证。");
+  }
+
+  items.forEach((item, idx) => {
+    const label = `趋势机会第 ${idx + 1} 项`;
+    const requiredFields = [
+      "opportunity_id", "keyword_or_category", "buyer_scenario", "price_band",
+      "demand_signal", "seasonality", "competitor_signal", "next_validation_action",
+      "evidence", "evidence_ledger",
+    ];
+    requiredFields.forEach((field) => {
+      if (field === "evidence_ledger" ? !Array.isArray(item?.[field]) || item[field].length === 0 : !hasValue(item?.[field])) {
+        errors.push(`${label} 缺少必填结构化字段 ${field}。报告和对话必须使用同一份结构化数据，不能只输出叙述性建议。`);
+      }
+    });
+    const priceBand = item?.price_band;
+    if (!priceBand || !hasValue(priceBand.min) || !hasValue(priceBand.max) || !hasValue(priceBand.basis)) {
+      errors.push(`${label} 的 price_band 必须包含 min、max 和 basis，并明确是公开可见样本价格，不得冒充全平台分布。`);
+    }
+    if (!["observed", "assumption", "blocked"].includes(String(item?.demand_signal || "").toLowerCase())) {
+      errors.push(`${label} 的 demand_signal 只能是 observed、assumption 或 blocked。`);
+    }
+    if (!hasTrendSampleScope(item)) {
+      errors.push(`${label} 缺少 sample_count、coverage 和 limitation。只有少量搜索卡片时必须明确样本量、覆盖范围和局限，不能写成完整市场价格带或全平台结论。`);
+    }
+    const ledger = Array.isArray(item?.evidence_ledger) ? item.evidence_ledger : [];
+    errors.push(...validateEvidenceLedgerEntries({
+      entries: ledger,
+      label,
+      toolHistory,
+      pageContext,
+      allowedTypes: ["page_dom", "screenshot_visual", "etsy_search", "google_search", "google_trends", "official_policy", "official_regulation", "user_input", "assumption"],
+    }));
+    const itemText = JSON.stringify(item);
+    if (TREND_STRONG_CLAIM_RE.test(itemText) && !hasTrendSampleScope(item)) {
+      errors.push(`${label} 使用了超出样本覆盖能力的强结论；请改为“本轮公开样本观察”并写明样本量、覆盖范围和局限。`);
+    }
+    if (/点击率|CTR|转化率|conversion|加购率|click.?through/i.test(itemText) && !/实验|真实指标|待验证|assumption|不可得|无法读取|下一步.{0,30}(?:观察|验证|测试)/i.test(itemText)) {
+      errors.push(`${label} 把点击率/转化率/加购率写成已验证事实，但公开搜索页不能证明这些指标；必须改为视觉假设或安排后续真实指标实验。`);
+    }
+    if (/评论区常见|买家普遍|买家集中|评论.{0,8}(痛点|反馈)|common buyer feedback|frequent complaint/i.test(itemText) && !hasLedgerType(ledger, "page_dom") && !hasLedgerType(ledger, "screenshot_visual")) {
+      errors.push(`${label} 使用了评论痛点/买家反馈结论，但没有真实评论页面或截图证据；不能用模型常识替代评论采集。`);
+    }
+    if (TREND_LOGISTICS_RE.test(itemText) && /\d+\s*[-–—到至]\s*\d+\s*(?:个)?\s*(?:工作日|日|天|business days?|days?)/i.test(itemText)) {
+      const shippingLedger = ledger.filter((entry) => String(entry?.source_type || "").toLowerCase() === "google_search" && /发货地|目的地|承运商|运输方式|物流|shipping|delivery|carrier|origin|destination/i.test(trendLedgerText([entry])));
+      if (shippingLedger.length === 0) errors.push(`${label} 输出具体物流天数，但缺少包含发货地、目的地、承运商/运输方式和查询日期的实时物流搜索证据。`);
+    }
+    if (/竞品|头部|高排名|竞品视觉|主图|best.?seller|top shop/i.test(itemText) && !hasTrendCompetitorPageEvidence(ledger)) {
+      errors.push(`${label} 使用了竞品/视觉对标结论，但没有至少 2 个公开竞品店铺或商品详情页的页面文本+截图证据；Search Grid 不能替代详情页研究。`);
+    }
+  });
+  return errors;
+}
+
 export function validateReport(parsed, userInstruction, skillId, toolHistory = [], pageContext = {}) {
   const errors = [];
   if (!parsed || parsed.type !== "final" || !parsed.output) {
@@ -1691,6 +1825,9 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
   }
   if (isOperationsSkill(skillId)) {
     errors.push(...validateOperationsReport(out, toolHistory, pageContext));
+  }
+  if (isPlatformTrendSkill(skillId)) {
+    errors.push(...validatePlatformTrendReport(out, toolHistory, pageContext));
   }
 
   // 1. Check for technical jargon

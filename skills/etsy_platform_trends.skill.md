@@ -13,8 +13,21 @@
 1. 读取当前页面，确认用户研究的类目、商品、品牌或关键词范围。
 2. 调用 `search_in_browser`，使用 `engine="etsy"` 获取真实 Etsy 搜索/market/热卖结果，记录价格、评价、标题词、商品类别和可见店铺链接。
 3. 需要趋势或季节性判断时，调用 `search_in_browser` 获取 Google Search 和 Google Trends 页面，并保留截图视觉证据。没有趋势截图时只能输出待验证假设。
-4. 对 2-3 个高排名商品或店铺进行公开页面 DOM + 截图取证；竞品后台、订单和库存只能标记为不可得。
-5. 输出平台机会，不要直接把它写成当前店铺已经应该采购或发布的商品。涉及上架、采购、儿童、化妆品、电器、电池、食品接触或 IP 时，下一步必须进入合规审查和独立验证。
+4. 对至少 2 个高排名商品或店铺打开公开详情页，分别读取页面文本并截图；Search Grid 不能替代商品详情页。记录店铺/商品 URL、可见排序、价格、促销、评价、SKU/类目和画廊观察，不能声称获得竞品后台数据。
+5. 需要物流结论时，单独搜索发货地、目的地、承运商或运输方式，并在证据中记录查询日期；禁止凭模型常识输出 7-12 或 7-14 个工作日。
+6. 输出平台机会，不要直接把它写成当前店铺已经应该采购或发布的商品。涉及上架、采购、儿童、化妆品、电器、电池、食品接触或 IP 时，下一步必须进入合规审查和独立验证。
+
+## 证据硬门槛
+
+- 每个 `data` 项都必须有 `sample_count`、`coverage`、`limitation`；价格只能描述可见公开样本，不能写“完整市场”“全平台价格分布”。
+- 每个 `data` 项都必须有完整 `evidence_ledger`。账本必须写 `source_type`、`source_ref`、`observed_value`、`used_for`、`confidence`、`limitation`。
+- 使用 Google Trends、峰值、季节性或需求曲线时，必须同时有 `google_trends` 工具证据和 `screenshot_visual` 趋势图解读，写明地区、时间范围、查询词、曲线方向、related queries/topics 和局限。
+- 使用竞品、头部、Best Seller、主图点击或视觉优劣结论时，必须至少有 2 个公开竞品详情页的页面文本与截图证据；不能凭一个搜索页卡片推断“点击率更高”。
+- 评论痛点必须来自真实评论页面/截图；没有评论文本只能写“待验证假设”。
+- 物流天数必须来自实时物流主题搜索，并记录发货地、目的地、承运商/运输方式、查询日期和局限。
+- Etsy 个人卖家 API 只支持当前授权自营店铺；禁止输出竞品订单、竞品转化率、竞品 Sessions、平台搜索量或全平台 analytics。
+- CE、CPC、FDA、FCC、RoHS、REACH 等法规/认证必须有官方来源，或明确写成 `assumption`/待验证；普通婚礼手拿包不能默认要求 CE/FDA。
+- validator 会拒绝不完整结构、越过样本覆盖范围的强结论、无证据的趋势峰值以及超出个人 API 能力边界的报告。
 
 ## 输出硬结构
 
@@ -36,6 +49,9 @@
         "competitor_signal": "",
         "next_validation_action": "",
         "evidence": "",
+        "sample_count": 0,
+        "coverage": "例如：Etsy US 搜索结果前 2 页可见卡片；不代表全平台",
+        "limitation": "例如：未取得 Etsy 全平台搜索量和竞品后台数据",
         "evidence_ledger": [
           {
             "source_type": "etsy_search|google_search|google_trends|page_dom|screenshot_visual|assumption",

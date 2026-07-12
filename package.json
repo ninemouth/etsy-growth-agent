@@ -11,6 +11,7 @@
     "test:sourcing": "node scripts/sourcing-workflow-guard-smoke.mjs",
     "test:compliance": "node scripts/compliance-smoke.mjs",
     "test:etsy-api": "node scripts/etsy-api-contract-smoke.mjs",
+    "test:trends": "node scripts/platform-trends-smoke.mjs",
     "test:runtime": "node scripts/workflow-runtime-smoke.mjs",
     "format": "prettier --write ."
   },
