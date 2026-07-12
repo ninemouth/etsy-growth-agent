@@ -3,7 +3,7 @@
 import { callLLM, getSettings, prepareCleanProductImage } from './llmClient.js';
 import { etsyGetProductList, etsyGetProductInfo, etsyGetAnalyticsData, etsyGetFbsPostingList, etsyGetFboPostingList, etsyGetStoreSnapshot } from './etsyApi.js';
 import { getArtifactDataUrl, pruneArtifacts, putDataUrlArtifact } from './artifactStore.js';
-import { closeOwnedTab, createOwnedTab } from './browserSessionManager.js';
+import { closeOwnedTab, createOwnedTab, createOwnedTabCallback } from './browserSessionManager.js';
 import { appendWorkflowEvent, isWorkflowCancellationRequested } from './workflowRuntime.js';
 
 const preparedImageCache = new Map();
@@ -1336,9 +1336,9 @@ Context:
   },
 
   open_url: async (args) => {
-    const { url } = args;
+    const { url, workflowId = "default" } = args;
     if (!url) throw new Error("url is required");
-    await chrome.tabs.create({ url: safeEncodeURI(url), active: false });
+    await createOwnedTab({ workflowId, url: safeEncodeURI(url), active: false });
     return { ok: true, message: `Opened: ${url}` };
   },
 
@@ -1408,7 +1408,7 @@ Context:
   },
 
   agentic_web_search: async (args) => {
-    const { query } = args;
+    const { query, workflowId = "default" } = args;
     if (!query) throw new Error("query is required");
     
     console.log(`Performing silent background agentic web search for: "${query}"`);
@@ -1494,7 +1494,7 @@ Context:
       console.log(`Silent search blocked. Falling back to real browser tab search for: "${query}"`);
       const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
       results = await new Promise((resolve) => {
-        chrome.tabs.create({ url: safeEncodeURI(searchUrl), active: false }, (newTab) => {
+        createOwnedTabCallback({ workflowId, url: safeEncodeURI(searchUrl), active: false }, (newTab) => {
           let attempts = 0;
           const maxAttempts = 16; // up to 8 seconds
           const checkLoad = setInterval(async () => {
@@ -1525,10 +1525,7 @@ Context:
                   } catch (_) {
                     console.warn("Tab search failed to read content script or timed out.");
                   } finally {
-                    chrome.tabs.remove(newTab.id, () => {
-                      if (chrome.runtime.lastError) {} // ignore
-                    });
-                    resolve(tabResults);
+                    closeOwnedTab(workflowId, newTab.id).then(() => resolve(tabResults));
                   }
                 }, 1500);
               }
@@ -1547,7 +1544,7 @@ Context:
   },
 
   search_in_browser: async (args) => {
-    const { query, engine = "google", keepTab = false, searchType = "listing" } = args;
+    const { query, engine = "google", keepTab = false, searchType = "listing", workflowId = "default" } = args;
     if (!query) throw new Error("query is required");
     
     let targetQuery = query;
@@ -1581,7 +1578,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
     if (engine === "1688") {
       const searchUrl = "https://s.1688.com/";
       return new Promise((resolve) => {
-        chrome.tabs.create({ url: safeEncodeURI(searchUrl), active: true }, (newTab) => {
+        createOwnedTabCallback({ workflowId, url: safeEncodeURI(searchUrl), active: true }, (newTab) => {
           let attempts = 0;
           const maxAttempts = 20; // up to 10 seconds
           const checkLoad = setInterval(() => {
@@ -1620,7 +1617,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
     const pollDelayMs = 500;
 
     const runAttempt = (attempt, attemptIndex) => new Promise((resolve) => {
-      chrome.tabs.create({ url: safeEncodeURI(attempt.url), active: true }, (newTab) => {
+      createOwnedTabCallback({ workflowId, url: safeEncodeURI(attempt.url), active: true }, (newTab) => {
         let settled = false;
         let readInFlight = false;
         const finish = async (payload) => {
@@ -1628,6 +1625,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
           settled = true;
           if (shouldAutoCloseSearchTab) {
             const closed = await closeTabQuietly(newTab.id);
+            await closeOwnedTab(workflowId, newTab.id);
             resolve({
               ...payload,
               tabClosed: closed,
@@ -1841,7 +1839,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
   },
 
   image_search_1688: async (args) => {
-    const { engine = "1688" } = args;
+    const { engine = "1688", workflowId = "default" } = args;
     const imageUrl = resolvePreparedImageUrl(args.imageUrl);
     if (!imageUrl) throw new Error("imageUrl is required");
 
@@ -1850,7 +1848,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
       ? "https://s.taobao.com/search"
       : "https://s.1688.com/";
     return new Promise((resolve, reject) => {
-      chrome.tabs.create({ url: safeEncodeURI(searchUrl), active: true }, (newTab) => {
+      createOwnedTabCallback({ workflowId, url: safeEncodeURI(searchUrl), active: true }, (newTab) => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
           return;
@@ -2034,11 +2032,11 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
   },
 
   open_new_tab: async (args) => {
-    const { url, readDelayMs = 1500, maxAttempts = 20 } = args;
+    const { url, readDelayMs = 1500, maxAttempts = 20, workflowId = "default" } = args;
     if (!url) throw new Error("url is required");
     
     return new Promise((resolve, reject) => {
-      chrome.tabs.create({ url: safeEncodeURI(url), active: true }, (tab) => {
+      createOwnedTabCallback({ workflowId, url: safeEncodeURI(url), active: true }, (tab) => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
           return;

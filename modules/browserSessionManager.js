@@ -24,6 +24,13 @@ export async function createOwnedTab({ workflowId = "default", url, active = fal
   return tab;
 }
 
+export function createOwnedTabCallback({ workflowId = "default", url, active = false } = {}, callback) {
+  chrome.tabs.create({ url, active }, (tab) => {
+    if (!chrome.runtime.lastError && tab?.id !== undefined) workflowTabs(workflowId).add(tab.id);
+    callback(tab);
+  });
+}
+
 export function registerOwnedTab(workflowId = "default", tabId) {
   if (Number.isInteger(Number(tabId))) workflowTabs(workflowId).add(Number(tabId));
 }

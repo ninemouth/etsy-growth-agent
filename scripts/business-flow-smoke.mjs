@@ -36,6 +36,8 @@ assert.match(backgroundSource, /runInFlight/, "background should reject duplicat
 assert.match(backgroundSource, /acquireWorkflowLease[\s\S]*releaseWorkflowLease/, "background should use a global workflow lease instead of a per-port lock only");
 assert.match(agentLoopSource, /isWorkflowCancellationRequested[\s\S]*workflow_cancellation_requested/, "agent loop should honor durable workflow cancellation at node boundaries");
 assert.match(toolRegistrySource, /createOwnedTab[\s\S]*closeOwnedTab/, "Etsy crawl tabs should have centralized workflow ownership");
+assert.match(toolRegistrySource, /createOwnedTabCallback[\s\S]*search_in_browser[\s\S]*google_trends/, "browser search tabs should use workflow ownership");
+assert.match(toolRegistrySource, /image_search_1688[\s\S]*createOwnedTabCallback/, "image search tabs should use workflow ownership");
 assert.match(toolRegistrySource, /etsy_crawl_page_started[\s\S]*etsy_crawl_page_completed[\s\S]*etsy_crawl_completed/, "Etsy crawl should expose durable stage events rather than one opaque tool call");
 assert.match(toolRegistrySource, /etsy_screenshot_observation_started[\s\S]*etsy_screenshot_observation_completed/, "screenshot analysis should expose durable per-page stage events");
 assert.match(sidepanelSource, /msg\.type === "llm_started"/, "sidepanel should show LLM request payload telemetry");
