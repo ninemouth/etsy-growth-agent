@@ -559,6 +559,18 @@ async function readPageDataFromTab(tabId) {
   return pageData;
 }
 
+function hasUsablePageEvidence(pageData = {}) {
+  const health = pageData?.pageHealth || {};
+  if (health.isLikelyBlocked) return false;
+  return Boolean(
+    health.hasMeaningfulDom ||
+    String(pageData?.visibleText || "").trim().length >= 120 ||
+    (Array.isArray(pageData?.productCards) && pageData.productCards.length > 0) ||
+    (Array.isArray(pageData?.productLinks) && pageData.productLinks.length > 0) ||
+    (Array.isArray(pageData?.links) && pageData.links.length > 0)
+  );
+}
+
 async function collectEtsyListingDetailsForShop({
   workflowId = "default",
   competitorName = "",
@@ -2442,7 +2454,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
           chrome.tabs.get(tab.id, (t) => {
             if (chrome.runtime.lastError || !t) {
               clearInterval(poll);
-              resolve({ ok: true, tabId: tab.id, pageData: "Tab closed or not found" });
+              resolve({ ok: false, tabId: tab.id, readError: "Tab closed or not found", evidenceOk: false, pageData: {} });
               return;
             }
             
@@ -2456,7 +2468,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
               // We do not resolve yet, let the user solve it
               if (attempts >= maxPollAttempts) {
                 clearInterval(poll);
-                resolve({ ok: true, tabId: tab.id, url: currentUrl, isCaptcha: true, pageData: "Verification timeout" });
+                resolve({ ok: false, tabId: tab.id, url: currentUrl, isCaptcha: true, evidenceOk: false, pageData: {}, readError: "Verification timeout" });
               }
               return;
             }
@@ -2466,22 +2478,26 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
               setTimeout(async () => {
                 try {
                   const data = await readPageDataFromTab(tab.id);
+                  const evidenceOk = hasUsablePageEvidence(data);
                   resolve({
-                    ok: true,
+                    ok: evidenceOk,
                     tabId: tab.id,
                     url: currentUrl,
                     finalUrl: currentUrl,
                     timedOut: attempts >= maxPollAttempts && t.status !== "complete",
-                    pageData: data || "",
+                    evidenceOk,
+                    pageData: data || {},
+                    readError: evidenceOk ? "" : "Page loaded but no usable DOM evidence was captured",
                   });
                 } catch (err) {
                   resolve({
-                    ok: true,
+                    ok: false,
                     tabId: tab.id,
                     url: currentUrl,
                     finalUrl: currentUrl,
                     timedOut: attempts >= maxPollAttempts && t.status !== "complete",
-                    pageData: "Failed to read DOM (Script injection restricted)",
+                    evidenceOk: false,
+                    pageData: {},
                     readError: err.message,
                   });
                 }

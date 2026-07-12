@@ -96,6 +96,8 @@ assert.match(js, /interrupted:\s*"已保存断点"/, "dashboard should show inte
 assert.match(js, /后台连接中断，已保存断点，可再次运行继续。/, "dashboard disconnects should not be shown as ordinary failed runs");
 assert.match(toolRegistrySource, /closedTabId/, "browser search should report automatically closed temporary tabs");
 assert.match(toolRegistrySource, /open_new_tab[\s\S]*readPageDataFromTab\(tab\.id\)/, "open_new_tab should read the newly opened tab by tabId instead of relying on the active tab");
+assert.match(toolRegistrySource, /hasUsablePageEvidence[\s\S]*evidenceOk[\s\S]*ok: evidenceOk/, "open_new_tab must not report success without usable page evidence");
+assert.match(toolRegistrySource, /Tab closed or not found[\s\S]*ok: false/, "open_new_tab must mark missing tabs as failed evidence");
 assert.match(toolRegistrySource, /timedOut[\s\S]*readError/, "open_new_tab should report timeout/read-error state for workflow guards");
 assert.match(toolRegistrySource, /shouldAutoCloseSearchTab[\s\S]*google_trends/, "Google and Trends search tabs should be auto-closed after evidence capture");
 assert.match(toolRegistrySource, /hasValidEtsySearchEvidence/, "Etsy search evidence should have a runtime validity gate");
