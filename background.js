@@ -688,10 +688,13 @@ chrome.runtime.onConnect.addListener((port) => {
           });
 
           if (!result?.ok && result?.type === "interrupted") {
+            const qualityGateBlocked = result.qualityGateBlocked === true;
             await setWorkflowCheckpoint(checkpointKey, {
-              status: "interrupted",
-              lastStage: "agent_interrupted",
+              status: qualityGateBlocked ? "quality_gate_blocked" : "interrupted",
+              lastStage: qualityGateBlocked ? "quality_gate_blocked" : "agent_interrupted",
               interruptionReason: result.result || "workflow_interrupted",
+              qualityGateBlocked,
+              validationErrors: Array.isArray(result.validationErrors) ? result.validationErrors : [],
               interruptedAt: new Date().toISOString(),
             });
             port.postMessage({

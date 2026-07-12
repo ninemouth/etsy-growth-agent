@@ -17,6 +17,7 @@ const MAX_LLM_CRAWL_PAGES = 6;
 const MAX_LLM_MESSAGE_CHARS = 26000;
 const MAX_LLM_HISTORY_MESSAGES = 24;
 const MAX_LLM_TOTAL_CHARS = 140000;
+const QUALITY_RETRY_LIMIT = 2;
 
 function checkpointStorageAvailable() {
   return typeof chrome !== "undefined" && chrome.storage?.local;
@@ -2359,7 +2360,11 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     messages = restoredCheckpoint.messages;
     toolHistory = Array.isArray(restoredCheckpoint.toolHistory) ? restoredCheckpoint.toolHistory : [];
     if (restoredCheckpoint.ctxState) {
-      ctxForPrompt.__reflectionsCount = restoredCheckpoint.ctxState.__reflectionsCount || 0;
+      // A user-initiated continuation starts a fresh bounded quality-repair window.
+      // The previous window may have been exhausted, but its evidence and messages remain resumable.
+      ctxForPrompt.__reflectionsCount = restoredCheckpoint.status === "quality_gate_blocked"
+        ? 0
+        : (restoredCheckpoint.ctxState.__reflectionsCount || 0);
       ctxForPrompt.__hasDeepReflected = Boolean(restoredCheckpoint.ctxState.__hasDeepReflected);
     }
     sendProgress({
@@ -2574,7 +2579,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       const validationErrors = validateReport(parsed, userInstruction, skillId, toolHistory, pageContext);
       if (validationErrors.length > 0) {
         const reflectionsCount = ctxForPrompt.__reflectionsCount || 0;
-        if (reflectionsCount < 2) {
+        if (reflectionsCount < QUALITY_RETRY_LIMIT) {
           ctxForPrompt.__reflectionsCount = reflectionsCount + 1;
           sendProgress({ type: "reflection", step, message: `Critic 自动审计拒绝：${validationErrors[0]} 正在打回重做...` });
           
@@ -2587,6 +2592,32 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
           await saveCheckpoint({ status: "critic_retry", step, lastNode: "report_validation_retry", validationErrors });
           continue;
         }
+        messages.push({ role: "assistant", content: assistantContent });
+        messages.push({
+          role: "user",
+          content: `【质量闸门阻断】本次连续自动修复已达到 ${QUALITY_RETRY_LIMIT} 次上限，当前报告仍未通过最终质量校验。不得交付为成功报告。请在用户发送“继续”后，从已保存的证据和当前错误清单继续修复，不要重复已经完成的采集。\n\n未通过的问题：\n${validationErrors.map((err, i) => `${i + 1}. ${err}`).join("\n")}`,
+        });
+        await saveCheckpoint({
+          status: "quality_gate_blocked",
+          step,
+          lastNode: "quality_gate_blocked",
+          validationErrors,
+          rejectedReport: parsed.output,
+        });
+        sendProgress({
+          type: "quality_gate_blocked",
+          step,
+          message: `报告连续 ${QUALITY_RETRY_LIMIT} 次未通过质量校验，已阻断交付并保存断点。发送“继续”后可从当前证据继续修复。`,
+          validationErrors,
+        });
+        return {
+          ok: false,
+          type: "interrupted",
+          result: `报告未通过质量校验，已阻断交付并保存断点。请发送“继续”从当前证据继续修复。首个问题：${validationErrors[0]}`,
+          steps: step,
+          qualityGateBlocked: true,
+          validationErrors,
+        };
       }
 
       messages.push({ role: "assistant", content: assistantContent });

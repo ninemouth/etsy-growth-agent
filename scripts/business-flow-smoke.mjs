@@ -31,6 +31,10 @@ assert.match(agentLoopSource, /type:\s*"tool_heartbeat"/, "long-running tool cal
 assert.match(agentLoopSource, /type:\s*"llm_heartbeat"/, "long-running LLM planning calls should emit heartbeat progress between tool calls");
 assert.match(agentLoopSource, /LLM_RECOVERY_RETRIES/, "transient LLM network failures should have a bounded recovery retry");
 assert.match(agentLoopSource, /type:\s*"llm_error"[\s\S]*type:\s*"interrupted"/, "final LLM network failures should preserve the checkpoint instead of becoming a fake report");
+assert.match(agentLoopSource, /QUALITY_RETRY_LIMIT\s*=\s*2/, "quality repair must have a bounded retry window");
+assert.match(agentLoopSource, /quality_gate_blocked[\s\S]*不得交付为成功报告/, "reports that still fail validation after retries must be blocked, not delivered");
+assert.match(agentLoopSource, /restoredCheckpoint\.status === "quality_gate_blocked"[\s\S]*\? 0/, "user continuation after a quality block must receive a fresh bounded repair window");
+assert.match(backgroundSource, /qualityGateBlocked[\s\S]*status: qualityGateBlocked \? "quality_gate_blocked"/, "background must preserve quality-gate interruption state for resumable repair");
 assert.match(agentLoopSource, /MAX_LLM_TOTAL_CHARS\s*=\s*140000/, "LLM planning requests should have a total history payload budget");
 assert.doesNotMatch(agentLoopSource, /MAX_CONTINUOUS_RUNTIME_MS\s*=\s*15 \* 60 \* 1000/, "normal workflows must not be hard-interrupted by a fixed continuous runtime budget");
 assert.doesNotMatch(agentLoopSource, /工作流已达到本次连续运行预算/, "normal workflow delivery must not stop at a fixed continuous runtime budget");
