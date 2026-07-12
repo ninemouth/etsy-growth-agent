@@ -3,6 +3,17 @@
 import { runAgentLoop } from './modules/agentLoop.js';
 import { tools, resetSessionData } from './modules/toolRegistry.js';
 import { callLLM } from './modules/llmClient.js';
+import {
+  acquireWorkflowLease,
+  appendWorkflowEvent,
+  clearWorkflowCancellation,
+  loadWorkflowSnapshot,
+  releaseWorkflowLease,
+  renewWorkflowLease,
+  requestWorkflowCancellation,
+  saveWorkflowSnapshot,
+} from './modules/workflowRuntime.js';
+import { cleanupOwnedTabs } from './modules/browserSessionManager.js';
 
 // ── Keep Service Worker Alive in MV3 ──
 // Calling any Chrome API resets the 30-second idle timer in Manifest V3.
@@ -277,18 +288,48 @@ async function getWorkflowCheckpoints() {
 
 async function getWorkflowCheckpoint(key) {
   if (!key) return null;
+  const runtime = await loadWorkflowSnapshot(key);
+  if (runtime?.snapshot && Object.keys(runtime.snapshot).length > 0) {
+    return {
+      ...runtime.snapshot,
+      status: runtime.status,
+      lastStage: runtime.snapshot.lastStage || runtime.snapshot.lastNode || runtime.status,
+      updatedAt: runtime.updatedAt,
+    };
+  }
   const checkpoints = await getWorkflowCheckpoints();
   return checkpoints[key] || null;
 }
 
 async function setWorkflowCheckpoint(key, patch = {}) {
   if (!key) return;
+  const existingRuntime = await loadWorkflowSnapshot(key);
+  const snapshot = {
+    ...(existingRuntime?.snapshot || {}),
+    ...patch,
+    key,
+  };
+  const status = patch.status || existingRuntime?.status || "running";
+  await saveWorkflowSnapshot(key, { status, snapshot });
+  await appendWorkflowEvent(key, status, {
+    step: patch.step,
+    lastStage: patch.lastStage || patch.lastNode,
+    toolName: patch.toolName,
+  });
+
+  // Compatibility index only. The durable messages/toolHistory snapshot is no
+  // longer copied into chrome.storage.local on every checkpoint.
   const checkpoints = await getWorkflowCheckpoints();
   const previous = checkpoints[key] || {};
   checkpoints[key] = {
     ...previous,
-    ...patch,
     key,
+    status,
+    step: patch.step ?? previous.step,
+    lastStage: patch.lastStage || patch.lastNode || previous.lastStage || status,
+    skillId: patch.skillId || previous.skillId,
+    workflowSessionId: patch.workflowSessionId || previous.workflowSessionId,
+    growthCaseId: patch.growthCaseId || previous.growthCaseId,
     updatedAt: new Date().toISOString(),
   };
   const entries = Object.entries(checkpoints)
@@ -308,16 +349,20 @@ chrome.runtime.onConnect.addListener((port) => {
     let isCancelled = false;
     let activeCheckpointKey = "";
     let runInFlight = false;
+    let leaseRenewTimer = null;
 
     port.onDisconnect.addListener(() => {
       isCancelled = true;
       activePorts.delete(portId);
       if (activeCheckpointKey) {
+        requestWorkflowCancellation(activeCheckpointKey, "port_disconnected").catch((err) => console.warn("Could not request workflow cancellation:", err.message));
         setWorkflowCheckpoint(activeCheckpointKey, {
           status: "interrupted",
           lastStage: "port_disconnected",
           interruptedAt: new Date().toISOString(),
         }).catch((err) => console.warn("Could not persist interrupted checkpoint:", err.message));
+        releaseWorkflowLease(activeCheckpointKey, portId, "interrupted").catch((err) => console.warn("Could not release workflow lease:", err.message));
+        cleanupOwnedTabs(activeCheckpointKey).catch((err) => console.warn("Could not cleanup owned tabs:", err.message));
       }
       console.log(`Port ${portId} disconnected.`);
     });
@@ -418,6 +463,14 @@ chrome.runtime.onConnect.addListener((port) => {
           console.log("Matched Etsy skills:", matchedSkills);
           const checkpointKey = buildWorkflowCheckpointKey({ tabId: tab.id, matchedSkills, message });
           activeCheckpointKey = checkpointKey;
+          const lease = await acquireWorkflowLease(checkpointKey, portId);
+          if (!lease.ok) {
+            throw new Error("该 workflow 当前已由另一个执行实例占用，请等待其结束或断点过期后再恢复。");
+          }
+          await clearWorkflowCancellation(checkpointKey);
+          leaseRenewTimer = setInterval(() => {
+            renewWorkflowLease(checkpointKey, portId).catch((err) => console.warn("Could not renew workflow lease:", err.message));
+          }, 15_000);
           const existingCheckpoint = await getWorkflowCheckpoint(checkpointKey);
           const shouldResumeFromCheckpoint = isResumableCheckpoint(existingCheckpoint) && (
             message.continueSession ||
@@ -480,6 +533,7 @@ chrome.runtime.onConnect.addListener((port) => {
             highRandomness: message.highRandomness,
             negativeFilter: message.negativeFilter,
             resumeState: shouldResumeFromCheckpoint ? existingCheckpoint : null,
+            workflowId: checkpointKey,
             onCheckpoint: async (checkpoint) => {
               await setWorkflowCheckpoint(checkpointKey, {
                 ...checkpoint,
@@ -538,6 +592,10 @@ chrome.runtime.onConnect.addListener((port) => {
               lastStage: "success_delivered",
             });
             activeCheckpointKey = "";
+            clearInterval(leaseRenewTimer);
+            leaseRenewTimer = null;
+            await releaseWorkflowLease(checkpointKey, portId, "completed");
+            await cleanupOwnedTabs(checkpointKey);
           }
         } catch (err) {
           if (activeCheckpointKey) {
@@ -547,6 +605,10 @@ chrome.runtime.onConnect.addListener((port) => {
               lastStage: "error",
               failedAt: new Date().toISOString(),
             });
+            if (leaseRenewTimer) clearInterval(leaseRenewTimer);
+            leaseRenewTimer = null;
+            releaseWorkflowLease(activeCheckpointKey, portId, "failed").catch((leaseErr) => console.warn("Could not release failed workflow lease:", leaseErr.message));
+            cleanupOwnedTabs(activeCheckpointKey).catch((cleanupErr) => console.warn("Could not cleanup owned tabs:", cleanupErr.message));
             activeCheckpointKey = "";
           }
           if (!isCancelled) {

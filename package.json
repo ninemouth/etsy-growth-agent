@@ -9,6 +9,7 @@
     "test:security": "node scripts/security-smoke.mjs",
     "test:business": "node scripts/business-flow-smoke.mjs",
     "test:sourcing": "node scripts/sourcing-workflow-guard-smoke.mjs",
+    "test:runtime": "node scripts/workflow-runtime-smoke.mjs",
     "format": "prettier --write ."
   },
   "keywords": [

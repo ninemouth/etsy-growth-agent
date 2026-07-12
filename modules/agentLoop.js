@@ -2,6 +2,7 @@
 
 import { callLLM, getSettings } from './llmClient.js';
 import { tools, hasValidEtsySearchEvidence } from './toolRegistry.js';
+import { isWorkflowCancellationRequested } from './workflowRuntime.js';
 
 const globalSessionCache = {};
 const CHECKPOINT_PREFIX = "etsyAgentCheckpoint:";
@@ -1840,7 +1841,7 @@ function buildPromptContext(pageContext = {}) {
 
 const INTERNAL_RUNAWAY_GUARD_STEPS = 200;
 
-export async function runAgentLoop({ tabId, skillId, skillMarkdown, userInstruction, pageContext, sendProgress, continueSession, highRandomness, negativeFilter, resumeState = null, onCheckpoint = null }) {
+export async function runAgentLoop({ tabId, skillId, skillMarkdown, userInstruction, pageContext, sendProgress, continueSession, highRandomness, negativeFilter, resumeState = null, onCheckpoint = null, workflowId = "" }) {
   const settings = await getSettings();
 
   let systemPrompt = skillMarkdown;
@@ -2036,6 +2037,15 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
   sendProgress({ type: "start", step: 0, loopLimitDisabled: true });
 
   for (let step = 1; ; step++) {
+    if (workflowId && await isWorkflowCancellationRequested(workflowId)) {
+      await saveCheckpoint({ status: "cancelled", step: step - 1, lastNode: "workflow_cancellation_requested" });
+      return {
+        ok: false,
+        type: "interrupted",
+        result: "workflow 已收到取消信号，已保存当前断点。发送“继续”可恢复未完成节点。",
+        steps: step - 1,
+      };
+    }
     const runtimeMs = Date.now() - continuousRunStartedAt;
     if (runtimeMs >= MAX_CONTINUOUS_RUNTIME_MS) {
       await saveCheckpoint({
@@ -2191,6 +2201,8 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
           toolArgs.imageUrl = actualTargetImageUrl;
         }
       }
+
+      if (workflowId) toolArgs.workflowId = workflowId;
 
       if (isImageSearchTool(toolName)) {
         if ((!toolArgs.imageUrl || toolArgs.imageUrl === "__TARGET_IMAGE_URL__") && actualTargetImageUrl) {

@@ -3,6 +3,8 @@
 import { callLLM, getSettings, prepareCleanProductImage } from './llmClient.js';
 import { etsyGetProductList, etsyGetProductInfo, etsyGetAnalyticsData, etsyGetFbsPostingList, etsyGetFboPostingList, etsyGetStoreSnapshot } from './etsyApi.js';
 import { getArtifactDataUrl, pruneArtifacts, putDataUrlArtifact } from './artifactStore.js';
+import { closeOwnedTab, createOwnedTab } from './browserSessionManager.js';
+import { appendWorkflowEvent, isWorkflowCancellationRequested } from './workflowRuntime.js';
 
 const preparedImageCache = new Map();
 const ETSY_SHOP_CRAWL_SCREENSHOT_NAMESPACE = "etsy-shop-crawl-screenshot";
@@ -824,6 +826,7 @@ export const tools = {
       delayMs = 900,
       maxProductsPerPage = 40,
       useCache = true,
+      workflowId = "default",
     } = args;
     const pageLimit = Math.max(1, Math.min(Number(maxPages) || 3, 10));
     const productLimit = Math.max(2, Math.min(Number(maxProductsPerPage) || 40, 80));
@@ -841,12 +844,7 @@ export const tools = {
 
     if (!targetTabId) {
       if (url) {
-        const created = await new Promise((resolve, reject) => {
-          chrome.tabs.create({ url: safeEncodeURI(url), active: true }, (tab) => {
-            if (chrome.runtime.lastError || !tab) reject(new Error(chrome.runtime.lastError?.message || "Failed to open Etsy shop tab"));
-            else resolve(tab);
-          });
-        });
+        const created = await createOwnedTab({ workflowId, url: safeEncodeURI(url), active: true });
         targetTabId = created.id;
         openedByTool = true;
       } else {
@@ -879,8 +877,19 @@ export const tools = {
     let stoppedReason = "max_pages_reached";
     let completedFullCrawl = false;
 
+    await appendWorkflowEvent(workflowId, "etsy_crawl_started", {
+      sourceUrl,
+      maxPages: pageLimit,
+      maxProductsPerPage: productLimit,
+    });
+
     try {
       for (let pageIndex = 1; pageIndex <= pageLimit; pageIndex++) {
+        if (workflowId !== "default" && await isWorkflowCancellationRequested(workflowId)) {
+          await appendWorkflowEvent(workflowId, "etsy_crawl_cancelled", { pageIndex, pagesCollected: pages.length });
+          throw new Error("Etsy crawl cancelled by workflow runtime");
+        }
+        await appendWorkflowEvent(workflowId, "etsy_crawl_page_started", { pageIndex, pagesCollected: pages.length });
         await focusTab(targetTabId);
         const tab = await waitForTabLoad(targetTabId);
         await delay(Math.max(250, Number(delayMs) || 900));
@@ -958,6 +967,13 @@ export const tools = {
             : "",
           screenshotError,
         });
+        await appendWorkflowEvent(workflowId, "etsy_crawl_page_completed", {
+          pageIndex,
+          url: pageData.url || currentUrl,
+          productCards: productCards.length,
+          screenshotCaptured: Boolean(screenshotRef),
+          hasNextPage,
+        });
 
         if (!hasNextPage) {
           stoppedReason = "no_next_page";
@@ -993,9 +1009,17 @@ export const tools = {
       if (result.ok && cacheKey) {
         etsyShopCrawlCache.set(cacheKey, cloneJson(result));
       }
+      await appendWorkflowEvent(workflowId, "etsy_crawl_completed", {
+        pagesCollected: result.pagesCollected,
+        uniqueListingCount: result.uniqueListingCount,
+        completedFullCrawl: result.completedFullCrawl,
+      });
       return result;
     } finally {
-      if (openedByTool && !keepTab) await closeTabQuietly(targetTabId);
+      if (openedByTool && !keepTab) {
+        await closeOwnedTab(workflowId, targetTabId);
+        await closeTabQuietly(targetTabId);
+      }
     }
   },
 
@@ -1109,6 +1133,7 @@ export const tools = {
       screenshotRefs = [],
       competitorName = "",
       maxScreenshots = 6,
+      workflowId = "default",
     } = args;
     const screenshotPages = normalizeScreenshotPages(pages, screenshotRefs)
       .slice(0, Math.max(1, Math.min(Number(maxScreenshots) || 6, 10)));
@@ -1118,6 +1143,14 @@ export const tools = {
 
     const analyses = [];
     for (const page of screenshotPages) {
+      if (workflowId !== "default" && await isWorkflowCancellationRequested(workflowId)) {
+        await appendWorkflowEvent(workflowId, "etsy_screenshot_analysis_cancelled", { analyzed: analyses.length });
+        throw new Error("Etsy screenshot analysis cancelled by workflow runtime");
+      }
+      await appendWorkflowEvent(workflowId, "etsy_screenshot_observation_started", {
+        pageIndex: page.pageIndex,
+        screenshotRef: page.screenshotRef,
+      });
       const imageUrl = await getCachedEtsyShopScreenshot(page.screenshotRef);
       if (!imageUrl) {
         analyses.push({
@@ -1195,10 +1228,18 @@ Context:
           error: err.message,
         });
       }
+      await appendWorkflowEvent(workflowId, "etsy_screenshot_observation_completed", {
+        pageIndex: page.pageIndex,
+        ok: analyses.at(-1)?.ok !== false,
+      });
     }
     const stageSynthesis = buildScreenshotSynthesis(analyses);
     const stageReportInputs = buildScreenshotReportInputs({ analyses, syntheses: stageSynthesis, competitorName });
     const evidenceLedgerEntries = stageReportInputs.evidenceLedgerEntries;
+    await appendWorkflowEvent(workflowId, "etsy_screenshot_analysis_completed", {
+      screenshotsRequested: screenshotPages.length,
+      screenshotsAnalyzed: evidenceLedgerEntries.length,
+    });
 
     return {
       ok: evidenceLedgerEntries.length > 0,
