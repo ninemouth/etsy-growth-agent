@@ -1012,6 +1012,7 @@ export const tools = {
       maxProductsPerPage = 40,
       useCache = true,
       workflowId = "default",
+      deepDetail = false,
     } = args;
     const pageLimit = Math.max(1, Math.min(Number(maxPages) || 3, 10));
     const productLimit = Math.max(2, Math.min(Number(maxProductsPerPage) || 40, 80));
@@ -1177,6 +1178,15 @@ export const tools = {
         });
       }
 
+      const listingDetails = deepDetail
+        ? await collectEtsyListingDetailsForShop({
+          workflowId,
+          competitorName: pages[0]?.shopName || "",
+          competitorUrl: sourceUrl,
+          pages,
+          maxDetails: 2,
+        })
+        : [];
       const result = {
         ok: pages.length > 0,
         tool: "collect_etsy_shop_pages",
@@ -1192,6 +1202,7 @@ export const tools = {
         sortLabels: Array.from(new Set(pages.map((page) => page.sortLabel).filter(Boolean))),
         screenshotPolicy: "Per-page screenshots are stored as referenced artifacts; full base64 payloads are omitted from chrome.storage.local checkpoints.",
         artifactStore: "indexeddb_blob_with_memory_fallback",
+        listingDetails,
         pages,
       };
       if (result.ok && cacheKey) {
@@ -1322,7 +1333,7 @@ export const tools = {
       nextStep: "Pass allPages or screenshotRefs to analyze_etsy_shop_crawl_screenshots before final report delivery.",
       screenshotPolicy: "Per-page screenshots are stored as referenced artifacts; full base64 payloads are omitted from chrome.storage.local checkpoints.",
       artifactStore: "indexeddb_blob_with_memory_fallback",
-    };
+      };
   },
 
   analyze_etsy_shop_crawl_screenshots: async (args = {}) => {
