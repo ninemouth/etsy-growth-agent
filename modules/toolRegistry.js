@@ -5,6 +5,7 @@ import { etsyGetProductList, etsyGetProductInfo, etsyGetAnalyticsData, etsyGetFb
 import { getArtifactDataUrl, pruneArtifacts, putDataUrlArtifact } from './artifactStore.js';
 import { closeOwnedTab, createOwnedTab, createOwnedTabCallback } from './browserSessionManager.js';
 import { appendWorkflowEvent, isWorkflowCancellationRequested } from './workflowRuntime.js';
+import { captureFullPageScreenshot } from './debuggerCapture.js';
 
 const preparedImageCache = new Map();
 const ETSY_SHOP_CRAWL_SCREENSHOT_NAMESPACE = "etsy-shop-crawl-screenshot";
@@ -433,12 +434,19 @@ async function readCompletePageData(tabId, message = {}) {
 async function _captureTabScreenshot(tabId) {
   const tab = await chrome.tabs.get(tabId);
   if (!tab?.windowId) throw new Error("Unable to resolve tab window for screenshot");
+  if (/etsy\.com/i.test(String(tab.url || ""))) {
+    try {
+      return await captureFullPageScreenshot(tabId);
+    } catch (err) {
+      console.warn("Chrome debugger full-page capture unavailable; falling back to viewport capture:", err.message);
+    }
+  }
   return await new Promise((resolve, reject) => {
     chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }, (dataUrl) => {
       if (chrome.runtime.lastError || !dataUrl) {
         reject(new Error(chrome.runtime.lastError?.message || "Failed to capture tab screenshot"));
       } else {
-        resolve(dataUrl);
+        resolve({ dataUrl, captureMode: "captureVisibleTab_viewport" });
       }
     });
   });
@@ -1014,13 +1022,15 @@ export const tools = {
         let screenshotStorage = "";
         let screenshotExpiresAt = null;
         let screenshotError = "";
+        let screenshotCaptureMode = "unknown";
         try {
-          const screenshotDataUrl = await _captureTabScreenshot(targetTabId);
-          const screenshotArtifact = await cacheEtsyShopCrawlScreenshot(screenshotDataUrl, pageIndex);
+          const screenshotCapture = await _captureTabScreenshot(targetTabId);
+          const screenshotArtifact = await cacheEtsyShopCrawlScreenshot(screenshotCapture.dataUrl, pageIndex);
           screenshotRef = screenshotArtifact?.ref || null;
-          screenshotBytes = screenshotArtifact?.bytes || screenshotDataUrl.length;
+          screenshotBytes = screenshotArtifact?.bytes || screenshotCapture.dataUrl.length;
           screenshotStorage = screenshotArtifact?.storage || "";
           screenshotExpiresAt = screenshotArtifact?.expiresAt || null;
+          screenshotCaptureMode = screenshotCapture.captureMode || "unknown";
         } catch (err) {
           screenshotError = err.message;
         }
@@ -1063,6 +1073,7 @@ export const tools = {
           screenshotBytes,
           screenshotStorage,
           screenshotExpiresAt,
+          screenshotCaptureMode,
           screenshotNote: screenshotRef
             ? "Screenshot is stored as a referenced artifact; full base64 is intentionally omitted from tool history/checkpoints."
             : "",

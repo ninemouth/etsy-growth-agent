@@ -38,6 +38,8 @@ assert.match(agentLoopSource, /isWorkflowCancellationRequested[\s\S]*workflow_ca
 assert.match(agentLoopSource, /isWorkflowGenerationCurrent[\s\S]*stale_tool_result_discarded/, "late results from an older workflow generation must be discarded");
 assert.match(agentLoopSource, /putDataUrlArtifact[\s\S]*workflow-loop-screenshot/, "immediate workflow screenshots should be retained as evidence artifacts");
 assert.match(toolRegistrySource, /executeGenericDomSnapshot[\s\S]*allFrames: true[\s\S]*scripting_executeScript_dom_fallback/, "page reading should have an all-frame DOM fallback route");
+assert.match(toolRegistrySource, /captureFullPageScreenshot[\s\S]*screenshotCaptureMode/, "Etsy evidence capture should use debugger-backed full-page screenshots with fallback");
+assert.match(agentLoopSource, /captureFullPageScreenshot[\s\S]*captureVisibleTab_viewport/, "Etsy detail-page loop screenshots should prefer full-page capture and retain viewport fallback");
 assert.match(toolRegistrySource, /createOwnedTab[\s\S]*closeOwnedTab/, "Etsy crawl tabs should have centralized workflow ownership");
 assert.match(toolRegistrySource, /createOwnedTabCallback[\s\S]*search_in_browser[\s\S]*google_trends/, "browser search tabs should use workflow ownership");
 assert.match(toolRegistrySource, /image_search_1688[\s\S]*createOwnedTabCallback/, "image search tabs should use workflow ownership");

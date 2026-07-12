@@ -4,6 +4,7 @@ import { callLLM, getSettings } from './llmClient.js';
 import { tools, hasValidEtsySearchEvidence } from './toolRegistry.js';
 import { isWorkflowCancellationRequested, isWorkflowGenerationCurrent } from './workflowRuntime.js';
 import { putDataUrlArtifact } from './artifactStore.js';
+import { captureFullPageScreenshot } from './debuggerCapture.js';
 
 const globalSessionCache = {};
 const CHECKPOINT_PREFIX = "etsyAgentCheckpoint:";
@@ -2483,6 +2484,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       }
 
       let nextScreenshot = null;
+      let nextScreenshotCaptureMode = "unknown";
       const pageModifyingTools = ["open_new_tab", "navigate_to", "search_in_browser", "collect_etsy_shop_pages", "collect_etsy_competitor_shops", "click_by_text", "input_text_and_search", "click_by_selector", "image_search_1688", "image_search_taobao", "image_search_in_browser", "click_by_coordinate"];
       const skipImmediateLoopScreenshotTools = new Set([
         "collect_etsy_shop_pages",
@@ -2498,12 +2500,24 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
             });
           });
           if (t && t.windowId) {
-            nextScreenshot = await new Promise((resScr) => {
-              chrome.tabs.captureVisibleTab(t.windowId, { format: "jpeg", quality: 60 }, (dataUrl) => {
-                if (chrome.runtime.lastError || !dataUrl) resScr(null);
-                else resScr(dataUrl);
+            if (/etsy\.com/i.test(String(t.url || ""))) {
+              try {
+                const fullPageCapture = await captureFullPageScreenshot(tId);
+                nextScreenshot = fullPageCapture.dataUrl;
+                nextScreenshotCaptureMode = fullPageCapture.captureMode;
+              } catch (err) {
+                console.warn("Could not capture Etsy full-page screenshot for loop context:", err.message);
+              }
+            }
+            if (!nextScreenshot) {
+              nextScreenshot = await new Promise((resScr) => {
+                chrome.tabs.captureVisibleTab(t.windowId, { format: "jpeg", quality: 60 }, (dataUrl) => {
+                  if (chrome.runtime.lastError || !dataUrl) resScr(null);
+                  else resScr(dataUrl);
+                });
               });
-            });
+              nextScreenshotCaptureMode = "captureVisibleTab_viewport";
+            }
           }
         } catch (err) {
           console.warn("Could not capture real-time loop screenshot:", err.message);
@@ -2524,6 +2538,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
             screenshotRef: screenshotArtifact.ref,
             screenshotStorage: screenshotArtifact.storage,
             screenshotExpiresAt: screenshotArtifact.expiresAt,
+            screenshotCaptureMode: nextScreenshotCaptureMode,
           };
         } catch (err) {
           console.warn("Could not persist workflow loop screenshot artifact:", err.message);
