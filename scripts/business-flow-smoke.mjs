@@ -76,6 +76,8 @@ assert.match(toolRegistrySource, /etsyShopCrawlCache[\s\S]*cacheHit/, "Etsy shop
 assert.match(toolRegistrySource, /screenshotCaptured[\s\S]*screenshotRef[\s\S]*completedFullCrawl/, "Etsy shop collection loop should capture per-page screenshot evidence without returning raw base64 in checkpoints");
 assert.match(toolRegistrySource, /currentSessionData\.products\.set/, "Etsy shop collection loop should accumulate visible product cards while reading pages");
 assert.match(toolRegistrySource, /analyze_etsy_shop_crawl_screenshots[\s\S]*evidenceLedgerEntries/, "tool registry should expose independent visual analysis for cached Etsy shop crawl screenshots");
+assert.match(toolRegistrySource, /stage_observations[\s\S]*stage_synthesis[\s\S]*stage_report_inputs/, "screenshot analysis should return staged observations, synthesis, and report-ready inputs");
+assert.match(toolRegistrySource, /buildScreenshotSynthesis[\s\S]*buildScreenshotReportInputs/, "screenshot analysis should synthesize per-image observations before final report inputs");
 assert.match(toolRegistrySource, /putDataUrlArtifact[\s\S]*artifactStore:\s*"indexeddb_blob_with_memory_fallback"/, "Etsy shop crawl screenshots should be stored as artifact refs instead of chrome.storage.local payloads");
 assert.match(artifactStoreSource, /STORE_NAME\s*=\s*"artifacts"[\s\S]*indexedDB\.open[\s\S]*createObjectStore\(STORE_NAME[\s\S]*new Blob/, "large screenshot artifacts should use IndexedDB Blob storage");
 assert.doesNotMatch(artifactStoreSource, /chrome\.storage\.local\.set/, "artifact store must not persist large screenshot blobs through chrome.storage.local");
@@ -103,7 +105,9 @@ assert.match(agentLoopSource, /collect_etsy_competitor_shops[\s\S]*internal_runa
 assert.match(agentLoopSource, /MAX_LLM_CRAWL_PRODUCT_CARDS\s*=\s*16/, "shop diagnosis compression should preserve enough visible product samples for competitor structure analysis");
 assert.match(agentLoopSource, /productEvidenceSummary/, "shop diagnosis compression should preserve aggregate product evidence for pricing, reviews, promotions and titles");
 assert.match(agentLoopSource, /analyze_etsy_shop_crawl_screenshots[\s\S]*独立截图解读/, "critic should require independent visual analysis after cached shop crawl screenshots are captured");
+assert.match(agentLoopSource, /stage_observations[\s\S]*stage_synthesis[\s\S]*stage_report_inputs/, "agent loop compression should preserve staged screenshot analysis conclusions for the next reasoning step");
 assert.match(shopOptimizerSkillSource, /collect_etsy_competitor_shops[\s\S]*减少重复开页和 LLM 往返/, "shop optimizer should prefer batch competitor shop collection when multiple competitor URLs are available");
+assert.match(shopOptimizerSkillSource, /stage_observations[\s\S]*stage_synthesis[\s\S]*stage_report_inputs/, "shop optimizer should require staged screenshot conclusions to flow into final report fields");
 assert.match(shopOptimizerSkillSource, /collect_etsy_shop_pages[\s\S]*边读 DOM 边累积商品卡片/, "shop optimizer should require browser pagination collection when competitor shop API data is unavailable");
 assert.match(shopOptimizerSkillSource, /analyze_etsy_shop_crawl_screenshots[\s\S]*独立视觉解读/, "shop optimizer should require analysis of cached crawl screenshots after pagination collection");
 assert.match(shopOptimizerSkillSource, /competitor_benchmarks[\s\S]*listing_order_insight/, "shop optimizer should require per-competitor product structure and visible order analysis");
@@ -628,9 +632,55 @@ const competitorScreenshotAnalysisHistory = {
   },
   result: {
     ok: true,
+    analysisWorkflow: "staged_screenshot_observation_to_synthesis_to_report_inputs",
     competitorName: "TopBridalStudio",
     screenshotsRequested: 2,
     screenshotsAnalyzed: 2,
+    stage_observations: [
+      {
+        stage: "screenshot_observation",
+        competitorName: "TopBridalStudio",
+        pageIndex: 1,
+        url: "https://www.etsy.com/shop/TopBridalStudio",
+        screenshotRef: "__ETSY_SHOP_CRAWL_SCREENSHOT_mock_1__",
+        ok: true,
+        visual_tone: "bridal soft luxury",
+        hero_or_first_grid_signals: ["model hand-held wedding scene"],
+        product_image_patterns: ["personalized clutch closeups"],
+        promotion_or_trust_signals: ["free shipping", "star seller"],
+        layout_and_merchandising: "personalized bridal clutches appear first",
+        report_observation: "竞品首屏以婚礼手持场景和个性化礼品文字强化新娘/伴娘购买场景。",
+      },
+    ],
+    stage_synthesis: [
+      {
+        competitorName: "TopBridalStudio",
+        pagesAnalyzed: 2,
+        urls: ["https://www.etsy.com/shop/TopBridalStudio"],
+        visual_tone_summary: "bridal soft luxury",
+        hero_signal_summary: ["model hand-held wedding scene"],
+        product_image_pattern_summary: ["personalized clutch closeups"],
+        promotion_or_trust_signal_summary: ["free shipping", "star seller"],
+        merchandising_summary: ["personalized bridal clutches appear first"],
+        limitation_summary: "截图只能判断可见陈列，不能证明真实销量。",
+        productSamples: [{ title: "Personalized Bridal Clutch", price: "$42.00", rank: 1 }],
+      },
+    ],
+    stage_report_inputs: {
+      evidenceLedgerEntries: [
+        {
+          source_type: "screenshot_visual",
+          source_ref: "竞品店铺分页截图: https://www.etsy.com/shop/TopBridalStudio",
+          observed_value: "竞品首屏以婚礼手持场景和个性化礼品文字强化新娘/伴娘购买场景。",
+          used_for: "对标竞品店铺视觉调性、首图/网格陈列、促销/信任信号和可见排序方法",
+          confidence: "medium",
+          limitation: "截图只能判断当前页可见视觉和陈列，不能证明真实销量、完整库存、真实上架时间或全店完整 SKU。",
+        },
+      ],
+      competitorBenchmarkDrafts: [{ competitor_name: "TopBridalStudio", visual_method: "bridal soft luxury" }],
+      diagnosticDepthHints: [{ dimension: "视觉首图与画廊", finding: "bridal soft luxury", evidence: "stage_observations", gap: "当前店铺需补视觉信任信号", action: "补模特手持和包装图" }],
+      nextStepInstruction: "沿用阶段结论补齐 final.output 字段。",
+    },
     analyses: [
       {
         pageIndex: 1,
@@ -661,6 +711,14 @@ const competitorScreenshotAnalysisHistory = {
     ],
   },
 };
+const compactStagedScreenshotAnalysis = __testInternals.compactToolResultForLLM(
+  "analyze_etsy_shop_crawl_screenshots",
+  competitorScreenshotAnalysisHistory.result
+);
+assert.equal(compactStagedScreenshotAnalysis.analysisWorkflow, "staged_screenshot_observation_to_synthesis_to_report_inputs", "compressed screenshot analysis should preserve staged workflow marker");
+assert.equal(compactStagedScreenshotAnalysis.stage_observations[0].visual_tone, "bridal soft luxury", "compressed screenshot analysis should preserve per-screenshot observations");
+assert.equal(compactStagedScreenshotAnalysis.stage_synthesis[0].competitorName, "TopBridalStudio", "compressed screenshot analysis should preserve competitor-level synthesis");
+assert.equal(compactStagedScreenshotAnalysis.stage_report_inputs.competitorBenchmarkDrafts[0].competitor_name, "TopBridalStudio", "compressed screenshot analysis should preserve report-ready competitor benchmark drafts");
 const completedCompetitorCrawlHistory = {
   ...competitorCrawlHistory,
   result: {

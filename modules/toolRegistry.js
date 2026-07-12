@@ -496,6 +496,132 @@ function normalizeScreenshotPages(pages = [], screenshotRefs = []) {
   });
 }
 
+function compactCardsForVisionContext(cards = [], limit = 8) {
+  return (Array.isArray(cards) ? cards : []).slice(0, limit).map((card, index) => ({
+    rank: card.visibleOrderRank ?? card.rank ?? index + 1,
+    title: card.title || card.name || "",
+    price: card.price || "",
+    rating: card.rating || "",
+    reviewCount: card.reviewCount || card.reviews || "",
+    promotion: card.promotionText || card.discountText || card.saleText || "",
+    shipping: card.shippingText || card.shipping || "",
+    href: card.href || card.listingUrl || card.url || "",
+  }));
+}
+
+function buildScreenshotSynthesis(analyses = []) {
+  const valid = analyses.filter((item) => item?.ok !== false);
+  const byCompetitor = new Map();
+  valid.forEach((item) => {
+    const key = item.competitorName || item.shopName || item.url || "unknown_competitor";
+    if (!byCompetitor.has(key)) {
+      byCompetitor.set(key, {
+        competitorName: key,
+        pagesAnalyzed: 0,
+        urls: [],
+        visualTones: [],
+        heroSignals: [],
+        productImagePatterns: [],
+        promotionOrTrustSignals: [],
+        merchandisingPatterns: [],
+        limitations: [],
+        productSamples: [],
+      });
+    }
+    const bucket = byCompetitor.get(key);
+    bucket.pagesAnalyzed += 1;
+    if (item.url) bucket.urls.push(item.url);
+    if (item.visual_tone) bucket.visualTones.push(item.visual_tone);
+    if (Array.isArray(item.hero_or_first_grid_signals)) bucket.heroSignals.push(...item.hero_or_first_grid_signals);
+    if (Array.isArray(item.product_image_patterns)) bucket.productImagePatterns.push(...item.product_image_patterns);
+    if (Array.isArray(item.promotion_or_trust_signals)) bucket.promotionOrTrustSignals.push(...item.promotion_or_trust_signals);
+    if (item.layout_and_merchandising) bucket.merchandisingPatterns.push(item.layout_and_merchandising);
+    if (item.risks_or_limits) bucket.limitations.push(item.risks_or_limits);
+    if (Array.isArray(item.productSamples)) bucket.productSamples.push(...item.productSamples);
+  });
+
+  const unique = (values = [], limit = 8) => Array.from(new Set(values.filter(Boolean).map((value) => String(value).trim()).filter(Boolean))).slice(0, limit);
+  return Array.from(byCompetitor.values()).map((bucket) => ({
+    competitorName: bucket.competitorName,
+    pagesAnalyzed: bucket.pagesAnalyzed,
+    urls: unique(bucket.urls, 6),
+    visual_tone_summary: unique(bucket.visualTones, 4).join("；") || "未形成明确视觉调性结论",
+    hero_signal_summary: unique(bucket.heroSignals, 8),
+    product_image_pattern_summary: unique(bucket.productImagePatterns, 8),
+    promotion_or_trust_signal_summary: unique(bucket.promotionOrTrustSignals, 8),
+    merchandising_summary: unique(bucket.merchandisingPatterns, 6),
+    limitation_summary: unique(bucket.limitations, 4).join("；") || "截图只能证明当前可见页面，不能证明真实销量、完整库存或私有后台数据。",
+    productSamples: bucket.productSamples.slice(0, 12),
+  }));
+}
+
+function buildScreenshotReportInputs({ analyses = [], syntheses = [], competitorName = "" } = {}) {
+  const evidenceLedgerEntries = [];
+  analyses.filter((item) => item?.ok !== false).forEach((item) => {
+    const observed = item.report_observation || item.visual_tone || "已完成竞品店铺截图视觉解读。";
+    evidenceLedgerEntries.push({
+      source_type: "screenshot_visual",
+      source_ref: `竞品店铺分页截图: ${item.url || item.screenshotRef}`,
+      observed_value: observed,
+      used_for: "对标竞品店铺视觉调性、首图/网格陈列、促销/信任信号和可见排序方法",
+      confidence: "medium",
+      limitation: item.risks_or_limits || "截图只能判断当前页可见视觉和陈列，不能证明真实销量、完整库存、真实上架时间或全店完整 SKU。",
+    });
+  });
+
+  const competitorBenchmarkDrafts = syntheses.map((item) => ({
+    competitor_name: item.competitorName || competitorName || "竞品店铺",
+    competitor_url: item.urls?.[0] || "",
+    page_type: "shop",
+    sampled_products_count: item.productSamples?.length || 0,
+    visible_sku_count_estimate: `${item.pagesAnalyzed || 0} 个截图页的可见商品样本；仅代表本轮可见页面`,
+    category_mix: item.product_image_pattern_summary || [],
+    product_samples: (item.productSamples || []).slice(0, 4).map((sample) => ({
+      title: sample.title || "",
+      price: sample.price || "",
+      category_or_scenario: sample.category_or_scenario || sample.title || "",
+      promotion_signal: sample.promotion || sample.promotion_signal || "none_visible",
+      visible_order_rank: sample.rank || "",
+    })),
+    price_distribution: { min: "from_visible_samples", max: "from_visible_samples", main_band: "derive_from_product_samples" },
+    promotion_signals: item.promotion_or_trust_signal_summary || [],
+    shop_review_signal: { rating: "visible_or_unconfirmed", review_count: "visible_or_unconfirmed" },
+    listing_order_insight: {
+      visible_sort_order: item.merchandising_summary?.[0] || "current visible shop grid",
+      observed_order_basis: "current visible shop grid / captured screenshot pages",
+      interpretation_limit: item.limitation_summary,
+    },
+    visual_method: item.visual_tone_summary,
+    seo_method: "derive from visible titles and Etsy search evidence",
+    fulfillment_signal: (item.promotion_or_trust_signal_summary || []).join("；") || "none_visible",
+    evidence_refs: item.urls || [],
+  }));
+
+  const diagnosticDepthHints = [
+    {
+      dimension: "视觉首图与画廊",
+      finding: syntheses.map((item) => `${item.competitorName}: ${item.visual_tone_summary}`).join("；"),
+      evidence: "stage_observations + screenshot_visual evidence ledger",
+      gap: "需要把竞品可见视觉方法转化为当前店铺首图、画廊、包装和尺寸图动作。",
+      action: "在 diagnostic_depth_matrix 中把截图观察转写为视觉整改维度。",
+    },
+    {
+      dimension: "竞品对标与可见排序",
+      finding: syntheses.map((item) => `${item.competitorName}: ${item.merchandising_summary.join("；")}`).join("；"),
+      evidence: "captured screenshot pages and visible product samples",
+      gap: "截图只能说明可见陈列，不能推断真实销量或完整上架顺序。",
+      action: "在 competitor_benchmarks.listing_order_insight 中写明 observed_order_basis 和 interpretation_limit。",
+    },
+  ];
+
+  return {
+    evidenceLedgerEntries,
+    competitorBenchmarkDrafts,
+    diagnosticDepthHints,
+    nextStepInstruction: "下一步请不要重新解读原始截图；请沿用 stage_observations 的逐图观察、stage_synthesis 的逐店方法归纳，以及 stage_report_inputs 的证据账本/竞品草稿，补齐 final.output.diagnostic_depth_matrix、competitor_benchmarks 和 data[].evidence_ledger。",
+  };
+}
+
 function isWarmCtaPixel(r, g, b, a) {
   return a > 180 && r >= 210 && g >= 50 && g <= 190 && b <= 125 && r > g + 35;
 }
@@ -991,7 +1117,6 @@ export const tools = {
     }
 
     const analyses = [];
-    const evidenceLedgerEntries = [];
     for (const page of screenshotPages) {
       const imageUrl = await getCachedEtsyShopScreenshot(page.screenshotRef);
       if (!imageUrl) {
@@ -1006,26 +1131,34 @@ export const tools = {
       }
 
       const prompt = `You are analyzing an Etsy competitor shop screenshot for a seller growth report.
+This is stage 1 of a multi-step workflow. Only describe visible facts from this screenshot.
 Return strict JSON only with this shape:
 {
   "ok": true,
+  "stage": "screenshot_observation",
   "visual_tone": "short concrete description",
   "hero_or_first_grid_signals": ["specific visible signal"],
   "product_image_patterns": ["specific image/thumbnail pattern"],
   "promotion_or_trust_signals": ["visible sale/free shipping/star seller/review/brand trust signal or none_visible"],
   "layout_and_merchandising": "how the visible order/grid appears to be merchandised",
+  "visible_text_or_labels": ["specific readable text/labels if visible, otherwise none_visible"],
+  "product_sample_interpretation": ["what visible product cards suggest about category/price/style; do not invent"],
   "risks_or_limits": "what this screenshot cannot prove",
   "report_observation": "one concise Chinese sentence suitable for evidence_ledger.observed_value"
 }
 Do not infer private sales, inventory, exact upload time, or full SKU coverage from the screenshot.
+Do not write final strategy. The next stage will synthesize across screenshots.
 
 Context:
 - competitorName: ${competitorName || "unknown"}
+- pageCompetitorName: ${page.competitorName || "unknown"}
+- competitorUrl: ${page.competitorUrl || "unknown"}
 - pageIndex: ${page.pageIndex}
 - url: ${page.url || "unknown"}
 - sortLabel: ${page.sortLabel || "unknown"}
 - productCardsVisible: ${page.productCardsVisible || 0}
-- visibleProductOrderBasis: ${page.visibleProductOrderBasis || "unknown"}`;
+- visibleProductOrderBasis: ${page.visibleProductOrderBasis || "unknown"}
+- productSamplesFromDOM: ${JSON.stringify(compactCardsForVisionContext(page.productCards, 8))}`;
 
       try {
         const responseText = await callLLM([
@@ -1038,24 +1171,23 @@ Context:
           },
         ]);
         const parsed = extractJsonObject(responseText);
-        const reportObservation = parsed.report_observation || parsed.visual_tone || "已完成竞品店铺截图视觉解读。";
         analyses.push({
+          stage: "screenshot_observation",
+          competitorName: page.competitorName || competitorName || "",
+          competitorUrl: page.competitorUrl || "",
+          shopName: page.shopName || "",
+          productSamples: compactCardsForVisionContext(page.productCards, 8),
           pageIndex: page.pageIndex,
           url: page.url,
           screenshotRef: page.screenshotRef,
           ok: parsed.ok !== false,
           ...parsed,
         });
-        evidenceLedgerEntries.push({
-          source_type: "screenshot_visual",
-          source_ref: `竞品店铺分页截图: ${page.url || page.screenshotRef}`,
-          observed_value: reportObservation,
-          used_for: "对标竞品店铺视觉调性、首图/网格陈列、促销/信任信号和可见排序方法",
-          confidence: "medium",
-          limitation: parsed.risks_or_limits || "截图只能判断当前页可见视觉和陈列，不能证明真实销量、完整库存、真实上架时间或全店完整 SKU。",
-        });
       } catch (err) {
         analyses.push({
+          stage: "screenshot_observation",
+          competitorName: page.competitorName || competitorName || "",
+          competitorUrl: page.competitorUrl || "",
           pageIndex: page.pageIndex,
           url: page.url,
           screenshotRef: page.screenshotRef,
@@ -1064,17 +1196,24 @@ Context:
         });
       }
     }
+    const stageSynthesis = buildScreenshotSynthesis(analyses);
+    const stageReportInputs = buildScreenshotReportInputs({ analyses, syntheses: stageSynthesis, competitorName });
+    const evidenceLedgerEntries = stageReportInputs.evidenceLedgerEntries;
 
     return {
       ok: evidenceLedgerEntries.length > 0,
       tool: "analyze_etsy_shop_crawl_screenshots",
+      analysisWorkflow: "staged_screenshot_observation_to_synthesis_to_report_inputs",
       competitorName,
       screenshotsRequested: screenshotPages.length,
       screenshotsAnalyzed: evidenceLedgerEntries.length,
+      stage_observations: analyses,
+      stage_synthesis: stageSynthesis,
+      stage_report_inputs: stageReportInputs,
       analyses,
       evidenceLedgerEntries,
       message: evidenceLedgerEntries.length > 0
-        ? "Etsy shop crawl screenshots analyzed into structured visual evidence."
+        ? "Etsy shop crawl screenshots analyzed through staged observations, synthesis, and report-ready inputs."
         : "No screenshots could be analyzed. Re-run collect_etsy_shop_pages in the same workflow before visual analysis.",
     };
   },

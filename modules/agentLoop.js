@@ -249,9 +249,52 @@ function compactToolResultForLLM(toolName = "", result = {}) {
 
   if (toolName === "analyze_etsy_shop_crawl_screenshots") {
     base.tool = result.tool;
+    base.analysisWorkflow = result.analysisWorkflow;
     base.competitorName = result.competitorName;
     base.screenshotsRequested = result.screenshotsRequested;
     base.screenshotsAnalyzed = result.screenshotsAnalyzed;
+    base.stage_observations = Array.isArray(result.stage_observations) ? result.stage_observations.slice(0, 8).map((analysis) => ({
+      stage: analysis.stage,
+      competitorName: analysis.competitorName,
+      competitorUrl: analysis.competitorUrl,
+      pageIndex: analysis.pageIndex,
+      url: analysis.url,
+      screenshotRef: analysis.screenshotRef,
+      ok: analysis.ok,
+      visual_tone: truncateText(analysis.visual_tone || "", 180),
+      hero_or_first_grid_signals: Array.isArray(analysis.hero_or_first_grid_signals) ? analysis.hero_or_first_grid_signals.slice(0, 6) : analysis.hero_or_first_grid_signals,
+      product_image_patterns: Array.isArray(analysis.product_image_patterns) ? analysis.product_image_patterns.slice(0, 6) : analysis.product_image_patterns,
+      promotion_or_trust_signals: Array.isArray(analysis.promotion_or_trust_signals) ? analysis.promotion_or_trust_signals.slice(0, 6) : analysis.promotion_or_trust_signals,
+      layout_and_merchandising: truncateText(analysis.layout_and_merchandising || "", 260),
+      report_observation: truncateText(analysis.report_observation || "", 260),
+      risks_or_limits: truncateText(analysis.risks_or_limits || "", 220),
+    })) : [];
+    base.stage_synthesis = Array.isArray(result.stage_synthesis) ? result.stage_synthesis.slice(0, 6).map((item) => ({
+      competitorName: item.competitorName,
+      pagesAnalyzed: item.pagesAnalyzed,
+      urls: item.urls,
+      visual_tone_summary: truncateText(item.visual_tone_summary || "", 260),
+      hero_signal_summary: Array.isArray(item.hero_signal_summary) ? item.hero_signal_summary.slice(0, 8) : item.hero_signal_summary,
+      product_image_pattern_summary: Array.isArray(item.product_image_pattern_summary) ? item.product_image_pattern_summary.slice(0, 8) : item.product_image_pattern_summary,
+      promotion_or_trust_signal_summary: Array.isArray(item.promotion_or_trust_signal_summary) ? item.promotion_or_trust_signal_summary.slice(0, 8) : item.promotion_or_trust_signal_summary,
+      merchandising_summary: Array.isArray(item.merchandising_summary) ? item.merchandising_summary.slice(0, 6) : item.merchandising_summary,
+      limitation_summary: truncateText(item.limitation_summary || "", 260),
+      productSamples: Array.isArray(item.productSamples) ? item.productSamples.slice(0, 8) : [],
+    })) : [];
+    if (result.stage_report_inputs) {
+      base.stage_report_inputs = {
+        evidenceLedgerEntries: Array.isArray(result.stage_report_inputs.evidenceLedgerEntries)
+          ? result.stage_report_inputs.evidenceLedgerEntries.slice(0, 8)
+          : [],
+        competitorBenchmarkDrafts: Array.isArray(result.stage_report_inputs.competitorBenchmarkDrafts)
+          ? result.stage_report_inputs.competitorBenchmarkDrafts.slice(0, 4)
+          : [],
+        diagnosticDepthHints: Array.isArray(result.stage_report_inputs.diagnosticDepthHints)
+          ? result.stage_report_inputs.diagnosticDepthHints.slice(0, 4)
+          : [],
+        nextStepInstruction: truncateText(result.stage_report_inputs.nextStepInstruction || "", 500),
+      };
+    }
     base.analyses = Array.isArray(result.analyses) ? result.analyses.slice(0, 6).map((analysis) => ({
       pageIndex: analysis.pageIndex,
       url: analysis.url,
