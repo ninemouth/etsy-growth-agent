@@ -164,6 +164,27 @@ assert.deepEqual(
   "auto repair should prevent non-substantive quality retry when Google Trends screenshot artifact exists",
 );
 
+const missingTrendToolLedger = structuredClone(validReport);
+missingTrendToolLedger.output.data[0].evidence_ledger = ledger.filter((entry) =>
+  entry.source_type !== "google_trends"
+);
+assert.ok(
+  validateReport(missingTrendToolLedger, "", skillId, toolHistory, pageContext).some((error) => /缺少 google_trends/.test(error)),
+  "trend report without google_trends tool ledger should fail before auto repair",
+);
+const repairedTrendToolLedger = autoRepairFinalReportForDelivery(missingTrendToolLedger, { skillId, toolHistory, pageContext });
+assert.equal(repairedTrendToolLedger.changed, true, "auto repair should attach existing Google Trends tool evidence");
+assert.equal(
+  repairedTrendToolLedger.parsed.output.data[0].evidence_ledger.some((entry) => entry.source_type === "google_trends"),
+  true,
+  "auto repair should add a google_trends ledger entry when verified tool evidence exists",
+);
+assert.deepEqual(
+  validateReport(repairedTrendToolLedger.parsed, "", skillId, toolHistory, pageContext),
+  [],
+  "auto repair should prevent Critic redo when only the google_trends ledger entry was omitted",
+);
+
 const invalid = structuredClone(validReport);
 invalid.output.overview = "Google Trends 显著峰值，需求旺盛，完整市场价格分布为 $21-$62。";
 invalid.output.analysis = "竞品转化率更高，评论区常见物流痛点，香港发货 7-14 工作日。";

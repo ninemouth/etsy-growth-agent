@@ -1918,6 +1918,19 @@ function getGoogleTrendsScreenshotEvidence(toolHistory = []) {
   return null;
 }
 
+function buildGoogleTrendsToolLedgerEntry(evidence = {}) {
+  const queryText = evidence.query ? `查询词：${evidence.query}；` : "";
+  const ref = evidence.searchUrl || evidence.sourceRef || "Google Trends search evidence";
+  return {
+    source_type: "google_trends",
+    source_ref: ref,
+    observed_value: `${queryText}Google Trends 页面已通过工具证据校验，可见 Interest over time、related queries/topics 或趋势页面文本。`,
+    used_for: "支撑趋势/季节性/需求曲线相关结论的工具来源；最终解释仍需结合趋势图截图视觉解读。",
+    confidence: "medium",
+    limitation: "Google Trends 是相对热度，不等于 Etsy 平台搜索量、点击率、订单或转化率；只能作为公开需求方向证据。",
+  };
+}
+
 function buildGoogleTrendsScreenshotLedgerEntry(evidence = {}) {
   const queryText = evidence.query ? `查询词：${evidence.query}；` : "";
   const urlText = evidence.searchUrl ? `页面：${evidence.searchUrl}；` : "";
@@ -2006,6 +2019,10 @@ export function autoRepairFinalReportForDelivery(parsed, {
     }
 
     const itemUsesTrends = reportUsesTrends || /Google Trends|谷歌趋势|趋势图|搜索趋势|搜索热度|季节性|需求曲线|Interest over time|related queries|related topics|峰值|peak/i.test(JSON.stringify(item));
+    if (isPlatformTrendSkill(skillId) && itemUsesTrends && trendsScreenshotEvidence && !hasLedgerType(ledger, "google_trends")) {
+      ledger.push(buildGoogleTrendsToolLedgerEntry(trendsScreenshotEvidence));
+      itemChanged = true;
+    }
     if (isPlatformTrendSkill(skillId) && itemUsesTrends && trendsScreenshotEvidence && !hasTrendVisualForTrends(ledger)) {
       ledger.push(buildGoogleTrendsScreenshotLedgerEntry(trendsScreenshotEvidence));
       itemChanged = true;
