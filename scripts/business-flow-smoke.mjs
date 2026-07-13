@@ -33,7 +33,7 @@ assert.match(agentLoopSource, /LLM_RECOVERY_RETRIES/, "transient LLM network fai
 assert.match(agentLoopSource, /type:\s*"llm_error"[\s\S]*type:\s*"interrupted"/, "final LLM network failures should preserve the checkpoint instead of becoming a fake report");
 assert.match(agentLoopSource, /QUALITY_RETRY_LIMIT\s*=\s*2/, "quality repair must have a bounded retry window");
 assert.match(agentLoopSource, /inFlightToolRuns[\s\S]*toolRunKey[\s\S]*requestWorkflowCancellation/, "timed-out tool work must be deduplicated and cancellation must propagate to the underlying operation");
-assert.match(agentLoopSource, /趋势证据请求已完成，禁止重复打开同一搜索/, "trend evidence searches must not repeat the same engine/query request");
+assert.match(agentLoopSource, /type:\s*"reuse_tool_result"[\s\S]*tool_result_reused/, "trend evidence searches must reuse an existing engine/query result instead of reopening a tab");
 assert.match(agentLoopSource, /PLATFORM_TRENDS_ALLOWED_TOOLS[\s\S]*platform_trends_tool_whitelist_guard/, "trend workflows must reject unrelated tools before evidence collection drifts");
 assert.match(agentLoopSource, /validatePlatformTrendToolResult[\s\S]*step_quality_blocked/, "trend tool results must pass a per-step evidence gate before the next LLM turn");
 assert.match(agentLoopSource, /quality_gate_blocked[\s\S]*不得交付为成功报告/, "reports that still fail validation after retries must be blocked, not delivered");
@@ -74,7 +74,8 @@ assert.match(agentLoopSource, /productCardsCount[\s\S]*truncateText\(ctx\.visibl
 assert.match(agentLoopSource, /lastNode:\s*"llm_response_received"/, "agent loop should checkpoint after receiving an LLM response");
 assert.match(agentLoopSource, /status:\s*"tool_pending"[\s\S]*lastNode:\s*"tool_call_ready"/, "agent loop should checkpoint before executing a parsed tool call");
 assert.match(agentLoopSource, /status:\s*"tool_guard_retry"/, "agent loop should checkpoint guard-driven retry nodes");
-assert.match(agentLoopSource, /getEtsyBrowserWorkflowGuardError[\s\S]*重复 open_new_tab[\s\S]*collect_etsy_shop_pages/, "Etsy browser workflow should prevent repeated tab opening loops and route shop pages into collection");
+assert.match(agentLoopSource, /getEtsyBrowserWorkflowGuardResult[\s\S]*重复 open_new_tab[\s\S]*collect_etsy_shop_pages/, "Etsy browser workflow should prevent repeated tab opening loops and route shop pages into collection");
+assert.match(toolRegistrySource, /attachSearchScreenshotArtifact[\s\S]*search-evidence-screenshot[\s\S]*closeTabQuietly/, "browser searches should persist screenshot evidence before auto-closing temporary tabs");
 assert.match(agentLoopSource, /本轮已有 3 个或以上已完成取证但未关闭的新标签页/, "Etsy browser workflow should require closing evidence tabs before opening more");
 assert.match(agentLoopSource, /runToolWithTimeout[\s\S]*timed out after[\s\S]*toolTimeoutMs/, "agent loop should enforce tool-level timeouts instead of waiting indefinitely");
 assert.match(agentLoopSource, /closeTabsCreatedDuringTimedOutTool[\s\S]*tool_timeout/, "timed-out browser tools should clean up newly created temporary tabs and expose a timeout state");

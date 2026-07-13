@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import {
+  __testInternals,
   isPlatformTrendSkill,
   validateReport,
 } from "../modules/agentLoop.js";
 
 const skillId = "skills/etsy_platform_trends.skill.md";
 assert.equal(isPlatformTrendSkill(skillId), true, "dedicated platform trend skill must be recognized");
+assert.equal(
+  __testInternals.searchEvidenceKey({ engine: "google_trends", searchType: "listing", query: "  “Personalized   Wedding Clutch” " }),
+  "google_trends:listing:personalized wedding clutch",
+  "trend search dedupe keys should ignore quote, case, and whitespace drift",
+);
 
 const pageContext = {
   url: "https://www.etsy.com/shop/ExampleShop",
@@ -23,7 +29,7 @@ const toolHistory = [
       pageData: {
         url: "https://www.etsy.com/search?q=personalized%20wedding%20clutch",
         visibleText: "Etsy search results wedding clutch $35 bestseller",
-        productCards: [{ href: "https://www.etsy.com/listing/1/wedding-clutch", title: "Personalized wedding clutch", price: "$35" }],
+        productCards: [{ href: "https://www.etsy.com/listing/1/wedding-clutch", shopUrl: "https://www.etsy.com/shop/TopWeddingStudio", title: "Personalized wedding clutch", price: "$35" }],
       },
     },
   },
@@ -32,6 +38,9 @@ const toolHistory = [
     arguments: { engine: "google_trends", query: "personalized wedding clutch" },
     result: {
       ok: true,
+      screenshotCaptured: true,
+      screenshotRef: "artifact://google-trends-wedding-clutch.png",
+      screenshotCaptureMode: "captureVisibleTab_viewport",
       pageData: {
         url: "https://trends.google.com/trends/explore?geo=US&q=personalized%20wedding%20clutch",
         title: "Google Trends",
@@ -42,9 +51,54 @@ const toolHistory = [
   {
     tool: "search_in_browser",
     arguments: { engine: "google_us", query: "personalized wedding clutch" },
-    result: { ok: true, pageData: { url: "https://www.google.com/search?q=personalized+wedding+clutch", visibleText: "Google search results for personalized wedding clutch" } },
+    result: { ok: true, pageData: { url: "https://www.google.com/search?q=personalized+wedding+clutch", visibleText: "Google US search results for personalized wedding clutch show bridal clutch, bridesmaid gift, custom name purse, wedding guest bag, satin evening bag, and Etsy marketplace pages as visible public demand-language samples." } },
   },
 ];
+
+const trendState = __testInternals.getPlatformTrendEvidenceState(toolHistory);
+assert.equal(trendState.searchStageComplete, true, "Etsy + Google Search + Google Trends screenshot should complete the trend search stage");
+const stageRedirect = __testInternals.getPlatformTrendStageGuard({
+  toolName: "search_in_browser",
+  toolArgs: { engine: "google_us", query: "another wedding clutch keyword" },
+  toolHistory,
+});
+assert.equal(stageRedirect.type, "redirect_tool_call", "after trend search evidence is complete, further search should redirect to competitor collection");
+assert.equal(stageRedirect.toTool, "collect_etsy_competitor_shops", "trend state machine should move from search to competitor crawl");
+
+const runawaySearchHistory = Array.from({ length: 8 }, (_, index) => ({
+  tool: "search_in_browser",
+  arguments: { engine: index % 2 === 0 ? "google_us" : "etsy", query: `wedding clutch loop ${index}` },
+  result: { ok: false, pageData: { visibleText: "" }, evidenceStatus: "invalid_or_blocked" },
+}));
+const runawayGuard = __testInternals.getPlatformTrendStageGuard({
+  toolName: "search_in_browser",
+  toolArgs: { engine: "google_us", query: "wedding clutch loop 9" },
+  toolHistory: runawaySearchHistory,
+});
+assert.equal(runawayGuard.type, "tool_error", "repeated trend search loops must stop before creating unbounded tool history");
+assert.match(runawayGuard.error, /连续搜索循环|停止扩展关键词/, "runaway search guard should explain the stage problem instead of hiding it as a timeout");
+
+const pollutedCheckpointHistory = [
+  ...toolHistory,
+  ...Array.from({ length: 40 }, (_, index) => ({
+    tool: "search_in_browser",
+    arguments: { engine: index % 3 === 0 ? "etsy" : index % 3 === 1 ? "google_us" : "google_trends", query: `polluted wedding clutch ${index}` },
+    result: { ok: false, pageData: { visibleText: "" }, evidenceStatus: "invalid_or_blocked" },
+  })),
+];
+const compactedCheckpoint = __testInternals.compactPlatformTrendRunawayToolHistory(pollutedCheckpointHistory);
+assert.equal(compactedCheckpoint.changed, true, "polluted trend checkpoint history should be compacted on resume");
+assert.ok(compactedCheckpoint.removedSearchCalls >= 20, "resume compaction should remove most repeated low-quality searches");
+assert.equal(
+  compactedCheckpoint.toolHistory.some((entry) => entry.tool === "workflow_stage_summary" && entry.result?.summaryType === "platform_trend_runaway_search_compaction"),
+  true,
+  "resume compaction should preserve an auditable stage summary",
+);
+assert.equal(
+  __testInternals.getPlatformTrendEvidenceState(compactedCheckpoint.toolHistory).searchStageComplete,
+  true,
+  "resume compaction must preserve valid trend search evidence",
+);
 
 const ledger = [
   { source_type: "etsy_search", source_ref: "https://www.etsy.com/search?q=personalized%20wedding%20clutch", observed_value: "可见搜索结果包含婚礼手拿包商品卡片，样本中价格为 $35-$58。", used_for: "估计公开搜索样本价格带和标题词。", confidence: "medium", limitation: "仅覆盖 Etsy US 本轮可见搜索样本，不代表全平台分布。" },

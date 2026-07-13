@@ -2019,6 +2019,40 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
     const shouldAutoCloseSearchTab = !keepTab && ["google", "google_us", "google_ru", "google_trends", "bing", "etsy"].includes(normalizedEngine);
     const maxPollAttempts = normalizedEngine === "google_trends" ? 44 : normalizedEngine === "etsy" ? 30 : 20;
     const pollDelayMs = 500;
+    const attachSearchScreenshotArtifact = async (tabId, payload = {}) => {
+      if (!["google", "google_us", "google_trends", "etsy"].includes(normalizedEngine)) return payload;
+      if (payload.screenshotRef || payload.screenshotCaptured) return payload;
+      try {
+        const screenshot = await _captureTabScreenshot(tabId);
+        const artifact = await putDataUrlArtifact(screenshot.dataUrl, {
+          namespace: "search-evidence-screenshot",
+          metadata: {
+            workflowId,
+            engine: normalizedEngine,
+            queryOriginal: query,
+            queryUsed: targetQuery,
+            searchUrl: payload.searchUrl,
+          },
+          ttlMs: 24 * 60 * 60 * 1000,
+        });
+        return {
+          ...payload,
+          screenshotCaptured: true,
+          screenshotRef: artifact.ref,
+          screenshotStorage: artifact.storage,
+          screenshotExpiresAt: artifact.expiresAt,
+          screenshotCaptureMode: screenshot.captureMode || "captureVisibleTab_viewport",
+          screenshotPolicy: "Search page screenshot is stored as an artifact before the temporary tab is closed.",
+          artifactStore: "indexeddb_blob_with_memory_fallback",
+        };
+      } catch (err) {
+        return {
+          ...payload,
+          screenshotCaptured: false,
+          screenshotError: err.message,
+        };
+      }
+    };
 
       const runAttempt = (attempt, attemptIndex) => new Promise((resolve) => {
         createOwnedTabCallback({ workflowId, url: safeEncodeURI(attempt.url), active: true }, (newTab) => {
@@ -2027,20 +2061,21 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
         const finish = async (payload) => {
           if (settled) return;
           settled = true;
+          const payloadWithScreenshot = await attachSearchScreenshotArtifact(newTab.id, payload);
           if (shouldAutoCloseSearchTab) {
             const closed = await closeTabQuietly(newTab.id);
             await closeOwnedTab(workflowId, newTab.id);
             resolve({
-              ...payload,
+              ...payloadWithScreenshot,
               tabClosed: closed,
               closedTabId: closed ? newTab.id : undefined,
               message: closed
-                ? (payload.message || "Search evidence captured and temporary search tab closed.")
-                : (payload.message || "Search evidence captured, but the temporary search tab could not be closed automatically."),
+                ? (payloadWithScreenshot.message || "Search evidence captured and temporary search tab closed.")
+                : (payloadWithScreenshot.message || "Search evidence captured, but the temporary search tab could not be closed automatically."),
             });
             return;
           }
-          resolve(payload);
+          resolve(payloadWithScreenshot);
         };
 
         let pollCount = 0;

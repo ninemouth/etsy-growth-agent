@@ -35,6 +35,21 @@ function toolRunKey(toolName, toolArgs = {}) {
   return `${workflowId}:${toolName}:${JSON.stringify(stableToolValue(dedupeArgs))}`;
 }
 
+function normalizeSearchQueryForWorkflow(query = "") {
+  return String(query || "")
+    .trim()
+    .replace(/[“”"']/g, "")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function searchEvidenceKey(toolArgs = {}) {
+  const engine = String(toolArgs.engine || "google").toLowerCase();
+  const searchType = String(toolArgs.searchType || "listing").toLowerCase();
+  const query = normalizeSearchQueryForWorkflow(toolArgs.query || toolArgs.keyword || "");
+  return query ? `${engine}:${searchType}:${query}` : "";
+}
+
 function checkpointStorageAvailable() {
   return typeof chrome !== "undefined" && chrome.storage?.local;
 }
@@ -197,6 +212,11 @@ function compactToolResultForLLM(toolName = "", result = {}) {
     queryUsed: result.queryUsed,
     evidenceOk: result.evidenceOk,
     evidenceStatus: result.evidenceStatus,
+    evidenceType: result.evidenceType,
+    screenshotCaptured: result.screenshotCaptured,
+    screenshotRef: result.screenshotRef,
+    screenshotStorage: result.screenshotStorage,
+    screenshotCaptureMode: result.screenshotCaptureMode,
     isCaptcha: result.isCaptcha,
     timedOut: result.timedOut,
     readError: result.readError,
@@ -441,6 +461,11 @@ function compactMessagesForLLM(messages = []) {
 export const __testInternals = {
   compactToolResultForLLM,
   compactMessagesForLLM,
+  normalizeSearchQueryForWorkflow,
+  searchEvidenceKey,
+  getPlatformTrendEvidenceState,
+  getPlatformTrendStageGuard,
+  compactPlatformTrendRunawayToolHistory,
 };
 
 async function saveAgentCheckpoint(sessionKey, checkpoint = {}) {
@@ -767,29 +792,296 @@ function getRepeatedOpenEvidence(toolHistory = [], url = "") {
   });
 }
 
-function getEtsyBrowserWorkflowGuardError({ skillId = "", toolName = "", toolArgs = {}, toolHistory = [] } = {}) {
-  if (!isEtsyBusinessSkill(skillId)) return null;
-  if (isPlatformTrendSkill(skillId) && toolName === "search_in_browser") {
-    const engine = String(toolArgs.engine || "google").toLowerCase();
-    const query = String(toolArgs.query || toolArgs.keyword || "").trim().replace(/\s+/g, " ").toLowerCase();
-    const searchType = String(toolArgs.searchType || "listing").toLowerCase();
-    const duplicate = toolHistory.find((entry) => {
-      if (entry?.tool !== "search_in_browser" || entry?.result?.ok === false || entry?.result?.error) return false;
-      const previousEngine = String(entry.arguments?.engine || "google").toLowerCase();
-      const previousQuery = String(entry.arguments?.query || entry.arguments?.keyword || "").trim().replace(/\s+/g, " ").toLowerCase();
-      const previousType = String(entry.arguments?.searchType || "listing").toLowerCase();
-      return previousEngine === engine && previousQuery === query && previousType === searchType;
+function hasValidGoogleSearchEvidence(result = {}) {
+  if (!result || result.ok === false || result.error || result.isCaptcha) return false;
+  const pageData = result.pageData || {};
+  const pageHealth = pageData.pageHealth || {};
+  if (pageHealth.isLikelyBlocked) return false;
+  const text = [pageData.title, pageData.h1, pageData.visibleText, pageData.metaDescription].filter(Boolean).join("\n");
+  return text.trim().length >= 80 || Array.isArray(pageData.productLinks) && pageData.productLinks.length > 0;
+}
+
+function getPlatformTrendEvidenceState(toolHistory = []) {
+  const uniqueSearchKeys = new Set();
+  const validSearchKeys = new Set();
+  let etsySearches = 0;
+  let googleSearches = 0;
+  let googleTrendsSearches = 0;
+  let validEtsySearches = 0;
+  let validGoogleSearches = 0;
+  let validGoogleTrendsSearches = 0;
+  let googleTrendsScreenshots = 0;
+  let searchCalls = 0;
+  let failedSearchCalls = 0;
+  let consecutiveSearchCalls = 0;
+
+  for (let i = toolHistory.length - 1; i >= 0; i--) {
+    if (toolHistory[i]?.tool === "search_in_browser") consecutiveSearchCalls++;
+    else break;
+  }
+
+  toolHistory.forEach((entry) => {
+    if (entry?.tool !== "search_in_browser") return;
+    searchCalls++;
+    const engine = String(entry.arguments?.engine || "google").toLowerCase();
+    const key = searchEvidenceKey(entry.arguments || {});
+    if (key) uniqueSearchKeys.add(key);
+    let valid = false;
+    if (engine === "etsy") {
+      etsySearches++;
+      valid = hasValidEtsySearchEvidence(entry.result || {});
+      if (valid) validEtsySearches++;
+    } else if (engine === "google_trends") {
+      googleTrendsSearches++;
+      valid = hasValidGoogleTrendsEvidence(entry.result || {});
+      if (valid) validGoogleTrendsSearches++;
+      if (entry.result?.screenshotRef || entry.result?.screenshotCaptured) googleTrendsScreenshots++;
+    } else if (["google", "google_us", "google_ru"].includes(engine)) {
+      googleSearches++;
+      valid = hasValidGoogleSearchEvidence(entry.result || {});
+      if (valid) validGoogleSearches++;
+    }
+    if (valid && key) validSearchKeys.add(key);
+    if (!valid) failedSearchCalls++;
+  });
+
+  const competitorUrls = getOpenedEtsyCompetitorUrls(toolHistory);
+  const listingDetails = getCompetitorListingDetailEvidence(toolHistory);
+  const screenshotAnalysisDone = toolHistory.some((entry) =>
+    entry?.tool === "analyze_etsy_shop_crawl_screenshots" &&
+    entry.result?.ok !== false &&
+    Number(entry.result?.screenshotsAnalyzed || 0) > 0
+  );
+
+  return {
+    searchCalls,
+    failedSearchCalls,
+    consecutiveSearchCalls,
+    uniqueSearches: uniqueSearchKeys.size,
+    validSearches: validSearchKeys.size,
+    etsySearches,
+    googleSearches,
+    googleTrendsSearches,
+    validEtsySearches,
+    validGoogleSearches,
+    validGoogleTrendsSearches,
+    googleTrendsScreenshots,
+    competitorCount: competitorUrls.size,
+    listingDetailCount: listingDetails.size,
+    hasCompetitorCrawl: toolHistory.some((entry) => ["collect_etsy_shop_pages", "collect_etsy_competitor_shops"].includes(entry?.tool) && entry.result?.ok !== false),
+    hasScreenshotAnalysis: screenshotAnalysisDone,
+    searchStageComplete: validEtsySearches >= 1 && validGoogleSearches >= 1 && validGoogleTrendsSearches >= 1 && googleTrendsScreenshots >= 1,
+  };
+}
+
+function getTrendCompetitorTargetsFromSearch(toolHistory = [], limit = 3) {
+  const targets = [];
+  const seen = new Set();
+  const opened = getOpenedEtsyCompetitorUrls(toolHistory);
+  const pushTarget = (url, name = "") => {
+    const normalized = normalizeEtsyCompetitorUrl(url);
+    if (!normalized || seen.has(normalized) || opened.has(normalized)) return;
+    seen.add(normalized);
+    targets.push({
+      url,
+      name: name || normalized,
+      type: /\/shop\//i.test(normalized) ? "shop" : "listing",
     });
-    if (duplicate) {
+  };
+  toolHistory.forEach((entry) => {
+    if (entry?.tool !== "search_in_browser" || String(entry.arguments?.engine || "").toLowerCase() !== "etsy" || entry.result?.ok === false) return;
+    const pageData = entry.result?.pageData || {};
+    (Array.isArray(pageData.productCards) ? pageData.productCards : []).forEach((card) => {
+      pushTarget(card.shopUrl || card.shop_url || card.href || card.listingUrl, card.shopName || card.title);
+    });
+    (Array.isArray(pageData.productLinks) ? pageData.productLinks : []).forEach((link) => {
+      pushTarget(link.href, link.text || link.title);
+    });
+  });
+  return targets.slice(0, limit);
+}
+
+function getPlatformTrendStageGuard({ toolName = "", toolArgs = {}, toolHistory = [] } = {}) {
+  if (toolName !== "search_in_browser") return null;
+  const state = getPlatformTrendEvidenceState(toolHistory);
+  const engine = String(toolArgs.engine || "google").toLowerCase();
+  const requestedKey = searchEvidenceKey(toolArgs);
+  const searchRequestsExhausted = state.searchStageComplete || state.validEtsySearches >= 1 && state.validGoogleSearches >= 1 && engine !== "google_trends";
+
+  if (state.searchStageComplete) {
+    const targets = getTrendCompetitorTargetsFromSearch(toolHistory);
+    const shopTargets = targets.filter((target) => target.type === "shop");
+    const listingTargets = targets.filter((target) => target.type === "listing");
+    if (!state.hasCompetitorCrawl && shopTargets.length > 0) {
+      return {
+        type: "redirect_tool_call",
+        fromTool: toolName,
+        toTool: "collect_etsy_competitor_shops",
+        arguments: {
+          competitors: shopTargets,
+          maxPagesPerShop: 2,
+          maxProductsPerPage: 24,
+          maxDetailsPerShop: 2,
+          deepDetail: true,
+        },
+        message: `趋势搜索阶段已完成（Etsy/Google/Trends 均有可用证据），不再继续搜索 ${requestedKey}；自动进入公开竞品店铺/商品详情采集。`,
+        stageState: state,
+      };
+    }
+    if (state.listingDetailCount < 2 && listingTargets.length > 0) {
+      return {
+        type: "redirect_tool_call",
+        fromTool: toolName,
+        toTool: "open_new_tab",
+        arguments: {
+          url: listingTargets[0].url,
+          readDelayMs: 1800,
+        },
+        message: `趋势搜索阶段已完成，但尚缺竞品商品详情页证据；不再继续搜索 ${requestedKey}，自动打开高排名 listing 详情页读取 DOM 与截图。`,
+        stageState: state,
+      };
+    }
+    if (state.hasCompetitorCrawl && !state.hasScreenshotAnalysis) {
       return {
         type: "tool_error",
         tool: toolName,
-        error: `趋势证据请求已完成，禁止重复打开同一搜索：${engine}/${query}。请复用已有 toolHistory 证据，转入下一项尚未完成的证据阶段或输出 final；不要重新开页。`,
+        error: "趋势搜索和竞品分页采集已完成，下一步必须调用 analyze_etsy_shop_crawl_screenshots 解读已缓存截图，而不是继续 search_in_browser。",
+        stageState: state,
+      };
+    }
+    return {
+      type: "tool_error",
+      tool: toolName,
+      error: "趋势搜索阶段已经满足最低证据闭环，继续搜索会造成节点循环。请基于已有 Etsy/Google/Google Trends/竞品证据输出 final；若缺失项存在，必须说明 blocked，而不是继续泛搜索。",
+      stageState: state,
+    };
+  }
+
+  if (state.consecutiveSearchCalls >= 6 || state.searchCalls >= 12 || state.failedSearchCalls >= 4 || searchRequestsExhausted) {
+    return {
+      type: "tool_error",
+      tool: toolName,
+      error: "趋势任务已出现连续搜索循环，但尚未形成下一阶段动作。请停止扩展关键词，转入缺失证据阶段：若已有 Etsy 搜索候选，采集竞品详情/店铺页；若 Google Trends 缺截图，修复 Trends 取证；若证据被阻断，输出 blocked 说明。",
+      requestedSearch: requestedKey,
+      stageState: state,
+    };
+  }
+
+  return null;
+}
+
+function compactPlatformTrendRunawayToolHistory(toolHistory = []) {
+  const state = getPlatformTrendEvidenceState(toolHistory);
+  const shouldCompact = state.searchCalls >= 24 || state.consecutiveSearchCalls >= 8;
+  if (!shouldCompact) return { changed: false, toolHistory, state };
+
+  const kept = [];
+  const bestSearchByKey = new Map();
+  const failedSearchSamples = [];
+
+  toolHistory.forEach((entry, index) => {
+    if (entry?.tool !== "search_in_browser") {
+      kept.push(entry);
+      return;
+    }
+    const key = searchEvidenceKey(entry.arguments || {}) || `search:${index}`;
+    const existing = bestSearchByKey.get(key);
+    const result = entry.result || {};
+    const isValid =
+      String(entry.arguments?.engine || "").toLowerCase() === "etsy"
+        ? hasValidEtsySearchEvidence(result)
+        : String(entry.arguments?.engine || "").toLowerCase() === "google_trends"
+        ? hasValidGoogleTrendsEvidence(result)
+        : hasValidGoogleSearchEvidence(result);
+    const score = [
+      isValid ? 100 : 0,
+      result.screenshotRef || result.screenshotCaptured ? 20 : 0,
+      result.pageData?.productCards?.length ? 10 : 0,
+      result.pageData?.visibleText ? Math.min(8, Math.floor(String(result.pageData.visibleText).length / 120)) : 0,
+      index / 100000,
+    ].reduce((sum, value) => sum + value, 0);
+    if (!existing || score > existing.score) {
+      bestSearchByKey.set(key, { entry, score, isValid });
+    }
+    if (!isValid && failedSearchSamples.length < 4) {
+      failedSearchSamples.push({
+        tool: entry.tool,
+        arguments: entry.arguments,
+        result: {
+          ok: false,
+          evidenceStatus: result.evidenceStatus || "invalid_or_blocked",
+          searchUrl: result.searchUrl || result.pageData?.url || "",
+          message: result.message || result.error || "",
+        },
+      });
+    }
+  });
+
+  const searchEntries = Array.from(bestSearchByKey.values())
+    .sort((a, b) => {
+      const aValid = a.isValid ? 0 : 1;
+      const bValid = b.isValid ? 0 : 1;
+      return aValid - bValid || b.score - a.score;
+    })
+    .slice(0, 18)
+    .map((item) => item.entry);
+
+  const compactedState = getPlatformTrendEvidenceState([...kept, ...searchEntries]);
+  const summaryEntry = {
+    tool: "workflow_stage_summary",
+    arguments: { skill: "etsy_platform_trends", reason: "runaway_search_history_compacted" },
+    result: {
+      ok: true,
+      summaryType: "platform_trend_runaway_search_compaction",
+      originalSearchCalls: state.searchCalls,
+      keptSearchCalls: searchEntries.length,
+      removedSearchCalls: Math.max(0, state.searchCalls - searchEntries.length),
+      originalState: state,
+      compactedState,
+      failedSearchSamples,
+      nextStep: compactedState.searchStageComplete
+        ? "Search evidence is complete; move to competitor page/detail collection, screenshot analysis, or final."
+        : "Repair the missing evidence stage without repeating already compacted search attempts.",
+    },
+  };
+
+  return {
+    changed: true,
+    removedSearchCalls: Math.max(0, state.searchCalls - searchEntries.length),
+    state,
+    compactedState,
+    toolHistory: [summaryEntry, ...kept, ...searchEntries],
+  };
+}
+
+function getEtsyBrowserWorkflowGuardResult({ skillId = "", toolName = "", toolArgs = {}, toolHistory = [] } = {}) {
+  if (!isEtsyBusinessSkill(skillId)) return null;
+  if (isPlatformTrendSkill(skillId) && toolName === "search_in_browser") {
+    const stageGuard = getPlatformTrendStageGuard({ toolName, toolArgs, toolHistory });
+    if (stageGuard) return stageGuard;
+    const requestKey = searchEvidenceKey(toolArgs);
+    const duplicate = toolHistory.find((entry) => {
+      if (entry?.tool !== "search_in_browser" || entry?.result?.ok === false || entry?.result?.error) return false;
+      return searchEvidenceKey(entry.arguments || {}) === requestKey;
+    });
+    if (duplicate) {
+      return {
+        type: "reuse_tool_result",
+        tool: toolName,
+        message: `趋势证据请求已完成，本次不再打开新标签页，直接复用已有搜索证据：${requestKey}。请转入下一项尚未完成的证据阶段或输出 final。`,
         reusedEvidence: true,
+        originalTool: duplicate.tool,
+        originalArguments: duplicate.arguments,
+        reusedResult: {
+          ...(duplicate.result || {}),
+          reusedEvidence: true,
+          reusedFromSearchKey: requestKey,
+          message: duplicate.result?.message || "Reused prior successful search evidence for this workflow.",
+        },
         previousSearch: {
-          engine,
-          query,
-          searchType,
+          engine: String(duplicate.arguments?.engine || "google").toLowerCase(),
+          query: normalizeSearchQueryForWorkflow(duplicate.arguments?.query || duplicate.arguments?.keyword || ""),
+          searchType: String(duplicate.arguments?.searchType || "listing").toLowerCase(),
           evidenceOk: duplicate.result?.evidenceOk !== false,
           searchUrl: duplicate.result?.searchUrl || duplicate.result?.pageData?.url || "",
         },
@@ -834,7 +1126,7 @@ function getEtsyBrowserWorkflowGuardError({ skillId = "", toolName = "", toolArg
     const batchCrawlCount = countToolCalls(toolHistory, "collect_etsy_competitor_shops");
     if (shopOpenCount >= 2 && crawlCount === 0 && batchCrawlCount === 0) {
       return {
-        type: "tool_error",
+      type: "tool_error",
         tool: toolName,
         error: "已经打开过多个 Etsy 店铺页，但还没有执行分页采集。下一步不要继续 open_new_tab；如果已有 2-3 个店铺 URL，请调用 collect_etsy_competitor_shops 批量采集，并随后调用 analyze_etsy_shop_crawl_screenshots。",
         openedShopPages: shopOpenCount,
@@ -1886,6 +2178,9 @@ function validatePlatformTrendToolResult(toolName, toolArgs = {}, toolResult = {
     if (engine === "google_trends" && !hasValidGoogleTrendsEvidence(toolResult)) {
       errors.push("Google Trends 页面没有通过可用证据校验，未获得可验证的趋势页面内容。");
     }
+    if (engine === "google_trends" && !toolResult?.screenshotRef && !toolResult?.screenshotCaptured) {
+      errors.push("Google Trends 搜索没有形成截图 artifact，不能进入趋势图视觉解读或季节性结论阶段。");
+    }
     if (["google", "google_us", "google_ru"].includes(engine)) {
       const pageData = toolResult?.pageData || {};
       if (toolResult?.ok === false || String(pageData.visibleText || "").trim().length < 80) {
@@ -2462,6 +2757,15 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
   if (continueSession && restoredCheckpoint?.messages?.length) {
     messages = restoredCheckpoint.messages;
     toolHistory = Array.isArray(restoredCheckpoint.toolHistory) ? restoredCheckpoint.toolHistory : [];
+    let resumeCompaction = null;
+    if (isPlatformTrendSkill(skillId)) {
+      const compacted = compactPlatformTrendRunawayToolHistory(toolHistory);
+      if (compacted.changed) {
+        toolHistory = compacted.toolHistory;
+        restoredCheckpoint.toolHistory = toolHistory;
+        resumeCompaction = compacted;
+      }
+    }
     if (restoredCheckpoint.ctxState) {
       // A user-initiated continuation starts a fresh bounded quality-repair window.
       // The previous window may have been exhausted, but its evidence and messages remain resumable.
@@ -2475,6 +2779,15 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       step: restoredCheckpoint.step || 0,
       message: `已恢复上次中断的 workflow：${restoredCheckpoint.lastStage || restoredCheckpoint.lastNode || restoredCheckpoint.status || "checkpoint"}，沿用 ${toolHistory.length} 个工具证据继续推进。`,
     });
+    if (resumeCompaction) {
+      sendProgress({
+        type: "checkpoint_compacted",
+        step: restoredCheckpoint.step || 0,
+        message: `已检测到旧趋势任务搜索循环，自动压缩 ${resumeCompaction.removedSearchCalls} 条重复/低质量搜索证据；保留可用证据和阶段摘要后继续。`,
+        removedSearchCalls: resumeCompaction.removedSearchCalls,
+        stageState: resumeCompaction.compactedState,
+      });
+    }
     if (messages.length > 0 && messages[0].role === "system") {
       messages[0].content = systemPrompt;
     }
@@ -2484,6 +2797,9 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     const ctxString = JSON.stringify(newCtx, null, 2);
 
     let instructionText = `[断点续跑] 请从上次中断节点继续，不要重复已经完成的搜索、开页、筛选或已获得的工具证据。`;
+    if (resumeCompaction) {
+      instructionText += `\n\n【已自动清理旧搜索循环】本次恢复时检测到趋势任务历史中存在 ${resumeCompaction.state.searchCalls} 次 search_in_browser，其中 ${resumeCompaction.removedSearchCalls} 条重复/低质量搜索已从工具证据上下文压缩为 workflow_stage_summary。你必须沿用保留的有效证据和阶段摘要继续，禁止再次扩展同类关键词搜索；若搜索阶段已完成，下一步进入竞品店铺/商品详情采集、截图分析或 final。`;
+    }
     if (userInstruction) {
       instructionText += `\n\n用户最新补充信息：\n"${userInstruction}"`;
     } else {
@@ -2735,8 +3051,8 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     }
 
     if (parsed.type === "tool_call") {
-      const toolName = parsed.tool;
-      const toolArgs = parsed.arguments || {};
+      let toolName = parsed.tool;
+      let toolArgs = parsed.arguments || {};
 
       if (isPlatformTrendSkill(skillId) && !PLATFORM_TRENDS_ALLOWED_TOOLS.has(toolName)) {
         messages.push({ role: "assistant", content: assistantContent });
@@ -2808,23 +3124,74 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         }
       }
 
-      const etsyBrowserWorkflowGuardError = getEtsyBrowserWorkflowGuardError({
+      const etsyBrowserWorkflowGuardResult = getEtsyBrowserWorkflowGuardResult({
         skillId,
         toolName,
         toolArgs,
         toolHistory,
       });
-      if (etsyBrowserWorkflowGuardError) {
+      if (etsyBrowserWorkflowGuardResult?.type === "reuse_tool_result") {
+        const reusedResult = etsyBrowserWorkflowGuardResult.reusedResult || {};
+        toolHistory.push({ tool: toolName, arguments: toolArgs, result: reusedResult });
         messages.push({ role: "assistant", content: assistantContent });
         messages.push({
           role: "user",
-          content: JSON.stringify(etsyBrowserWorkflowGuardError),
+          content: compactJsonStringForLLM({
+            type: "tool_result",
+            tool: toolName,
+            reusedEvidence: true,
+            result: compactToolResultForLLM(toolName, reusedResult),
+            rawResultPreservedInToolHistory: true,
+            next_step_instruction: "该趋势搜索证据已复用，禁止再次打开相同搜索。请检查还缺哪一类证据：Etsy 搜索、Google Search、Google Trends 截图、至少 2 个竞品详情页/店铺页、或物流主题搜索；已满足则直接输出 final。",
+          }),
+        });
+        sendProgress({
+          type: "tool_result_reused",
+          step,
+          toolName,
+          message: etsyBrowserWorkflowGuardResult.message,
+        });
+        await saveCheckpoint({ status: "tool_result_reused", step, lastNode: "tool_result_reused", toolName });
+        continue;
+      }
+      if (etsyBrowserWorkflowGuardResult?.type === "redirect_tool_call") {
+        messages.push({ role: "assistant", content: assistantContent });
+        sendProgress({
+          type: "tool_stage_redirect",
+          step,
+          toolName,
+          redirectedToolName: etsyBrowserWorkflowGuardResult.toTool,
+          message: etsyBrowserWorkflowGuardResult.message,
+        });
+        toolName = etsyBrowserWorkflowGuardResult.toTool;
+        toolArgs = etsyBrowserWorkflowGuardResult.arguments || {};
+        if (workflowId) {
+          toolArgs.workflowId = workflowId;
+          toolArgs.workflowGeneration = workflowGeneration;
+        }
+        messages.push({
+          role: "user",
+          content: compactJsonStringForLLM({
+            type: "tool_stage_redirect",
+            fromTool: etsyBrowserWorkflowGuardResult.fromTool,
+            toTool: toolName,
+            reason: etsyBrowserWorkflowGuardResult.message,
+            stageState: etsyBrowserWorkflowGuardResult.stageState,
+          }),
+        });
+        await saveCheckpoint({ status: "tool_stage_redirect", step, lastNode: "platform_trends_stage_redirect", toolName });
+      } else
+      if (etsyBrowserWorkflowGuardResult) {
+        messages.push({ role: "assistant", content: assistantContent });
+        messages.push({
+          role: "user",
+          content: JSON.stringify(etsyBrowserWorkflowGuardResult),
         });
         sendProgress({
           type: "tool_guard",
           step,
           toolName,
-          message: etsyBrowserWorkflowGuardError.error,
+          message: etsyBrowserWorkflowGuardResult.error,
         });
         await saveCheckpoint({ status: "tool_guard_retry", step, lastNode: "etsy_browser_workflow_guard", toolName });
         continue;
