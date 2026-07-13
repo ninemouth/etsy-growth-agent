@@ -140,7 +140,13 @@ assert.doesNotMatch(backgroundSource, /shouldResumeFromCheckpoint[\s\S]{0,220}Bo
 assert.match(sidepanelSource, /forceNewSession:\s*!shouldContinueSession/, "sidepanel should default to a fresh task unless the user explicitly continues");
 assert.doesNotMatch(sidepanelHtmlSource, /continueSessionCheckbox|延续上一轮的对话记忆/, "sidepanel should not hide resume behavior behind a checkbox");
 assert.match(sidepanelHtmlSource, /newSessionBtn[\s\S]*\+ 新会话[\s\S]*sessionHistoryBtn[\s\S]*历史会话 \/ 恢复断点/, "sidepanel should expose direct new-session and session-history controls");
-assert.match(sidepanelSource, /createWorkflowSessionId[\s\S]*workflowSessionId[\s\S]*selectedResumeSessionKey/, "sidepanel should create fresh workflow sessions and resume only a selected history session");
+assert.match(sidepanelSource, /getActiveResumeSessionKey[\s\S]*createWorkflowSessionId/, "sidepanel should create fresh workflow sessions only when no selected or auto-picked resumable session exists");
+assert.ok(
+  sidepanelHtmlSource.indexOf("session-control session-control-top") > sidepanelHtmlSource.indexOf("growth-command-card") &&
+  sidepanelHtmlSource.indexOf("session-control session-control-top") < sidepanelHtmlSource.indexOf("advanced-skill-section"),
+  "session controls should be visible near the top of the main view instead of hidden below the instruction area"
+);
+assert.match(sidepanelSource, /pickLatestResumableSessionForContinue[\s\S]*legacyContinueInstruction[\s\S]*pickLatestResumableSessionForContinue/, "plain continue messages should auto-select the latest resumable checkpoint instead of creating a fresh session id");
 assert.doesNotMatch(contentSource, /Привет|Здравствуйте|Спасибо|Пожалуйста/, "content overlay should not contain Russian copy in the Etsy plugin UI");
 assert.match(backgroundSource, /resumeState:\s*shouldResumeFromCheckpoint\s*\?/, "background should pass resumable workflow state into the agent loop");
 assert.match(backgroundSource, /onCheckpoint:\s*async/, "background should persist checkpoint updates emitted by the agent loop");

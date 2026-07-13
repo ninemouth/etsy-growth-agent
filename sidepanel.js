@@ -252,6 +252,32 @@ async function renderSessionHistory() {
   });
 }
 
+async function pickLatestResumableSessionForContinue() {
+  const entries = await getWorkflowCheckpointEntries();
+  const currentSkillId = selectedSkill?.id || "";
+  const currentSkillPath = selectedSkill?.path || "";
+  const actionId = activeGrowthAction?.id || "";
+  const matched = entries.find(({ checkpoint }) => {
+    const checkpointSkill = `${checkpoint.skillId || ""} ${checkpoint.skillPath || ""}`;
+    const checkpointAction = String(checkpoint.growthActionId || "");
+    if (actionId && checkpointAction === actionId) return true;
+    if (currentSkillPath && checkpointSkill.includes(currentSkillPath)) return true;
+    if (currentSkillId && checkpointSkill.includes(currentSkillId)) return true;
+    return false;
+  }) || entries[0];
+  if (!matched) return null;
+  sessionMode = "resume";
+  selectedResumeSessionKey = matched.key;
+  selectedResumeSessionMeta = matched.checkpoint;
+  updateSessionModeUI();
+  addLog("info", "↩", `已自动选择最近可恢复会话：${getSessionTitle(matched.checkpoint)}。`);
+  return matched.key;
+}
+
+function getActiveResumeSessionKey() {
+  return sessionMode === "resume" && selectedResumeSessionKey ? selectedResumeSessionKey : "";
+}
+
 // ── Init ──
 document.addEventListener("DOMContentLoaded", async () => {
   showView("main");
@@ -667,9 +693,13 @@ async function runSkill() {
     const targetImageUrl = await getTargetImageUrlForRun();
 
     const legacyContinueInstruction = /^(继续|继续推进|恢复|resume|continue)$/i.test(userInstruction.trim());
-    const shouldContinueSession = sessionMode === "resume" && selectedResumeSessionKey || legacyContinueInstruction;
-    const workflowSessionId = sessionMode === "resume" && selectedResumeSessionKey
-      ? selectedResumeSessionKey
+    let resumeSessionKey = getActiveResumeSessionKey();
+    if (!resumeSessionKey && legacyContinueInstruction) {
+      resumeSessionKey = await pickLatestResumableSessionForContinue();
+    }
+    const shouldContinueSession = Boolean(resumeSessionKey || legacyContinueInstruction);
+    const workflowSessionId = resumeSessionKey
+      ? resumeSessionKey
       : createWorkflowSessionId();
 
     activePort.postMessage({
