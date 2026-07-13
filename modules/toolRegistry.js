@@ -172,13 +172,45 @@ export function hasValidGoogleTrendsEvidence(result = {}) {
     pageData.visibleText,
     pageData.metaDescription,
   ].filter(Boolean).join("\n");
-  return /(google trends|interest over time|related queries|related topics|explore|趋势|热度|相关查询)/i.test(text) ||
-    String(pageData.visibleText || "").trim().length >= 180;
+  const hasTrendShell = /google trends|explore|趋势/i.test(text);
+  const hasCoreTrendModule = /interest over time|趋势变化|随时间变化/i.test(text);
+  const hasRelatedModule = /related queries|related topics|相关查询|相关主题/i.test(text);
+  const visibleTextLength = String(pageData.visibleText || "").trim().length;
+  return hasTrendShell && ((hasCoreTrendModule && hasRelatedModule) || visibleTextLength >= 320);
+}
+
+function getGoogleTrendsEvidenceState(result = {}) {
+  const pageData = result?.pageData || {};
+  const text = [
+    pageData.title,
+    pageData.h1,
+    pageData.visibleText,
+    pageData.metaDescription,
+  ].filter(Boolean).join("\n");
+  const visibleTextLength = String(pageData.visibleText || "").trim().length;
+  const hasTrendShell = /google trends|explore|趋势/i.test(text);
+  const hasCoreTrendModule = /interest over time|趋势变化|随时间变化/i.test(text);
+  const hasRelatedModule = /related queries|related topics|相关查询|相关主题/i.test(text);
+  return {
+    hasTrendShell,
+    hasCoreTrendModule,
+    hasRelatedModule,
+    visibleTextLength,
+    stableEnough: hasValidGoogleTrendsEvidence(result),
+    readiness: hasCoreTrendModule && hasRelatedModule
+      ? "core_modules_visible"
+      : hasTrendShell
+      ? "trend_shell_visible"
+      : "not_trends_ready",
+  };
 }
 
 function withSearchEvidenceStatus(payload, engine) {
   const normalizedEngine = String(engine || "").toLowerCase();
   if (normalizedEngine !== "etsy" && normalizedEngine !== "google_trends") return payload;
+  const trendsEvidenceState = normalizedEngine === "google_trends"
+    ? getGoogleTrendsEvidenceState(payload)
+    : undefined;
   const evidenceOk = normalizedEngine === "etsy"
     ? hasValidEtsySearchEvidence(payload)
     : hasValidGoogleTrendsEvidence(payload);
@@ -187,6 +219,7 @@ function withSearchEvidenceStatus(payload, engine) {
     ok: evidenceOk,
     evidenceOk,
     evidenceType: normalizedEngine === "etsy" ? "etsy_search" : "google_trends",
+    ...(trendsEvidenceState ? { trendsEvidenceState } : {}),
     evidenceStatus: evidenceOk ? "valid" : "invalid_or_blocked",
     message: evidenceOk
       ? (payload.message || (normalizedEngine === "etsy" ? "Valid Etsy search evidence captured." : "Valid Google Trends evidence captured."))
@@ -2018,6 +2051,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
     const searchAttempts = buildBrowserSearchAttempts(normalizedEngine, targetQuery, searchType);
     const shouldAutoCloseSearchTab = !keepTab && ["google", "google_us", "google_ru", "google_trends", "bing", "etsy"].includes(normalizedEngine);
     const maxPollAttempts = normalizedEngine === "google_trends" ? 44 : normalizedEngine === "etsy" ? 30 : 20;
+    const minStablePollAttempts = normalizedEngine === "google_trends" ? 8 : 1;
     const pollDelayMs = 500;
     const attachSearchScreenshotArtifact = async (tabId, payload = {}) => {
       if (!["google", "google_us", "google_trends", "etsy"].includes(normalizedEngine)) return payload;
@@ -2113,7 +2147,9 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
               pageData,
             }, normalizedEngine);
 
-            if (searchEvidenceSatisfied(payload, normalizedEngine) || pollCount >= maxPollAttempts) {
+            const evidenceSatisfied = searchEvidenceSatisfied(payload, normalizedEngine);
+            const stableWindowSatisfied = normalizedEngine !== "google_trends" || pollCount >= minStablePollAttempts;
+            if ((evidenceSatisfied && stableWindowSatisfied) || pollCount >= maxPollAttempts) {
               clearInterval(checkLoad);
               await finish(payload);
             }

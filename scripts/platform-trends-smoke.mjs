@@ -5,6 +5,7 @@ import {
   isPlatformTrendSkill,
   validateReport,
 } from "../modules/agentLoop.js";
+import { hasValidGoogleTrendsEvidence } from "../modules/toolRegistry.js";
 
 const skillId = "skills/etsy_platform_trends.skill.md";
 assert.equal(isPlatformTrendSkill(skillId), true, "dedicated platform trend skill must be recognized");
@@ -23,6 +24,24 @@ assert.equal(
   false,
   "legacy checkpoints without skillId should not cross skill boundaries",
 );
+assert.equal(hasValidGoogleTrendsEvidence({
+  ok: true,
+  searchUrl: "https://trends.google.com/trends/explore?date=today%2012-m&geo=US&q=wedding%20clutch",
+  pageData: {
+    url: "https://trends.google.com/trends/explore?date=today%2012-m&geo=US&q=wedding%20clutch",
+    title: "Google Trends",
+    visibleText: "Google Trends Explore",
+  },
+}), false, "Google Trends shell pages should not count as reliable trend evidence");
+assert.equal(hasValidGoogleTrendsEvidence({
+  ok: true,
+  searchUrl: "https://trends.google.com/trends/explore?date=today%2012-m&geo=US&q=wedding%20clutch",
+  pageData: {
+    url: "https://trends.google.com/trends/explore?date=today%2012-m&geo=US&q=wedding%20clutch",
+    title: "Google Trends",
+    visibleText: "Google Trends Explore Interest over time Related queries Related topics",
+  },
+}), true, "Google Trends evidence should require core trend modules, not just the shell");
 
 const pageContext = {
   url: "https://www.etsy.com/shop/ExampleShop",
