@@ -818,7 +818,7 @@ function buildOpportunityCards(skuRows = [], events = [], savedResults = []) {
       id: `opp_fulfillment_${fulfillmentSku.id}`,
       type: "履约",
       title: `${fulfillmentSku.title} 存在履约/断货风险`,
-      evidence: `库存周转约 ${fulfillmentSku.stockDays} 天；建议检查 Etsy 自发货倒计时和第三方海外仓备货可行性。`,
+      evidence: `库存周转约 ${fulfillmentSku.stockDays} 天；建议先复核 Etsy 自发货处理时间、目的地承运商时效和补货倒计时；第三方仓只作为成熟订单密度后的后续验证项。`,
       impact: "避免排序权重和买家体验受损",
       action: "detect_fulfillment_risk",
       experiment: "自发货/第三方仓补货策略观察实验",

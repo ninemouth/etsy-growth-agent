@@ -67,7 +67,7 @@ const GROWTH_ACTION_SKILL_MAP = {
   calculate_profit_guardrail: ["skills/etsy_sourcing_finder.skill.md"],
   filter_supplier_sources: ["skills/etsy_sourcing_finder.skill.md"],
   detect_fulfillment_risk: ["skills/etsy_operations_tracker.skill.md"],
-  find_expansion_opportunities: ["skills/etsy_product_opportunity_explorer.skill.md", "skills/etsy_sourcing_finder.skill.md"],
+  find_expansion_opportunities: ["skills/etsy_product_opportunity_explorer.skill.md"],
   explore_platform_trends: ["skills/etsy_platform_trends.skill.md"],
   create_growth_experiment: ["skills/etsy_operations_tracker.skill.md"],
   review_experiment_result: ["skills/etsy_operations_tracker.skill.md"],

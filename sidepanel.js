@@ -91,7 +91,7 @@ const GROWTH_ACTIONS = {
   },
   explore_platform_trends: {
     label: "平台趋势",
-    skillId: "etsy_product_opportunity_explorer",
+    skillId: "etsy_platform_trends",
     instruction: "扫描当前 Etsy 搜索、类目、品牌或热卖页面的平台商品机会和趋势窗口，识别价格带、评价门槛、头部商品共性、英文关键词、季节性需求、Google Trends / Etsy 搜索 证据或待验证假设；不要直接输出本店扩品执行清单。",
   },
   review_experiment_result: {

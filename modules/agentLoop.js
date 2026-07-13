@@ -2803,7 +2803,7 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
   const analysisText = out.analysis || "";
   const combinedText = overviewText + analysisText;
   if (!combinedText.includes("市场") && !combinedText.includes("客群") && !combinedText.includes("定位")) {
-    errors.push("报告概述 (overview) 或分析 (analysis) 中未体现自主判断的目标销售市场与目标客群定位（例如：‘中国大陆/国内电商’或‘欧美/欧美礼品市场市场’等），请予以明确陈述！");
+    errors.push("报告概述 (overview) 或分析 (analysis) 中未体现自主判断的目标销售市场与目标客群定位（例如：‘中国大陆/国内电商’或‘欧美礼品市场’等），请予以明确陈述！");
   }
 
   return errors;

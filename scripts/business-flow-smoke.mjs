@@ -26,6 +26,18 @@ const agentLoopSource = fs.readFileSync(path.join(root, "modules", "agentLoop.js
 const toolRegistrySource = fs.readFileSync(path.join(root, "modules", "toolRegistry.js"), "utf8");
 const artifactStoreSource = fs.readFileSync(path.join(root, "modules", "artifactStore.js"), "utf8");
 const shopOptimizerSkillSource = fs.readFileSync(path.join(root, "skills", "etsy_global_shop_optimizer.skill.md"), "utf8");
+const productOpportunitySkillSource = fs.readFileSync(path.join(root, "skills", "etsy_product_opportunity_explorer.skill.md"), "utf8");
+const sourcingSkillSource = fs.readFileSync(path.join(root, "skills", "etsy_sourcing_finder.skill.md"), "utf8");
+const operationsSkillSource = fs.readFileSync(path.join(root, "skills", "etsy_operations_tracker.skill.md"), "utf8");
+const remainingBusinessSkillSource = [
+  productOpportunitySkillSource,
+  sourcingSkillSource,
+  operationsSkillSource,
+  fs.readFileSync(path.join(root, "skills", "etsy_keyword_analysis.skill.md"), "utf8"),
+  fs.readFileSync(path.join(root, "skills", "etsy_listing_generator.skill.md"), "utf8"),
+  fs.readFileSync(path.join(root, "skills", "etsy_review_analyzer.skill.md"), "utf8"),
+  fs.readFileSync(path.join(root, "skills", "etsy_compliance_auditor.skill.md"), "utf8"),
+].join("\n");
 const runtimeBundleSource = [html, js, sidepanelHtmlSource, sidepanelSource, css].join("\n");
 
 [
@@ -60,6 +72,17 @@ assert.match(backgroundSource, /type:\s*"INTERRUPTED"[\s\S]*不.*saved|type:\s*"
 assert.match(js, /isInterruptedSavedResult[\s\S]*filter\(\(entry\) => !isInterruptedSavedResult/, "legacy interrupted pseudo-reports must not appear in the report center");
 assert.match(backgroundSource, /etsy_platform_trends\.skill\.md/, "platform trend action must use a dedicated trend skill");
 assert.match(js, /explore_platform_trends[\s\S]*etsy_platform_trends\.skill\.md/, "dashboard platform trend action must route to dedicated trend skill");
+assert.match(sidepanelSource, /explore_platform_trends[\s\S]*skillId:\s*"etsy_platform_trends"/, "sidepanel platform trend action must route to the dedicated trend skill");
+assert.match(
+  backgroundSource,
+  /find_expansion_opportunities:\s*\[\s*"skills\/etsy_product_opportunity_explorer\.skill\.md"\s*\]/,
+  "product opportunity exploration must not auto-load sourcing; sourcing should be an explicit follow-up action"
+);
+assert.doesNotMatch(
+  backgroundSource,
+  /find_expansion_opportunities:[^\n]+etsy_sourcing_finder/,
+  "opportunity reports must not be polluted by sourcing skill output shape"
+);
 assert.match(agentLoopSource, /newestImageMessage/, "older screenshot data URLs should not be resent on every planning turn");
 assert.match(backgroundSource, /runInFlight/, "background should reject duplicate concurrent workflow starts on one port");
 assert.match(backgroundSource, /acquireWorkflowLease[\s\S]*releaseWorkflowLease/, "background should use a global workflow lease instead of a per-port lock only");
@@ -258,6 +281,12 @@ assert.match(shopOptimizerSkillSource, /analyze_etsy_shop_crawl_screenshots[\s\S
 assert.match(shopOptimizerSkillSource, /competitor_benchmarks[\s\S]*listing_order_insight/, "shop optimizer should require per-competitor product structure and visible order analysis");
 assert.match(agentLoopSource, /Google Trends 截图视觉解读证据/, "critic should require Google Trends screenshot interpretation when trends are used");
 assert.match(shopOptimizerSkillSource, /Google Trends 页面截图解读趋势图/, "shop optimizer should require screenshot-based Google Trends interpretation");
+assert.doesNotMatch(remainingBusinessSkillSource, /俄文|俄语|озон|Ozon|CE\/CE|FDA\/IP\/FDA|欧美礼品市场市场|蓝海爆品/, "remaining Etsy skill prompts must not keep Ozon/RU leftovers or unsupported blue-ocean wording");
+assert.doesNotMatch(operationsSkillSource, /Session View 提升|Conv to Cart 提升|加购率提升至少 X/, "operations tracker must not use personal-API-unsupported analytics as validated examples");
+assert.match(operationsSkillSource, /当前个人卖家 API 不提供这些指标/, "operations tracker must state the personal Etsy API analytics boundary");
+assert.match(productOpportunitySkillSource, /经证据验证的机会假设/, "opportunity skill should frame opportunities as evidence-backed hypotheses, not guaranteed blue-ocean winners");
+assert.match(sourcingSkillSource, /英文\/目的地语言/, "sourcing skill should use Etsy destination-language packaging, not Ozon/RU packaging assumptions");
+assert.doesNotMatch(js, /第三方海外仓备货可行性/, "dashboard opportunity cards should not push warehouse feasibility before maturity evidence");
 assert.match(agentLoopSource, /涉及配送\/物流\/时效判断，但缺少实时物流主题 google_search 证据/, "critic should reject logistics claims without realtime logistics search evidence");
 assert.match(agentLoopSource, /选品机会书\/选品机会分析/, "critic should reject shop optimizer reports that are framed as opportunity books");
 assert.match(agentLoopSource, /stage_fit/, "critic should require shop optimizer plans to explain stage fit");
