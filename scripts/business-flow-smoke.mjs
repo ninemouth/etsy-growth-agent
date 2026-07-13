@@ -45,7 +45,7 @@ assert.match(agentLoopSource, /type:\s*"llm_heartbeat"/, "long-running LLM plann
 assert.match(agentLoopSource, /LLM_RECOVERY_RETRIES/, "transient LLM network failures should have a bounded recovery retry");
 assert.match(agentLoopSource, /type:\s*"llm_error"[\s\S]*type:\s*"interrupted"/, "final LLM network failures should preserve the checkpoint instead of becoming a fake report");
 assert.match(agentLoopSource, /QUALITY_RETRY_LIMIT\s*=\s*2/, "quality repair must have a bounded retry window");
-assert.match(agentLoopSource, /inFlightToolRuns[\s\S]*toolRunKey[\s\S]*requestWorkflowCancellation/, "timed-out tool work must be deduplicated and cancellation must propagate to the underlying operation");
+assert.match(agentLoopSource, /inFlightToolRuns[\s\S]*toolRunKey[\s\S]*timed out after/, "tool work must be deduplicated and bounded by a tool-level timeout");
 assert.match(agentLoopSource, /type:\s*"reuse_tool_result"[\s\S]*tool_result_reused/, "Etsy business evidence searches must reuse an existing engine/query result instead of reopening a tab");
 assert.match(agentLoopSource, /toolName === "search_in_browser"[\s\S]*!isSourcingSkill\(skillId\)/, "duplicate search reuse should protect all non-sourcing Etsy business skills, not only trends");
 assert.match(agentLoopSource, /PLATFORM_TRENDS_ALLOWED_TOOLS[\s\S]*platform_trends_tool_whitelist_guard/, "trend workflows must reject unrelated tools before evidence collection drifts");
@@ -93,6 +93,9 @@ assert.match(toolRegistrySource, /attachSearchScreenshotArtifact[\s\S]*search-ev
 assert.match(agentLoopSource, /本轮已有 3 个或以上已完成取证但未关闭的新标签页/, "Etsy browser workflow should require closing evidence tabs before opening more");
 assert.match(agentLoopSource, /runToolWithTimeout[\s\S]*timed out after[\s\S]*toolTimeoutMs/, "agent loop should enforce tool-level timeouts instead of waiting indefinitely");
 assert.match(agentLoopSource, /closeTabsCreatedDuringTimedOutTool[\s\S]*tool_timeout/, "timed-out browser tools should clean up newly created temporary tabs and expose a timeout state");
+assert.doesNotMatch(agentLoopSource, /requestWorkflowCancellation\(toolArgs\.workflowId,\s*`\$\{toolName\}_timeout`/, "ordinary tool timeout must not cancel the entire workflow");
+assert.match(agentLoopSource, /describeToolAction[\s\S]*Etsy 搜索结果页取证[\s\S]*Etsy 商品详情页取证/, "browser actions should distinguish search result evidence from detail-page evidence");
+assert.match(agentLoopSource, /actionLabel:\s*plannedToolAction\.actionLabel[\s\S]*type:\s*"tool_timeout"[\s\S]*actionLabel:\s*toolAction\.actionLabel[\s\S]*type:\s*"tool_result"[\s\S]*actionLabel:\s*completedToolAction\.actionLabel/, "progress events should carry action labels from tool start through timeout and result");
 assert.match(agentLoopSource, /timeoutSeconds[\s\S]*最长等待/, "tool heartbeat should expose the maximum wait time to the UI");
 assert.match(agentLoopSource, /loopLimitDisabled:\s*true/, "agent loop progress should no longer expose a user-configurable loop step limit");
 assert.match(agentLoopSource, /INTERNAL_RUNAWAY_GUARD_STEPS\s*=\s*200/, "agent loop should keep only a high internal runaway guard");

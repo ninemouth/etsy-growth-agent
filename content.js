@@ -3698,7 +3698,7 @@
             } else if (data.type === "checkpoint_restored") {
               log(`↩ ${data.message || "已恢复上次中断的 workflow"}`);
             } else if (data.type === "tool_call") {
-              log(`⚙️ 调用指令: ${data.toolName}`);
+              log(`⚙️ 调用动作: ${data.actionLabel || data.toolName}`);
             } else if (data.type === "tool_heartbeat") {
               log(`⏱ ${data.message || `${data.toolName || "工具"} 仍在执行`}`);
             } else if (data.type === "llm_heartbeat" || data.type === "llm_started") {
@@ -3710,11 +3710,11 @@
             } else if (data.type === "workflow_timeout") {
               log(`⏸ ${data.message || "工作流已保存断点并暂停"}`);
             } else if (data.type === "tool_timeout") {
-              log(`⏸ ${data.message || `${data.toolName || "工具"} 超时，已回收临时标签页`}`);
+              log(`⏸ ${data.message || `${data.actionLabel || data.toolName || "工具"} 超时，已回收临时标签页`}`);
             } else if (data.type === "stale_tool_result_discarded") {
               log(`↩ ${data.message || "已丢弃旧 workflow 的迟到结果"}`);
             } else if (data.type === "tool_result") {
-              log(`📥 执行完毕，获取到相关数据。`);
+              log(`📥 ${data.message || `${data.actionLabel || "动作"}执行完毕，获取到相关数据。`}`);
             } else if (data.type === "reflection" && data.message) {
               log(`⚠️ Critic 审计反思: ${data.message}`);
             }

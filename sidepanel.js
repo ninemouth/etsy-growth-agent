@@ -569,7 +569,7 @@ async function runSkill() {
         const msg = message.data;
         if (msg) {
           if (msg.type === "tool_call") {
-            addLog("info", "⚙️", `调用工具: ${msg.toolName}`);
+            addLog("info", "⚙️", `调用动作: ${msg.actionLabel || msg.toolName}`);
           } else if (msg.type === "checkpoint_restored") {
             addLog("info", "↩", msg.message || "已恢复上次中断的 workflow");
           } else if (msg.type === "tool_heartbeat") {
@@ -585,7 +585,7 @@ async function runSkill() {
           } else if (msg.type === "workflow_timeout") {
             addLog("warning", "⏸", msg.message || "工作流已保存断点并暂停");
           } else if (msg.type === "tool_timeout") {
-            addLog("warning", "⏸", msg.message || `${msg.toolName || "工具"} 超时，已回收临时标签页`);
+            addLog("warning", "⏸", msg.message || `${msg.actionLabel || msg.toolName || "工具"} 超时，已回收临时标签页`);
           } else if (msg.type === "stale_tool_result_discarded") {
             addLog("warning", "↩", msg.message || "已丢弃旧 workflow 的迟到结果");
           } else if (msg.type === "auto_fix") {

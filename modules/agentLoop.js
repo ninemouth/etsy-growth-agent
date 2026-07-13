@@ -2,7 +2,7 @@
 
 import { callLLM, getSettings } from './llmClient.js';
 import { tools, hasValidEtsySearchEvidence, hasValidGoogleTrendsEvidence } from './toolRegistry.js';
-import { isWorkflowCancellationRequested, isWorkflowGenerationCurrent, requestWorkflowCancellation } from './workflowRuntime.js';
+import { isWorkflowCancellationRequested, isWorkflowGenerationCurrent } from './workflowRuntime.js';
 import { putDataUrlArtifact } from './artifactStore.js';
 import { captureFullPageScreenshot } from './debuggerCapture.js';
 
@@ -1179,6 +1179,28 @@ function getToolTimeoutMs(toolName = "") {
   return 120_000;
 }
 
+function describeToolAction(toolName = "", toolArgs = {}, toolResult = null) {
+  const engine = String(toolArgs.engine || "").toLowerCase();
+  const url = String(toolArgs.url || toolResult?.finalUrl || toolResult?.url || toolResult?.pageData?.url || "");
+  if (toolName === "search_in_browser") {
+    if (engine === "etsy") return { actionKind: "search_results", actionLabel: "Etsy 搜索结果页取证", lifecycle: "搜索页在保存页面文本和截图证据后会自动关闭" };
+    if (engine === "google_trends") return { actionKind: "trend_chart", actionLabel: "Google Trends 趋势图取证", lifecycle: "趋势页在保存截图证据后会自动关闭" };
+    if (engine === "google" || engine === "google_us") return { actionKind: "web_search", actionLabel: "Google Search 结果页取证", lifecycle: "搜索页在保存页面文本和截图证据后会自动关闭" };
+    if (engine === "1688" || engine === "taobao") return { actionKind: "sourcing_search", actionLabel: "采购平台搜索结果页取证", lifecycle: "平台页可能保留用于人工验证或继续筛选" };
+    return { actionKind: "browser_search", actionLabel: "浏览器搜索取证", lifecycle: "临时搜索页可能在证据保存后自动关闭" };
+  }
+  if (toolName === "open_new_tab") {
+    if (/etsy\.com\/listing\//i.test(url)) return { actionKind: "listing_detail", actionLabel: "Etsy 商品详情页取证", lifecycle: "详情页会保持打开，除非后续显式关闭或工具超时回收" };
+    if (/etsy\.com\/shop\//i.test(url)) return { actionKind: "shop_detail", actionLabel: "Etsy 店铺页取证", lifecycle: "店铺页会保持打开，用于后续分页采集或截图分析" };
+    return { actionKind: "detail_page", actionLabel: "详情页取证", lifecycle: "详情页会保持打开，除非后续显式关闭或工具超时回收" };
+  }
+  if (toolName === "collect_etsy_shop_pages") return { actionKind: "shop_pagination_crawl", actionLabel: "Etsy 店铺分页商品采集", lifecycle: "分页采集会打开页面、保存 DOM/截图/商品卡片后关闭临时页" };
+  if (toolName === "collect_etsy_competitor_shops") return { actionKind: "competitor_shop_crawl", actionLabel: "竞品店铺批量采集", lifecycle: "批量采集会分页读取竞品店铺、详情页和截图证据" };
+  if (toolName === "analyze_etsy_shop_crawl_screenshots") return { actionKind: "screenshot_interpretation", actionLabel: "店铺截图独立解读", lifecycle: "不打开新标签页，只分析已缓存截图 artifact" };
+  if (toolName === "close_tab") return { actionKind: "tab_close", actionLabel: "关闭已完成取证的标签页", lifecycle: "关闭由 workflow 创建或指定的标签页" };
+  return { actionKind: toolName || "tool", actionLabel: toolName || "工具执行", lifecycle: "" };
+}
+
 async function runToolWithTimeout(toolName, toolArgs) {
   const timeoutMs = getToolTimeoutMs(toolName);
   let timeoutId = null;
@@ -1197,9 +1219,6 @@ async function runToolWithTimeout(toolName, toolArgs) {
       operation,
       new Promise((_, reject) => {
         timeoutId = setTimeout(async () => {
-          if (toolArgs.workflowId) {
-            await requestWorkflowCancellation(toolArgs.workflowId, `${toolName}_timeout`);
-          }
           reject(new Error(`${toolName} timed out after ${Math.round(timeoutMs / 1000)} seconds`));
         }, timeoutMs);
       }),
@@ -3490,7 +3509,16 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       if (progressToolArgs.imageUrl && String(progressToolArgs.imageUrl).startsWith("data:")) {
         progressToolArgs.imageUrl = "__UPLOADED_IMAGE_DATA__";
       }
-      sendProgress({ type: "tool_call", step, toolName, toolArgs: progressToolArgs });
+      const plannedToolAction = describeToolAction(toolName, toolArgs);
+      sendProgress({
+        type: "tool_call",
+        step,
+        toolName,
+        toolArgs: progressToolArgs,
+        actionKind: plannedToolAction.actionKind,
+        actionLabel: plannedToolAction.actionLabel,
+        tabLifecycle: plannedToolAction.lifecycle,
+      });
       await saveCheckpoint({
         status: "tool_pending",
         step,
@@ -3531,6 +3559,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       let toolHeartbeatTimer = null;
       const toolStartedAt = Date.now();
       const toolTimeoutMs = getToolTimeoutMs(toolName);
+      const toolAction = describeToolAction(toolName, toolArgs);
       const tabsBeforeTool = await snapshotTabIds();
       try {
         toolHeartbeatTimer = setInterval(() => {
@@ -3539,9 +3568,12 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
             type: "tool_heartbeat",
             step,
             toolName,
+            actionKind: toolAction.actionKind,
+            actionLabel: toolAction.actionLabel,
+            tabLifecycle: toolAction.lifecycle,
             elapsedSeconds,
             timeoutSeconds: Math.round(toolTimeoutMs / 1000),
-            message: `${toolName} 已运行 ${elapsedSeconds} 秒，最长等待 ${Math.round(toolTimeoutMs / 1000)} 秒；若超时会自动返回错误并继续恢复 workflow。`,
+            message: `${toolAction.actionLabel} 已运行 ${elapsedSeconds} 秒，最长等待 ${Math.round(toolTimeoutMs / 1000)} 秒；${toolAction.lifecycle || "若超时会返回阶段错误并保留 workflow 上下文。"}。`,
           });
         }, 30000);
         toolResult = await runToolWithTimeout(toolName, toolArgs);
@@ -3564,12 +3596,20 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         if (toolTimedOut) {
           const closedTabIds = await closeTabsCreatedDuringTimedOutTool(tabsBeforeTool);
           toolResult.closedTabIds = closedTabIds;
+          toolResult.actionKind = toolAction.actionKind;
+          toolResult.actionLabel = toolAction.actionLabel;
+          toolResult.tabLifecycle = toolAction.lifecycle;
+          toolResult.timeoutPolicy = "tool_timeout_does_not_cancel_workflow";
           sendProgress({
             type: "tool_timeout",
             step,
             toolName,
+            actionKind: toolAction.actionKind,
+            actionLabel: toolAction.actionLabel,
+            tabLifecycle: toolAction.lifecycle,
+            closedTabIds,
             elapsedSeconds: Math.round((Date.now() - toolStartedAt) / 1000),
-            message: `${toolName} 已超时，已回收本次工具新增的临时标签页并继续保存断点。`,
+            message: `${toolAction.actionLabel} 已超过本阶段等待时间；这表示该阶段未形成稳定返回，不等于页面没有数据。已回收本次工具新增的临时标签页 ${closedTabIds.length} 个，workflow 未被取消，可继续修复或重试该证据阶段。`,
           });
         }
       } finally {
@@ -3592,9 +3632,24 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
           steps: step,
         };
       }
+      const completedToolAction = describeToolAction(toolName, toolArgs, toolResult);
+      if (toolResult && typeof toolResult === "object") {
+        toolResult.actionKind = toolResult.actionKind || completedToolAction.actionKind;
+        toolResult.actionLabel = toolResult.actionLabel || completedToolAction.actionLabel;
+        toolResult.tabLifecycle = toolResult.tabLifecycle || completedToolAction.lifecycle;
+      }
       toolHistory.push({ tool: toolName, arguments: toolArgs, result: toolResult });
 
-      sendProgress({ type: "tool_result", step, toolName, toolResult });
+      sendProgress({
+        type: "tool_result",
+        step,
+        toolName,
+        actionKind: completedToolAction.actionKind,
+        actionLabel: completedToolAction.actionLabel,
+        tabLifecycle: completedToolAction.lifecycle,
+        toolResult,
+        message: `${completedToolAction.actionLabel}执行完毕，已获取并保存相关证据。${completedToolAction.lifecycle ? `（${completedToolAction.lifecycle}）` : ""}`,
+      });
       await saveCheckpoint({
         status: toolTimedOut ? "tool_timeout" : "tool_completed",
         step,
