@@ -517,6 +517,46 @@ chrome.runtime.onConnect.addListener((port) => {
     });
 
     port.onMessage.addListener(async (message) => {
+      if (message.type === "CANCEL_WORKFLOW") {
+        if (!activeCheckpointKey) {
+          try {
+            port.postMessage({
+              type: "ERROR",
+              error: "当前没有可暂停的运行中 workflow。",
+              resumable: false,
+            });
+          } catch (_) {}
+          return;
+        }
+        try {
+          await requestWorkflowCancellation(activeCheckpointKey, message.reason || "user_paused");
+          await setWorkflowCheckpoint(activeCheckpointKey, {
+            status: "interrupted",
+            lastStage: "user_paused",
+            pausedAt: new Date().toISOString(),
+            interruptionReason: "user_paused",
+          });
+          port.postMessage({
+            type: "PROGRESS",
+            data: {
+              type: "workflow_timeout",
+              step: 0,
+              message: "已收到暂停请求，正在保存当前断点。当前工具或 AI 请求完成边界后会停止，可发送“继续”恢复。",
+            },
+          });
+        } catch (err) {
+          try {
+            port.postMessage({
+              type: "ERROR",
+              error: `暂停失败：${err.message}`,
+              resumable: true,
+              resumeHint: "如已保存断点，可发送“继续”恢复。",
+            });
+          } catch (_) {}
+        }
+        return;
+      }
+
       if (message.type === "RUN_SKILL") {
         if (runInFlight) {
           try {
