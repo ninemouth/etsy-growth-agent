@@ -548,6 +548,9 @@ const SOURCING_SKILL_RE = /domestic_sourcing_finder|etsy_sourcing_finder/;
 const IMAGE_SEARCH_TOOLS = ["image_search_1688", "image_search_taobao", "image_search_in_browser"];
 const COMPLIANCE_SKILL_RE = /etsy_compliance_auditor/;
 const PLATFORM_TRENDS_SKILL_RE = /etsy_platform_trends/;
+const KEYWORD_SKILL_RE = /etsy_keyword_analysis/;
+const LISTING_SKILL_RE = /etsy_listing_generator/;
+const PRODUCT_OPPORTUNITY_SKILL_RE = /etsy_product_opportunity_explorer|etsy_crossborder_explorer/;
 
 export function isPlatformTrendSkill(skillId = "") {
   return PLATFORM_TRENDS_SKILL_RE.test(String(skillId || ""));
@@ -595,6 +598,18 @@ function isReviewSkill(skillId = "") {
 
 function isOperationsSkill(skillId = "") {
   return /etsy_operations_tracker/.test(String(skillId || ""));
+}
+
+function isKeywordSkill(skillId = "") {
+  return KEYWORD_SKILL_RE.test(String(skillId || ""));
+}
+
+function isListingSkill(skillId = "") {
+  return LISTING_SKILL_RE.test(String(skillId || ""));
+}
+
+function isProductOpportunitySkill(skillId = "") {
+  return PRODUCT_OPPORTUNITY_SKILL_RE.test(String(skillId || ""));
 }
 
 function hasSupportedEtsyAnalytics(toolHistory = []) {
@@ -1075,6 +1090,8 @@ function getEtsyBrowserWorkflowGuardResult({ skillId = "", toolName = "", toolAr
   if (isPlatformTrendSkill(skillId) && toolName === "search_in_browser") {
     const stageGuard = getPlatformTrendStageGuard({ toolName, toolArgs, toolHistory });
     if (stageGuard) return stageGuard;
+  }
+  if (toolName === "search_in_browser" && !isSourcingSkill(skillId)) {
     const requestKey = searchEvidenceKey(toolArgs);
     const duplicate = toolHistory.find((entry) => {
       if (entry?.tool !== "search_in_browser" || entry?.result?.ok === false || entry?.result?.error) return false;
@@ -1084,7 +1101,7 @@ function getEtsyBrowserWorkflowGuardResult({ skillId = "", toolName = "", toolAr
       return {
         type: "reuse_tool_result",
         tool: toolName,
-        message: `趋势证据请求已完成，本次不再打开新标签页，直接复用已有搜索证据：${requestKey}。请转入下一项尚未完成的证据阶段或输出 final。`,
+        message: `该搜索证据已完成，本次不再打开新标签页，直接复用已有搜索证据：${requestKey}。请转入下一项尚未完成的证据阶段或输出 final。`,
         reusedEvidence: true,
         originalTool: duplicate.tool,
         originalArguments: duplicate.arguments,
@@ -2098,6 +2115,136 @@ function validateOperationsReport(out, toolHistory = [], pageContext = {}) {
   return errors;
 }
 
+const KEYWORD_VOLUME_CLAIM_RE = /^\s*\d+(?:[,.]\d+)*(?:\s*[-–—到至]\s*\d+(?:[,.]\d+)*)?\s*$|高频|高搜索|搜索量高|热度高|high\s+volume|large\s+volume|popular/i;
+const TREND_OR_SEASONAL_RE = /Google Trends|谷歌趋势|趋势图|季节|旺季|淡季|峰值|搜索热度|需求曲线|Interest over time|related queries|related topics|YoY|QoQ|trend|seasonal|peak/i;
+const SEO_OR_KEYWORD_RE = /SEO|关键词|搜索词|高频词|标题|标签|tags?|keyword|listing title|属性|attribute/i;
+const SENSITIVE_LISTING_RE = /儿童|婴幼儿|玩具|化妆品|护肤|食品接触|餐具|电器|插头|电池|充电|药品|医疗|品牌|迪士尼|Disney|Marvel|Pokemon|Nike|LV|Chanel|商标|版权|角色|children|kids|toy|cosmetic|skin.?care|food contact|electrical|battery|medical|brand|trademark|copyright|character/i;
+const DIRECT_PUBLISH_RE = /可直接发布|直接上架|立即发布|ready to publish|publish-ready|直接投放/i;
+const OPPORTUNITY_STRONG_CLAIM_RE = /蓝海|爆品|高增长|低竞争|需求旺盛|强需求|高毛利|高潜力|机会评分|potential_score|opportunity_score|blue ocean|best.?seller|爆款|winning product|high growth|low competition|strong demand/i;
+const MARKET_SCOPE_OVERCLAIM_RE = /全市场|全平台|完整市场|完整价格分布|全部竞品|所有竞品|主要竞品均|头部竞品均|complete market|full market|entire market|complete price distribution/i;
+const LOGISTICS_EXACT_CLAIM_RE = /\b\d+\s*[-–—到至]\s*\d+\s*(个)?\s*(工作日|日|天|business days?|days?)\b|运费\s*[$¥€]?\s*\d+|shipping cost\s*[$¥€]?\s*\d+/i;
+const OFFICIAL_CERT_RE = /\b(?:CE|CPC|FDA|FCC|RoHS|REACH)\b/i;
+
+function hasTrendScreenshotLedger(ledger = []) {
+  return hasTrendVisualForTrends(ledger) || hasTrendsVisualLedger(ledger);
+}
+
+function itemLedger(item = {}) {
+  return Array.isArray(item?.evidence_ledger) ? item.evidence_ledger : [];
+}
+
+function validateKeywordReport(out, toolHistory = [], pageContext = {}) {
+  const errors = [];
+  const items = Array.isArray(out.data) ? out.data : [];
+  if (items.length === 0) return ["关键词分析报告不能返回空 data；每个关键词实体必须包含 keyword/intent/competition/estimated_volume 与 evidence_ledger。"];
+  const allLedger = items.flatMap(itemLedger);
+  if (!hasAnyLedgerType(allLedger, ["page_dom", "etsy_search"])) {
+    errors.push("关键词分析缺少页面文本或 Etsy 搜索证据。不能只凭模型常识输出 SEO 词、标签或标题公式。");
+  }
+  items.forEach((item, idx) => {
+    const label = `关键词分析第 ${idx + 1} 项`;
+    const ledger = itemLedger(item);
+    const itemText = JSON.stringify(item || {});
+    const tags = Array.isArray(item?.etsy_tags) ? item.etsy_tags : Array.isArray(item?.tags) ? item.tags : [];
+    errors.push(...validateEvidenceLedgerEntries({
+      entries: ledger,
+      label,
+      toolHistory,
+      pageContext,
+      allowedTypes: ["page_dom", "screenshot_visual", "etsy_search", "google_search", "google_trends", "etsy_api", "user_input", "assumption"],
+    }));
+    if (!hasValue(item?.keyword || item?.title || item?.name)) errors.push(`${label} 缺少 keyword/title/name，无法和报告表格同步展示。`);
+    if (tags.length > 13) errors.push(`${label} 输出了 ${tags.length} 个 Etsy tags，超过 Etsy Listing 最多 13 个标签的硬限制。`);
+    if (KEYWORD_VOLUME_CLAIM_RE.test(String(item?.estimated_volume || item?.volume || "")) && !hasAnyLedgerType(ledger, ["google_trends", "google_search", "etsy_api"])) {
+      errors.push(`${label} 输出了搜索量/高频词强判断，但没有 Google Trends/Google Search/API 证据；Etsy 个人 API 不提供平台搜索量，无法取得时必须写“未取得/待验证”。`);
+    }
+    if (/高频|高搜索|搜索量高|high\s+volume/i.test(itemText) && !hasAnyLedgerType(ledger, ["google_trends", "google_search"]) && !/未取得|待验证|无法确认|不可用|not available|unavailable/i.test(itemText)) {
+      errors.push(`${label} 把关键词写成高频/高搜索，但没有站外或趋势证据。`);
+    }
+    if (TREND_OR_SEASONAL_RE.test(itemText) && (!hasLedgerType(ledger, "google_trends") || !hasTrendScreenshotLedger(ledger))) {
+      errors.push(`${label} 使用趋势/季节性结论时必须包含 google_trends 证据和 Google Trends 截图视觉解读。`);
+    }
+  });
+  return errors;
+}
+
+function validateListingReport(out, toolHistory = [], pageContext = {}) {
+  const errors = [];
+  const items = Array.isArray(out.data) ? out.data : [];
+  if (items.length === 0) return ["Listing 生成报告不能返回空 data；至少需要一个标题/标签/属性/描述方案，并绑定 evidence_ledger。"];
+  const allLedger = items.flatMap(itemLedger);
+  if (!hasAnyLedgerType(allLedger, ["page_dom", "user_input", "supplier_page"])) {
+    errors.push("Listing 生成缺少当前商品页面、用户提供资料或供应商资料证据。不能只凭一句需求生成可发布 Listing。");
+  }
+  if (!hasAnyLedgerType(allLedger, ["etsy_search", "page_dom", "user_input"]) && SEO_OR_KEYWORD_RE.test(`${out.overview || ""}\n${out.analysis || ""}\n${JSON.stringify(items)}`)) {
+    errors.push("Listing 的 SEO 标题、标签或关键词建议缺少 Etsy 搜索/竞品 Listing/页面文本证据；没有证据时只能标记为待验证。");
+  }
+  items.forEach((item, idx) => {
+    const label = `Listing 方案第 ${idx + 1} 项`;
+    const ledger = itemLedger(item);
+    const itemText = JSON.stringify(item || {});
+    const tags = Array.isArray(item?.etsy_tags) ? item.etsy_tags : Array.isArray(item?.tags) ? item.tags : [];
+    errors.push(...validateEvidenceLedgerEntries({
+      entries: ledger,
+      label,
+      toolHistory,
+      pageContext,
+      allowedTypes: ["page_dom", "screenshot_visual", "etsy_search", "google_search", "google_trends", "supplier_page", "official_policy", "official_regulation", "user_input", "assumption"],
+    }));
+    if (tags.length > 13) errors.push(`${label} 输出了 ${tags.length} 个 Etsy tags，超过 Etsy Listing 最多 13 个标签的硬限制。`);
+    if (/已填写|confirmed|verified|已确认|确定属性/i.test(itemText) && !hasAnyLedgerType(ledger, ["page_dom", "user_input", "supplier_page"])) {
+      errors.push(`${label} 把属性写成已填写/已确认，但没有页面、用户输入或供应商事实证据。模型补全只能标记为待确认。`);
+    }
+    if (/estimated_volume|搜索量|竞争强度|季节|偏好集中|高频|热度/i.test(itemText) && !hasAnyLedgerType(ledger, ["etsy_search", "google_search", "google_trends"]) && !hasAssumptionFallback(ledger, /搜索量|竞争|季节|偏好|未取得|待验证/i)) {
+      errors.push(`${label} 输出搜索量、竞争强度、季节性或买家偏好，但没有 Etsy/Google/Trends 证据。`);
+    }
+    if (SENSITIVE_LISTING_RE.test(itemText) && DIRECT_PUBLISH_RE.test(itemText) && !hasAnyLedgerType(ledger, ["official_policy", "official_regulation"]) && !hasAssumptionFallback(ledger, /合规|认证|商标|版权|发布|blocked|待验证/i)) {
+      errors.push(`${label} 涉及儿童/化妆品/电器/电池/食品接触/IP 等敏感风险，却写成可直接发布；必须先完成合规审查或标记 proceed_after_evidence/blocked。`);
+    }
+  });
+  return errors;
+}
+
+function validateProductOpportunityReport(out, toolHistory = [], pageContext = {}) {
+  const errors = [];
+  const items = Array.isArray(out.data) ? out.data : [];
+  if (items.length === 0) return ["选品/机会探索报告不能返回空 data；至少需要一个机会项或明确阻断项，并绑定 evidence_ledger。"];
+  items.forEach((item, idx) => {
+    const label = `机会探索第 ${idx + 1} 项`;
+    const ledger = itemLedger(item);
+    const itemText = JSON.stringify(item || {});
+    errors.push(...validateEvidenceLedgerEntries({
+      entries: ledger,
+      label,
+      toolHistory,
+      pageContext,
+      allowedTypes: ["page_dom", "screenshot_visual", "etsy_search", "google_search", "google_trends", "etsy_api", "official_policy", "official_regulation", "user_input", "assumption"],
+    }));
+    if (OPPORTUNITY_STRONG_CLAIM_RE.test(itemText) && !hasAnyLedgerType(ledger, ["etsy_search", "google_search", "google_trends", "page_dom"]) && !hasAssumptionFallback(ledger, /机会|需求|竞争|趋势|待验证|未取得/i)) {
+      errors.push(`${label} 输出蓝海/爆品/高增长/低竞争/机会评分等强结论，但没有 Etsy/Google/Trends/页面证据。`);
+    }
+    if (hasValue(item?.potential_score || item?.opportunity_score || item?.score) && ledger.length === 0) {
+      errors.push(`${label} 有机会评分但没有 evidence_ledger；评分必须能追溯到需求、竞争、价格、物流、合规和评论样本。`);
+    }
+    if (MARKET_SCOPE_OVERCLAIM_RE.test(itemText) && !/样本|第一页|可见|sample|visible|limitation|局限/i.test(itemText)) {
+      errors.push(`${label} 把可见搜索/店铺样本写成全市场或完整价格分布。Search Grid 只能代表本轮可见样本，必须写 sample_count/coverage/limitation。`);
+    }
+    if ((LOGISTICS_EXACT_CLAIM_RE.test(itemText) || /物流|配送|shipping|delivery|transit/i.test(itemText)) && !hasLedgerTypeTopic(ledger, ["google_search"], /配送|物流|发货|运输|时效|delivery|shipping|transit|fulfillment|USPS|DHL|FedEx|UPS|postal/i) && !hasAssumptionFallback(ledger, /物流|配送|shipping|delivery|transit|待验证|未取得/i)) {
+      errors.push(`${label} 输出物流时效/成本判断，但没有实时物流主题搜索证据；跨国运输不能凭模型常识承诺。`);
+    }
+    if (OFFICIAL_CERT_RE.test(itemText) && !hasAnyLedgerType(ledger, ["official_policy", "official_regulation"]) && !hasAssumptionFallback(ledger, /CE|CPC|FDA|FCC|RoHS|REACH|认证|法规|待验证/i)) {
+      errors.push(`${label} 引用了 CE/CPC/FDA/FCC/RoHS/REACH，但没有官方来源证据或明确待验证降级。`);
+    }
+    if (/采购|拿样|备货|上架|发布|扩大销售|purchase|source\s+this|launch\s+this|start\s+selling/i.test(itemText) && !/合规|compliance|审查|proceed_after_evidence|blocked|待验证/i.test(itemText)) {
+      errors.push(`${label} 推荐采购/上架/扩大销售前缺少合规下一步；机会评分不能替代合规许可。`);
+    }
+    if (/评论|差评|review|buyer feedback|痛点|抱怨/i.test(itemText) && !hasAnyLedgerType(ledger, ["page_dom", "screenshot_visual", "etsy_search"]) && !hasAssumptionFallback(ledger, /评论|差评|review|痛点|样本|待验证/i)) {
+      errors.push(`${label} 使用评论痛点或买家反馈，但没有评论/页面/搜索样本证据。`);
+    }
+  });
+  return errors;
+}
+
 const TREND_FORBIDDEN_PRIVATE_DATA_RE = /(?:竞品\s*(?:转化率|conversion|sessions?|订单|销售额|流量|加购率)|(?:竞品|其他店铺|平台)\s*(?:后台|analytics|分析数据)|(?:拉取|读取|获取|对比).{0,18}(?:竞品|其他店铺).{0,18}(?:API|订单|转化|sessions?|流量)|(?:平台|全平台)\s*(?:搜索量|搜索指数|analytics|流量|订单))/i;
 const TREND_STRONG_CLAIM_RE = /完整(?:市场|全平台)?(?:价格|商品|SKU)?(?:分布|数据)|全平台|全市场|主要竞品|头部竞品(?:均|都)|需求旺盛|显著峰值|点击率更高|转化率更高|买家(?:普遍|常见|集中)反馈|评论区常见|["“']?7\s*[-–—到至]\s*12\s*(?:个)?\s*(?:工作日|日|天)|香港发货.{0,18}\d+\s*[-–—到至]\s*\d+\s*(?:个)?\s*(?:工作日|日|天)|full market|entire market|complete price distribution|higher CTR|higher conversion|common buyer feedback|significant peak|strong demand/i;
 const TREND_LOGISTICS_RE = /配送|物流|发货|运输|时效|工作日|delivery|shipping|transit|fulfillment/i;
@@ -2286,6 +2433,15 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
   }
   if (isPlatformTrendSkill(skillId)) {
     errors.push(...validatePlatformTrendReport(out, toolHistory, pageContext));
+  }
+  if (isKeywordSkill(skillId)) {
+    errors.push(...validateKeywordReport(out, toolHistory, pageContext));
+  }
+  if (isListingSkill(skillId)) {
+    errors.push(...validateListingReport(out, toolHistory, pageContext));
+  }
+  if (isProductOpportunitySkill(skillId)) {
+    errors.push(...validateProductOpportunityReport(out, toolHistory, pageContext));
   }
 
   // 1. Check for technical jargon

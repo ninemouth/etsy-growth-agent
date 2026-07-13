@@ -431,7 +431,7 @@ function bindEvents() {
       if (selectedId) {
         await new Promise(r => chrome.storage.local.set({ activeShopId: selectedId }, r));
         await refreshAllData();
-        drawMockTrackerCharts();
+        drawTrackerCharts();
         if (isStoreApiSurfaceActive()) {
           renderStoreTab();
         }
@@ -543,7 +543,7 @@ async function refreshAllData() {
           const shopId = btn.getAttribute("data-shop-id");
           await new Promise(r => chrome.storage.local.set({ activeShopId: shopId }, r));
           await refreshAllData();
-          drawMockTrackerCharts();
+          drawTrackerCharts();
           if (isStoreApiSurfaceActive()) {
             renderStoreTab();
           }
@@ -567,7 +567,7 @@ async function refreshAllData() {
               activeShopId: nextActiveId
             }, r));
             await refreshAllData();
-            drawMockTrackerCharts();
+            drawTrackerCharts();
             if (isStoreApiSurfaceActive()) {
               renderStoreTab();
             }
@@ -706,7 +706,7 @@ function extractSkuAnalyticsRows(snapshot = null) {
   }).filter(row => row.sku);
 }
 
-function buildSkuRows(tracked = [], savedResults = [], events = [], activeShop = null, skuAnalyticsSnapshot = null) {
+function buildSkuRows(tracked = [], savedResults = [], events = [], _activeShop = null, skuAnalyticsSnapshot = null) {
   const rows = [];
   const apiRows = extractSkuAnalyticsRows(skuAnalyticsSnapshot);
   if (apiRows.length) {
@@ -747,7 +747,6 @@ function buildSkuRows(tracked = [], savedResults = [], events = [], activeShop =
         nextAction,
         savedEvidence: savedResults.length,
         eventCount: events.length,
-        mockSource: false,
         dataSource: "Etsy 个人访问 API",
       };
     });
@@ -755,78 +754,33 @@ function buildSkuRows(tracked = [], savedResults = [], events = [], activeShop =
 
   if (skuAnalyticsSnapshot && skuAnalyticsSnapshot?.result?.supported !== true && skuAnalyticsSnapshot?.supported !== true) return [];
 
-  const mock = activeShop ? getShopMockData(activeShop) : null;
-  const categories = ["定制项链", "宠物纪念牌", "婚礼座位牌", "手工串珠套装", "墙面装饰画", "婴儿姓名毯", "蜡烛模具", "节日礼品盒"];
-  const sourceProducts = tracked.length
-    ? tracked
-    : categories.slice(0, 6).map((title, index) => ({
-      id: `mock_sku_${index + 1}`,
-      title,
-      url: "",
-      registeredAt: new Date(Date.now() - index * 86400000).toISOString().slice(0, 10),
-    }));
+  if (!tracked.length) return [];
 
-  sourceProducts.forEach((prod, index) => {
-    const seedBase = `${prod.id || prod.title || index}${activeShop?.id || "demo"}`;
-    let seed = 0;
-    for (let i = 0; i < seedBase.length; i++) seed += seedBase.charCodeAt(i) * (i + 1);
-    const sessions = 280 + (seed % 6200);
-    const views = sessions * (2 + (seed % 5));
-    const cartRate = Number((1.2 + (seed % 65) / 10).toFixed(1));
-    const orderRate = Number((0.3 + (seed % 25) / 10).toFixed(1));
-    const revenue = (sessions * orderRate * (320 + (seed % 1800)) / 100).toFixed(0);
-    const margin = 12 + (seed % 28);
-    const stockDays = 3 + (seed % 42);
-    const rating = Number((3.7 + (seed % 13) / 10).toFixed(1));
-    const issue = cartRate < 2.6
-      ? "conversion"
-      : margin < 20
-        ? "profit"
-        : stockDays < 8
-          ? "fulfillment"
-          : sessions < 1000
-            ? "exposure"
-            : "scale";
-    const issueLabel = {
-      exposure: "曝光弱",
-      conversion: "加购弱",
-      profit: "利润弱",
-      fulfillment: "履约风险",
-      scale: "可放大",
-    }[issue];
-    const nextAction = {
-      exposure: "重构标题关键词并扫描 Etsy 热卖词",
-      conversion: "重做首图和英文详情页承接",
-      profit: "测算利润保护价并寻找降本空间",
-      fulfillment: "检查库存/发货倒计时并评估第三方仓备货",
-      scale: "复制到相邻关键词和扩展变体",
-    }[issue];
+  tracked.forEach((prod, index) => {
     rows.push({
       id: prod.id || `sku_${index}`,
-      sku: prod.sku || `${String(seed).slice(0, 5)}-ET`,
+      sku: prod.sku || prod.id || `local-${index + 1}`,
       title: prod.title || prod.name || `Etsy 商品 ${index + 1}`,
       url: prod.url || prod.pageUrl || "",
-      issue,
-      issueLabel,
-      sessions,
-      views,
-      cartRate,
-      orderRate,
-      revenue,
-      margin,
-      stockDays,
-      rating,
-      nextAction,
+      issue: "needs_api",
+      issueLabel: "待同步",
+      sessions: null,
+      views: null,
+      cartRate: null,
+      orderRate: null,
+      revenue: null,
+      margin: null,
+      stockDays: null,
+      rating: null,
+      nextAction: "同步 Etsy 个人访问 API 或运行店铺体检后再判断 SKU 优先级",
       savedEvidence: savedResults.length,
       eventCount: events.length,
-      mockSource: true,
-      dataSource: tracked.length ? "本地商品 + 模拟指标" : "示例队列",
-      mockStoreSessions: mock?.sessions || 0,
+      dataSource: "本地跟踪商品（待 API 指标）",
     });
   });
   return rows.sort((a, b) => {
-    const priority = { fulfillment: 5, profit: 4, conversion: 3, exposure: 2, scale: 1 };
-    return priority[b.issue] - priority[a.issue] || b.revenue - a.revenue;
+    const priority = { fulfillment: 5, profit: 4, conversion: 3, exposure: 2, needs_api: 1, scale: 0 };
+    return priority[b.issue] - priority[a.issue] || Number(b.revenue || 0) - Number(a.revenue || 0);
   });
 }
 
@@ -988,7 +942,7 @@ function buildWorkflowTasks({ skuRows = [], opportunities = [], events = [], rep
     }, taskState));
   }
 
-  skuRows.filter(row => row.issue !== "scale").slice(0, 6).forEach((row) => {
+  skuRows.filter(row => row.issue !== "scale" && row.issue !== "needs_api").slice(0, 6).forEach((row) => {
     const actionId = row.issue === "profit"
       ? "calculate_profit_guardrail"
       : row.issue === "fulfillment"
@@ -1005,10 +959,10 @@ function buildWorkflowTasks({ skuRows = [], opportunities = [], events = [], rep
       sku: row.sku,
       reason: hasSkuApi
         ? `Etsy 个人访问 API 发现该 SKU ${row.issueLabel}；曝光 ${Number(row.sessions || 0).toLocaleString()}，加购 ${row.cartRate}%，付款 ${row.orderRate}%。`
-        : `当前来自${row.dataSource || "本地追踪/示例"}，需要同步 Etsy 个人访问 API 后确认。`,
+        : `当前来自${row.dataSource || "本地追踪"}，需要同步 Etsy 个人访问 API 后确认。`,
       actionText: row.nextAction,
       actionId,
-      source: hasSkuApi ? "Etsy 个人访问 API 全量 SKU 轻体检" : row.mockSource ? "示例队列（非真实数据）" : "本地队列",
+      source: hasSkuApi ? "Etsy 个人访问 API 全量 SKU 轻体检" : "本地队列",
       owner: row.issue === "fulfillment" ? "运营/仓配确认" : "运营执行",
       dueLabel: row.issue === "fulfillment" ? "立即" : "今天",
     }, taskState));
@@ -2263,24 +2217,23 @@ function renderSourceLedger() {
   const hasExperiments = growthRuntimeState.experiments.length > 0;
   const hasSkuApi = !!growthRuntimeState.skuAnalyticsSnapshot?.result?.data?.length;
   const hasStoreApi = !!growthRuntimeState.storeSnapshotCache?.result;
-  const usesMockSku = growthRuntimeState.skuRows.some(row => row.mockSource);
   const formatSyncTime = (value) => value ? new Date(value).toLocaleString() : "未同步";
   ledger.innerHTML = `
     <div class="source-ledger-item">
-      <strong><span class="source-dot ${hasSkuApi ? "live" : usesMockSku ? "mock" : "local"}"></span>${hasSkuApi ? "Etsy 个人访问 API SKU Analytics" : usesMockSku ? "示例 SKU 队列" : "真实跟踪 SKU"}</strong>
-      <p>${hasSkuApi ? `SKU 作战台已接入 ${growthRuntimeState.skuAnalyticsSnapshot.result.data.length} 行真实 SKU 维度 analytics；本地缓存更新时间：${formatSyncTime(growthRuntimeState.skuAnalyticsSnapshot.syncedAt)}。` : usesMockSku ? "当前没有足够 trackedProducts，SKU 作战台使用示例队列预览流程。" : "SKU 作战台来自本地跟踪商品，指标仍需 Etsy 个人访问 API 进一步对齐。"}</p>
+      <strong><span class="source-dot ${hasSkuApi ? "live" : "local"}"></span>${hasSkuApi ? "Etsy 个人访问 API SKU Analytics" : "本地跟踪 SKU"}</strong>
+      <p>${hasSkuApi ? `SKU 作战台已接入 ${growthRuntimeState.skuAnalyticsSnapshot.result.data.length} 行真实 SKU 维度 analytics；本地缓存更新时间：${formatSyncTime(growthRuntimeState.skuAnalyticsSnapshot.syncedAt)}。` : "SKU 作战台仅显示本地跟踪商品；曝光、加购、订单等指标需同步 Etsy 个人访问 API 后显示。"}</p>
     </div>
     <div class="source-ledger-item">
-      <strong><span class="source-dot ${hasHistory ? "local" : "mock"}"></span>${hasHistory ? "本地历史可用" : "暂无历史证据"}</strong>
-      <p>${hasHistory ? "机会卡会读取 savedResults / monitorChangeEvents / monitorReports。" : "机会中心会使用启动建议和 AI 推断兜底。"}</p>
+      <strong><span class="source-dot local"></span>${hasHistory ? "本地历史可用" : "暂无历史证据"}</strong>
+      <p>${hasHistory ? "机会卡会读取 savedResults / monitorChangeEvents / monitorReports。" : "机会中心暂无真实历史证据，只显示空态。"}</p>
     </div>
     <div class="source-ledger-item">
-      <strong><span class="source-dot ${hasStoreApi ? "live" : hasShop ? "local" : "mock"}"></span>${hasStoreApi ? "Etsy 个人访问 API 店铺快照" : hasShop ? "已选择活动店铺" : "未绑定 Etsy 个人访问 API"}</strong>
-      <p>${hasStoreApi ? `店铺快照已保存在本地；下次 Etsy 个人访问 API 同步成功会覆盖更新。最近同步：${formatSyncTime(growthRuntimeState.storeSnapshotCache.syncedAt)}。` : hasShop ? "店铺 API 看板会优先请求 Etsy 个人访问 API；失败时页面会明示模拟数据。" : "店铺业绩、订单和费用只能展示模拟或空状态。"}</p>
+      <strong><span class="source-dot ${hasStoreApi ? "live" : "local"}"></span>${hasStoreApi ? "Etsy 个人访问 API 店铺快照" : hasShop ? "已选择活动店铺" : "未绑定 Etsy 个人访问 API"}</strong>
+      <p>${hasStoreApi ? `店铺快照已保存在本地；下次 Etsy 个人访问 API 同步成功会覆盖更新。最近同步：${formatSyncTime(growthRuntimeState.storeSnapshotCache.syncedAt)}。` : hasShop ? "店铺 API 看板会请求 Etsy 个人访问 API；失败时只显示错误和空态。" : "店铺业绩、订单和费用在未绑定 API 时显示为空态。"}</p>
     </div>
     <div class="source-ledger-item">
       <strong><span class="source-dot ${hasExperiments ? "local" : "ai"}"></span>${hasExperiments ? "实验状态真实保存" : "实验示例待启动"}</strong>
-      <p>${hasExperiments ? "growthExperiments 已本地持久化；真实复盘需拉取实验前后 API 窗口。" : "默认实验卡只用于展示增长闭环，不代表真实结果。"}</p>
+      <p>${hasExperiments ? "growthExperiments 已本地持久化；真实复盘需拉取实验前后 API 窗口。" : "暂无实验记录；不会生成默认示例实验。"}</p>
     </div>
   `;
 }
@@ -2360,14 +2313,14 @@ function renderSkuWorkbench() {
     <tr>
       <td>
         <strong class="cell-ellipsis" title="${escapeHtml(row.title)}">${escapeHtml(row.title)}</strong>
-        <small>${escapeHtml(row.sku)} · ${escapeHtml(row.dataSource || (row.mockSource ? "示例队列" : "本地追踪"))}</small>
+        <small>${escapeHtml(row.sku)} · ${escapeHtml(row.dataSource || "本地追踪")}</small>
       </td>
       <td><span class="badge ${getRiskBadgeClass(row.issue)}">${row.issueLabel}</span></td>
-      <td>${Number(row.revenue).toLocaleString()} $</td>
-      <td>${Number(row.sessions).toLocaleString()}</td>
-      <td>${row.cartRate}%</td>
-      <td>${row.orderRate}%</td>
-      <td><span style="color:${row.margin >= 20 ? 'var(--success)' : 'var(--warning)'}">${row.margin}%</span></td>
+      <td>${row.revenue === null || row.revenue === undefined ? "--" : `${Number(row.revenue).toLocaleString()} $`}</td>
+      <td>${row.sessions === null || row.sessions === undefined ? "--" : Number(row.sessions).toLocaleString()}</td>
+      <td>${row.cartRate === null || row.cartRate === undefined ? "--" : `${row.cartRate}%`}</td>
+      <td>${row.orderRate === null || row.orderRate === undefined ? "--" : `${row.orderRate}%`}</td>
+      <td><span style="color:${Number(row.margin || 0) >= 20 ? 'var(--success)' : 'var(--warning)'}">${row.margin === null || row.margin === undefined ? "--" : `${row.margin}%`}</span></td>
       <td>${escapeHtml(row.nextAction)}</td>
       <td class="sku-actions">
         <button class="btn btn-outline btn-xs growth-action-btn" data-action="diagnose_sku_funnel" data-sku="${escapeHtml(row.sku)}">诊断</button>
@@ -2430,7 +2383,7 @@ function renderExperimentBoard() {
   };
   if (!columns.todo) return;
   Object.values(columns).forEach((column) => { column.innerHTML = ""; });
-  const experiments = growthRuntimeState.experiments.length ? growthRuntimeState.experiments : getSeedExperiments();
+  const experiments = growthRuntimeState.experiments;
   experiments.forEach((experiment) => {
     const status = columns[experiment.status] ? experiment.status : "todo";
     const node = document.createElement("div");
@@ -2462,31 +2415,6 @@ function renderExperimentBoard() {
   document.querySelectorAll(".experiment-card .growth-action-btn").forEach((btn) => {
     btn.addEventListener("click", () => handleGrowthAction(btn.dataset.action, ""));
   });
-}
-
-function getSeedExperiments() {
-  return [
-    {
-      id: "seed_visual",
-      status: "todo",
-      sku: growthRuntimeState.skuRows[0]?.sku || "示例 SKU",
-      title: "首图英文卖点改版",
-      action: "把白底工厂图改成带规格、场景和信任点的英文首图。",
-      metric: "加购率",
-      window: "7 天",
-      seedOnly: true,
-    },
-    {
-      id: "seed_profit",
-      status: "observing",
-      sku: "店铺级",
-      title: "利润保护价实验",
-      action: "为低毛利 SKU 设置最低促销价，观察订单量与毛利率变化。",
-      metric: "净利率",
-      window: "7 天",
-      seedOnly: true,
-    },
-  ];
 }
 
 async function createGrowthExperiment({ sku, title, action, metric, source }) {
@@ -3030,37 +2958,27 @@ function renderTrackedItemDetails(prod) {
     });
   };
 
-  // Mock API button for simulation
-  document.getElementById("mock-api-data-btn").onclick = () => {
-    alert("✨ 卖家 API 模拟同步成功！曝光、加购数、转化折线图已更新。");
-    drawMockTrackerCharts();
-  };
+  document.getElementById("store-api-query-shortcut-btn")?.addEventListener("click", () => {
+    document.querySelector('.nav-menu button[data-tab="store"]')?.click();
+    setTimeout(() => document.getElementById("store-api-query-btn")?.click(), 0);
+  });
 
   // Run AI analysis
   document.getElementById("run-tracker-ai-btn").onclick = () => {
     const reportText = document.getElementById("tracker-ai-report-text");
-    reportText.innerHTML = `<div style="color:#3b82f6; font-size:12px;">⚡ AI 正在读取历史快照指标并调用 etsy_operations_tracker 技能评估优化成效...</div>`;
-    
-    setTimeout(() => {
-      reportText.innerHTML = `
-        <div class="md-report" style="font-size:12px; line-height:1.5;">
-          <h2>📊 Etsy AI 运营诊断报告 (阶段对比)</h2>
-          <p><strong>诊断状态</strong>：分析对比完成。由于用户执行了 “阶段二：首图替换” 动作，该商品展现指标和转化指标呈现非均衡增长。</p>
-          <ul>
-            <li><strong>曝光量 (Views)</strong>：较基线阶段提升了 <strong>+42.3%</strong>，首图优化在搜索引擎和类目聚合页的点击吸引力非常显著。</li>
-            <li><strong>转化率 (Conv to Cart)</strong>：从 <strong>4.8% 降至 4.1%</strong>，说明流量增大但主图的高端感使得消费者对详情页中原本普通的英文卖点文案产生落差。</li>
-            <li><strong>最终建议</strong>：应立即调度 <code>etsy_listing_generator</code> 技能，针对核心痛点重新重构英文详情描述；同时由于汇率波动，建议价格上浮 50$ 以锁定 25% 纯利率。</li>
-          </ul>
-        </div>
-      `;
-    }, 2000);
+    if (!reportText) return;
+    reportText.innerHTML = `
+      <div class="empty-state tiny">
+        请先绑定 Etsy 个人卖家 API 并积累两个完整观察窗口。本插件不会生成虚拟曝光、转化或利润诊断。
+      </div>
+    `;
   };
 
   // Draw Charts
-  drawMockTrackerCharts();
+  drawTrackerCharts();
 }
 
-function drawMockTrackerCharts() {
+function drawTrackerCharts() {
   const drawLine = (canvasId, data = [], labels = [], color = '#005bff') => {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
@@ -3141,8 +3059,12 @@ function drawMockTrackerCharts() {
     });
   };
 
-  drawLine('tracker-sales-chart', [120, 140, 210, 195], ['基线期', '主图优化后', '大促开始', '降价促量'], '#005bff');
-  drawLine('tracker-conv-chart', [4.8, 5.2, 4.1, 5.9], ['基线期', '主图优化后', '大促开始', '降价促量'], '#ff005b');
+  const rows = Array.isArray(growthRuntimeState.skuRows) ? growthRuntimeState.skuRows.filter((row) => row.source === "seller_api") : [];
+  const salesData = rows.map((row) => Number(row.orderedUnits || 0)).filter((value) => Number.isFinite(value) && value > 0).slice(0, 6);
+  const conversionData = rows.map((row) => Number(row.cartRate || 0)).filter((value) => Number.isFinite(value) && value > 0).slice(0, 6);
+  const labels = rows.map((row) => String(row.sku || row.title || "").slice(0, 8)).slice(0, 6);
+  drawLine('tracker-sales-chart', salesData, labels, '#005bff');
+  drawLine('tracker-conv-chart', conversionData, labels, '#ff005b');
 }
 
 // ── Etsy Store API Tab Logic ──
@@ -3300,7 +3222,7 @@ function renderStoreMetrics(storeData, sourceKind) {
     tableBody.innerHTML = `
       <tr>
         <td colspan="7" class="empty-cell">
-          <div class="empty-state">${sourceKind === "live" ? "Etsy 个人访问 API 暂未返回交易订单。" : "模拟数据暂无订单。"}</div>
+          <div class="empty-state">${sourceKind === "live" ? "Etsy 个人访问 API 暂未返回交易订单。" : "暂无真实订单数据。"}</div>
         </td>
       </tr>
     `;
@@ -3324,26 +3246,33 @@ function renderStoreMetrics(storeData, sourceKind) {
   }
 }
 
-function renderStoreCostBreakdown(costData, sourceKind = "mock") {
-  drawStoreFeesChart([costData.profit, costData.commission, costData.logistics, costData.tail]);
+function renderStoreCostBreakdown(costData = {}, sourceKind = "empty") {
+  const hasCostData = ["profit", "commission", "logistics", "tail"].every((key) => Number.isFinite(Number(costData[key])));
+  drawStoreFeesChart(hasCostData ? [costData.profit, costData.commission, costData.logistics, costData.tail] : []);
 
   const labelContainer = document.querySelector("#store-fees-chart").parentNode.nextElementSibling;
   if (labelContainer) {
     labelContainer.innerHTML = `
-      <div style="font-size:10px; color:var(--text-secondary); margin-bottom:4px;">${sourceKind === "live" ? "费用占比为模型估算，待 Etsy 个人访问 API 财务明细验证" : "模拟费用占比，仅用于界面预览"}</div>
-      <div style="display:flex; justify-content:space-between;"><span>类目佣金扣除:</span><strong style="color:#005bff">${costData.commission}%</strong></div>
-      <div style="display:flex; justify-content:space-between;"><span>干线运费占比:</span><strong style="color:#ff005b">${costData.logistics}%</strong></div>
-      <div style="display:flex; justify-content:space-between;"><span>末端送达扣减:</span><strong style="color:#f59e0b">${costData.tail}%</strong></div>
-      <div style="display:flex; justify-content:space-between;"><span>实际到手货款:</span><strong style="color:#10b981">${costData.profit}%</strong></div>
+      <div style="font-size:10px; color:var(--text-secondary); margin-bottom:4px;">${sourceKind === "live" && hasCostData ? "费用占比为模型估算，待 Etsy 个人访问 API 财务明细验证" : "暂无真实费用结构数据；需同步 API 或人工录入成本后显示"}</div>
+      <div style="display:flex; justify-content:space-between;"><span>类目佣金扣除:</span><strong style="color:#005bff">${hasCostData ? `${costData.commission}%` : "--"}</strong></div>
+      <div style="display:flex; justify-content:space-between;"><span>干线运费占比:</span><strong style="color:#ff005b">${hasCostData ? `${costData.logistics}%` : "--"}</strong></div>
+      <div style="display:flex; justify-content:space-between;"><span>末端送达扣减:</span><strong style="color:#f59e0b">${hasCostData ? `${costData.tail}%` : "--"}</strong></div>
+      <div style="display:flex; justify-content:space-between;"><span>实际到手货款:</span><strong style="color:#10b981">${hasCostData ? `${costData.profit}%` : "--"}</strong></div>
     `;
   }
 }
 
-function renderMockStoreData(activeShop, reason = "") {
-  const mockData = getShopMockData(activeShop);
-  renderStoreMetrics(mockData, "mock");
-  renderStoreCostBreakdown(mockData, "mock");
-  setStoreApiStatus("mock", `模拟数据展示${reason ? `：${reason}` : "，未作为 Etsy 个人访问 API 真实证据"}`);
+function renderEmptyStoreData(reason = "") {
+  renderStoreMetrics({
+    analyticsSupported: false,
+    sessions: null,
+    views: null,
+    cartRate: null,
+    orderRate: null,
+    orders: [],
+  }, "empty");
+  renderStoreCostBreakdown({}, "empty");
+  setStoreApiStatus("partial", reason ? `暂无真实 Etsy API 数据：${reason}` : "暂无真实 Etsy API 数据");
 }
 
 async function renderStoreTab() {
@@ -3367,7 +3296,8 @@ async function renderStoreTab() {
       document.getElementById("api-views").innerText = "--";
       document.getElementById("api-cart-rate").innerText = "--";
       document.getElementById("api-order-rate").innerText = "--";
-      setStoreApiStatus("mock", "未绑定活动店铺，无法调用 Etsy 个人访问 API");
+      renderStoreCostBreakdown({}, "empty");
+      setStoreApiStatus("partial", "未绑定活动店铺，无法调用 Etsy 个人访问 API");
       return;
     }
 
@@ -3409,7 +3339,7 @@ async function renderStoreTab() {
       }
       const snapshot = response?.data?.result;
       if (!snapshot) {
-        renderMockStoreData(activeShop, response?.error || response?.data?.error || "未收到 API 快照");
+        renderEmptyStoreData(response?.error || response?.data?.error || "未收到 API 快照");
         return;
       }
 
@@ -3417,12 +3347,12 @@ async function renderStoreTab() {
       const hasLivePayload = (snapshot.analytics?.data || []).length > 0 || (snapshot.orders || []).length > 0 || (snapshot.products?.items || []).length > 0;
       if (!hasLivePayload) {
         const reason = (storeMetrics.failures || []).map(formatStoreApiFailure).join("；") || "API 返回空数据";
-        renderMockStoreData(activeShop, reason);
+        renderEmptyStoreData(reason);
         return;
       }
 
       renderStoreMetrics(storeMetrics, snapshot.ok ? "live" : "partial");
-      renderStoreCostBreakdown(getShopMockData(activeShop), "live");
+      renderStoreCostBreakdown({}, "empty");
       if (snapshot.ok) {
         const skuCount = skuAnalyticsResponse?.data?.result?.data?.length || 0;
         setStoreApiStatus("live", `Etsy 个人访问 API 实时自营数据：${snapshot.dateFrom} 至 ${snapshot.dateTo}${snapshot.analytics?.supported === false ? "；个人 API 不提供流量/加购 analytics，相关指标显示为 --" : skuCount ? `；SKU 作战台已同步 ${skuCount} 行真实 analytics` : ""}`);
@@ -3431,7 +3361,7 @@ async function renderStoreTab() {
         setStoreApiStatus("partial", `Etsy 个人访问 API 部分成功：${reason || "部分接口无数据"}`);
       }
     } catch (err) {
-      renderMockStoreData(activeShop, err.message);
+      renderEmptyStoreData(err.message);
     } finally {
       storeApiRequestInFlight = false;
       if (queryBtn) queryBtn.disabled = false;
@@ -3440,7 +3370,7 @@ async function renderStoreTab() {
   });
 }
 
-function drawStoreFeesChart(costs = [64, 12, 18, 6]) {
+function drawStoreFeesChart(costs = []) {
   const canvas = document.getElementById("store-fees-chart");
   if (!canvas) return;
   
@@ -3457,6 +3387,13 @@ function drawStoreFeesChart(costs = [64, 12, 18, 6]) {
   const height = 200;
   
   ctx.clearRect(0, 0, width, height);
+  if (!Array.isArray(costs) || costs.length === 0 || costs.some((value) => !Number.isFinite(Number(value)))) {
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#9ca3af';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('暂无真实费用结构数据', width / 2, height / 2);
+    return;
+  }
   
   const labels = ['净货款', '佣金', '干线物流', '末端扣除'];
   const colors = ['#10b981', '#005bff', '#ff005b', '#f59e0b'];
@@ -3639,42 +3576,4 @@ function downloadReportPdf(rep) {
   chrome.storage.local.set({ printHtml }, () => {
     window.open(chrome.runtime.getURL("print.html"), "_blank");
   });
-}
-
-// ── Dynamic Mock Sourcing and Analytics Data Generator ──
-function getShopMockData(shop) {
-  let hash = 0;
-  const str = `${shop.id || ""}${shop.shopId || ""}${shop.clientId || ""}`;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const seed = Math.abs(hash);
-
-  const sessions = 2000 + (seed % 15000);
-  const views = sessions * (3 + (seed % 4));
-  const cartRate = (2.5 + (seed % 50) / 10).toFixed(1);
-  const orderRate = (0.8 + (seed % 20) / 10).toFixed(1);
-
-  const commission = 8 + (seed % 8); 
-  const logistics = 12 + (seed % 10); 
-  const tail = 4 + (seed % 4); 
-  const profit = 100 - commission - logistics - tail;
-
-  const categories = ["定制项链", "宠物纪念牌", "婚礼座位牌", "手工串珠套装", "墙面装饰画", "婴儿姓名毯", "蜡烛模具", "节日礼品盒"];
-  const orderCount = 2 + (seed % 4);
-  const orders = [];
-  for (let i = 0; i < orderCount; i++) {
-    const orderId = `#3984${(seed + i * 29) % 100000}`;
-    const sku = `${(seed + i * 97) % 90000 + 10000}-SKU`;
-    const cat = categories[(seed + i) % categories.length];
-    const qty = 1 + ((seed + i) % 3);
-    const price = (qty * (300 + (seed % 1200)));
-    const logisticsType = (seed + i) % 2 === 0 ? "Etsy 自发货" : "第三方海外仓";
-    const status = (seed + i) % 3 === 0 ? "待包装" : ((seed + i) % 3 === 1 ? "待交接集运" : "欧美本土仓出库中");
-    const countdown = status === "待包装" ? "⌛ 18 小时" : (status === "待交接集运" ? "⌛ 24 小时" : "--");
-
-    orders.push({ orderId, sku, cat, qty, price, logisticsType, status, countdown });
-  }
-
-  return { sessions, views, cartRate, orderRate, commission, logistics, tail, profit, orders };
 }
