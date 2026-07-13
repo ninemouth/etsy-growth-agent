@@ -2019,11 +2019,11 @@ export function autoRepairFinalReportForDelivery(parsed, {
     }
 
     const itemUsesTrends = reportUsesTrends || /Google Trends|谷歌趋势|趋势图|搜索趋势|搜索热度|季节性|需求曲线|Interest over time|related queries|related topics|峰值|peak/i.test(JSON.stringify(item));
-    if (isPlatformTrendSkill(skillId) && itemUsesTrends && trendsScreenshotEvidence && !hasLedgerType(ledger, "google_trends")) {
+    if (isEtsyBusinessSkill(skillId) && itemUsesTrends && trendsScreenshotEvidence && !hasLedgerType(ledger, "google_trends")) {
       ledger.push(buildGoogleTrendsToolLedgerEntry(trendsScreenshotEvidence));
       itemChanged = true;
     }
-    if (isPlatformTrendSkill(skillId) && itemUsesTrends && trendsScreenshotEvidence && !hasTrendVisualForTrends(ledger)) {
+    if (isEtsyBusinessSkill(skillId) && itemUsesTrends && trendsScreenshotEvidence && !hasTrendVisualForTrends(ledger)) {
       ledger.push(buildGoogleTrendsScreenshotLedgerEntry(trendsScreenshotEvidence));
       itemChanged = true;
     }

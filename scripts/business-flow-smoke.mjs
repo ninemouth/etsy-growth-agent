@@ -147,6 +147,10 @@ assert.ok(
   "session controls should be visible near the top of the main view instead of hidden below the instruction area"
 );
 assert.match(sidepanelSource, /pickLatestResumableSessionForContinue[\s\S]*legacyContinueInstruction[\s\S]*pickLatestResumableSessionForContinue/, "plain continue messages should auto-select the latest resumable checkpoint instead of creating a fresh session id");
+assert.match(contentSource, /chat-new-session-btn[\s\S]*\+ 新会话[\s\S]*chat-session-history-btn[\s\S]*历史会话/, "floating content overlay should expose direct new-session and session-history controls");
+assert.match(contentSource, /pickLatestOverlayResumableSessionForContinue[\s\S]*legacyContinueInstruction[\s\S]*pickLatestOverlayResumableSessionForContinue/, "floating overlay plain continue messages should auto-select the latest resumable checkpoint");
+assert.match(contentSource, /workflowSessionId[\s\S]*continueSession[\s\S]*forceNewSession/, "floating overlay should pass explicit session intent into RUN_SKILL");
+assert.match(contentSource, /startOverlayNewSessionMode[\s\S]*不会沿用旧断点/, "floating overlay should make fresh-session mode visible instead of hidden behind implicit behavior");
 assert.doesNotMatch(contentSource, /Привет|Здравствуйте|Спасибо|Пожалуйста/, "content overlay should not contain Russian copy in the Etsy plugin UI");
 assert.match(backgroundSource, /resumeState:\s*shouldResumeFromCheckpoint\s*\?/, "background should pass resumable workflow state into the agent loop");
 assert.match(backgroundSource, /onCheckpoint:\s*async/, "background should persist checkpoint updates emitted by the agent loop");
@@ -687,6 +691,8 @@ const googleTrendsHistory = {
   result: {
     ok: true,
     evidenceOk: true,
+    screenshotRef: "__GOOGLE_TRENDS_SCREENSHOT_mock__",
+    screenshotCaptured: true,
     pageData: {
       url: "https://trends.google.com/trends/explore?date=today%2012-m&geo=US&q=wedding%20clutch",
       title: "Google Trends",
@@ -1170,6 +1176,34 @@ assert.deepEqual(
   validateReport(repairedMissingPageDomLedgerReport.parsed, "", "skills/etsy_global_shop_optimizer.skill.md", toolDomHistory, visualOnlyPageContext),
   [],
   "auto-attached page_dom evidence should prevent non-quality critic redo"
+);
+const missingShopTrendLedgerReport = globalThis.structuredClone(shopOptimizerReportWithEtsyEvidence);
+missingShopTrendLedgerReport.output.data.forEach((item) => {
+  item.evidence_ledger = item.evidence_ledger.filter((entry) => !["google_trends", "screenshot_visual"].includes(entry.source_type) || !/Google Trends|趋势/i.test(`${entry.source_ref || ""} ${entry.observed_value || ""}`));
+});
+assert.notDeepEqual(
+  validateReport(missingShopTrendLedgerReport, "", "skills/etsy_global_shop_optimizer.skill.md", validShopEvidenceHistory, meaningfulPageContext),
+  [],
+  "shop optimizer reports that use Trends conclusions should fail before google_trends ledger auto-repair"
+);
+const repairedMissingShopTrendLedgerReport = autoRepairFinalReportForDelivery(missingShopTrendLedgerReport, {
+  skillId: "skills/etsy_global_shop_optimizer.skill.md",
+  toolHistory: validShopEvidenceHistory,
+  pageContext: meaningfulPageContext,
+});
+assert.equal(repairedMissingShopTrendLedgerReport.changed, true, "shop optimizer reports should auto-attach Google Trends ledger when verified Trends evidence exists");
+assert.ok(
+  repairedMissingShopTrendLedgerReport.parsed.output.data[0].evidence_ledger.some((entry) => entry.source_type === "google_trends"),
+  "auto-repair should add google_trends evidence to shop optimizer reports"
+);
+assert.ok(
+  repairedMissingShopTrendLedgerReport.parsed.output.data[0].evidence_ledger.some((entry) => entry.source_type === "screenshot_visual" && /Google Trends|趋势/i.test(`${entry.source_ref || ""} ${entry.observed_value || ""}`)),
+  "auto-repair should add Google Trends visual interpretation ledger to shop optimizer reports"
+);
+assert.deepEqual(
+  validateReport(repairedMissingShopTrendLedgerReport.parsed, "", "skills/etsy_global_shop_optimizer.skill.md", validShopEvidenceHistory, meaningfulPageContext),
+  [],
+  "auto-repaired Google Trends ledger should prevent non-quality shop optimizer critic redo"
 );
 assert.notDeepEqual(
   validateReport(shopOptimizerReportWithApiClaims, "", "skills/etsy_global_shop_optimizer.skill.md", validShopEvidenceHistory, meaningfulPageContext),
