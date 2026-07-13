@@ -3957,7 +3957,9 @@
             } else if (data.type === "checkpoint_restored") {
               log(`↩ ${data.message || "已恢复上次中断的 workflow"}`);
             } else if (data.type === "tool_call") {
-              log(`⚙️ 调用动作: ${data.actionLabel || data.toolName}`);
+              log(`⚙️ ${data.message || `准备调用动作: ${data.actionLabel || data.toolName}`}`);
+            } else if (data.type === "tool_stage") {
+              log(`↪ ${data.message || `${data.actionLabel || data.toolName || "工具"} 正在执行`}`);
             } else if (data.type === "tool_heartbeat") {
               log(`⏱ ${data.message || `${data.toolName || "工具"} 仍在执行`}`);
             } else if (data.type === "llm_heartbeat" || data.type === "llm_started") {

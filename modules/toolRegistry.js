@@ -1981,8 +1981,18 @@ Context:
   },
 
   search_in_browser: async (args) => {
-    const { query, engine = "google", keepTab = false, searchType = "listing", workflowId = "default" } = args;
+    const { query, engine = "google", keepTab = false, searchType = "listing", workflowId = "default", __progress } = args;
     if (!query) throw new Error("query is required");
+    const emitSearchProgress = (stage, message, extra = {}) => {
+      if (typeof __progress !== "function") return;
+      try {
+        __progress({
+          stage,
+          message,
+          ...extra,
+        });
+      } catch (_) {}
+    };
     
     let targetQuery = query;
 
@@ -2049,6 +2059,11 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
 
     const normalizedEngine = normalizeSearchEngine(engine);
     const searchAttempts = buildBrowserSearchAttempts(normalizedEngine, targetQuery, searchType);
+    const searchActionLabel = normalizedEngine === "google_trends"
+      ? "Google Trends 趋势图取证"
+      : normalizedEngine === "etsy"
+      ? "Etsy 搜索结果页取证"
+      : "Google Search 结果页取证";
     const shouldAutoCloseSearchTab = !keepTab && ["google", "google_us", "google_ru", "google_trends", "bing", "etsy"].includes(normalizedEngine);
     const maxPollAttempts = normalizedEngine === "google_trends" ? 44 : normalizedEngine === "etsy" ? 30 : 20;
     const minStablePollAttempts = normalizedEngine === "google_trends" ? 8 : 1;
@@ -2057,6 +2072,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
       if (!["google", "google_us", "google_trends", "etsy"].includes(normalizedEngine)) return payload;
       if (payload.screenshotRef || payload.screenshotCaptured) return payload;
       try {
+        emitSearchProgress("search_screenshot_started", `${searchActionLabel} 正在保存搜索页截图证据。`, { tabId, searchUrl: payload.searchUrl });
         const screenshot = await _captureTabScreenshot(tabId);
         const artifact = await putDataUrlArtifact(screenshot.dataUrl, {
           namespace: "search-evidence-screenshot",
@@ -2080,6 +2096,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
           artifactStore: "indexeddb_blob_with_memory_fallback",
         };
       } catch (err) {
+        emitSearchProgress("search_screenshot_failed", `${searchActionLabel} 截图保存失败：${err.message}`, { tabId, searchUrl: payload.searchUrl });
         return {
           ...payload,
           screenshotCaptured: false,
@@ -2089,7 +2106,9 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
     };
 
       const runAttempt = (attempt, attemptIndex) => new Promise((resolve) => {
+        emitSearchProgress("search_tab_opening", `${searchActionLabel} 正在打开临时标签页（第 ${attemptIndex + 1}/${searchAttempts.length} 次尝试）。`, { searchUrl: attempt.url });
         createOwnedTabCallback({ workflowId, url: safeEncodeURI(attempt.url), active: true }, (newTab) => {
+        emitSearchProgress("search_tab_opened", `${searchActionLabel} 已打开临时标签页 tabId=${newTab.id}，开始等待页面可读。`, { tabId: newTab.id, searchUrl: attempt.url });
         let settled = false;
         let readInFlight = false;
         const finish = async (payload) => {
@@ -2099,6 +2118,13 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
           if (shouldAutoCloseSearchTab) {
             const closed = await closeTabQuietly(newTab.id);
             await closeOwnedTab(workflowId, newTab.id);
+            emitSearchProgress(
+              closed ? "search_tab_closed" : "search_tab_close_failed",
+              closed
+                ? `${searchActionLabel} 已保存证据并关闭临时标签页 tabId=${newTab.id}。`
+                : `${searchActionLabel} 已保存证据，但临时标签页 tabId=${newTab.id} 未能自动关闭。`,
+              { tabId: newTab.id, searchUrl: payload.searchUrl }
+            );
             resolve({
               ...payloadWithScreenshot,
               tabClosed: closed,
@@ -2132,6 +2158,10 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
           readInFlight = true;
           pollCount++;
           try {
+            if (pollCount === 1 || pollCount % 8 === 0) {
+              const trendHint = normalizedEngine === "google_trends" ? "，正在等待 Interest over time 与 Related queries/topics 模块" : "";
+              emitSearchProgress("search_page_reading", `${searchActionLabel} 正在读取页面 DOM${trendHint}（轮询 ${pollCount}/${maxPollAttempts}）。`, { tabId: newTab.id, searchUrl: attempt.url });
+            }
             const data = await readCompletePageData(newTab.id, { type: "READ_CURRENT_PAGE" });
             const pageData = data?.data || {};
             const payload = withSearchEvidenceStatus({
@@ -2151,6 +2181,13 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
             const stableWindowSatisfied = normalizedEngine !== "google_trends" || pollCount >= minStablePollAttempts;
             if ((evidenceSatisfied && stableWindowSatisfied) || pollCount >= maxPollAttempts) {
               clearInterval(checkLoad);
+              emitSearchProgress(
+                evidenceSatisfied ? "search_evidence_ready" : "search_evidence_timeout",
+                evidenceSatisfied
+                  ? `${searchActionLabel} 已取得可用页面证据，准备保存截图并收尾。`
+                  : `${searchActionLabel} 已达到轮询上限，当前页面证据仍不足，将按工具结果返回质量状态。`,
+                { tabId: newTab.id, searchUrl: attempt.url }
+              );
               await finish(payload);
             }
           } catch (err) {

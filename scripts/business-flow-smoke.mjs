@@ -53,6 +53,7 @@ const runtimeBundleSource = [html, js, sidepanelHtmlSource, sidepanelSource, css
 });
 
 assert.match(agentLoopSource, /type:\s*"tool_heartbeat"/, "long-running tool calls should emit heartbeat progress");
+assert.match(agentLoopSource, /type:\s*"tool_stage"/, "browser tools should emit concrete stage progress after the tool has actually started");
 assert.match(agentLoopSource, /type:\s*"llm_heartbeat"/, "long-running LLM planning calls should emit heartbeat progress between tool calls");
 assert.match(agentLoopSource, /LLM_RECOVERY_RETRIES/, "transient LLM network failures should have a bounded recovery retry");
 assert.match(agentLoopSource, /type:\s*"llm_error"[\s\S]*type:\s*"interrupted"/, "final LLM network failures should preserve the checkpoint instead of becoming a fake report");
@@ -98,6 +99,8 @@ assert.match(toolRegistrySource, /image_search_1688[\s\S]*createOwnedTabCallback
 assert.match(toolRegistrySource, /etsy_crawl_page_started[\s\S]*etsy_crawl_page_completed[\s\S]*etsy_crawl_completed/, "Etsy crawl should expose durable stage events rather than one opaque tool call");
 assert.match(toolRegistrySource, /etsy_screenshot_observation_started[\s\S]*etsy_screenshot_observation_completed/, "screenshot analysis should expose durable per-page stage events");
 assert.match(sidepanelSource, /msg\.type === "llm_started"/, "sidepanel should show LLM request payload telemetry");
+assert.match(sidepanelSource, /msg\.type === "tool_stage"/, "sidepanel should show concrete browser tool stages");
+assert.match(contentSource, /data\.type === "tool_stage"/, "floating overlay should show concrete browser tool stages");
 assert.match(sidepanelSource, /msg\.type === "llm_heartbeat"[\s\S]*AI 正在基于已采集证据规划下一步/, "sidepanel should show LLM heartbeat progress instead of appearing stuck between tool calls");
 assert.match(sidepanelSource, /msg\.type === "llm_retry"[\s\S]*msg\.type === "llm_error"/, "sidepanel should show bounded LLM network recovery state");
 assert.match(agentLoopSource, /etsyAgentCheckpoint:/, "agent loop should persist resumable workflow checkpoints");
@@ -165,6 +168,7 @@ assert.match(toolRegistrySource, /hasUsablePageEvidence[\s\S]*evidenceOk[\s\S]*o
 assert.match(toolRegistrySource, /Tab closed or not found[\s\S]*ok: false/, "open_new_tab must mark missing tabs as failed evidence");
 assert.match(toolRegistrySource, /timedOut[\s\S]*readError/, "open_new_tab should report timeout/read-error state for workflow guards");
 assert.match(toolRegistrySource, /shouldAutoCloseSearchTab[\s\S]*google_trends/, "Google and Trends search tabs should be auto-closed after evidence capture");
+assert.match(toolRegistrySource, /search_tab_opening[\s\S]*search_tab_opened[\s\S]*search_page_reading[\s\S]*search_evidence_ready/, "browser search should report real tab-open/read/evidence stages instead of only a pre-call log");
 assert.match(toolRegistrySource, /hasValidEtsySearchEvidence/, "Etsy search evidence should have a runtime validity gate");
 assert.match(toolRegistrySource, /buildBrowserSearchAttempts[\s\S]*etsy_market_fallback[\s\S]*google_trends_us_no_date_fallback/, "Etsy and Google Trends browser searches should retry alternate evidence URLs");
 assert.match(toolRegistrySource, /hasValidGoogleTrendsEvidence/, "Google Trends search evidence should have a runtime validity gate");

@@ -32,6 +32,7 @@ function toolRunKey(toolName, toolArgs = {}) {
   const workflowId = String(toolArgs.workflowId || "default");
   const dedupeArgs = { ...toolArgs };
   delete dedupeArgs.workflowGeneration;
+  delete dedupeArgs.__progress;
   return `${workflowId}:${toolName}:${JSON.stringify(stableToolValue(dedupeArgs))}`;
 }
 
@@ -1199,6 +1200,12 @@ function describeToolAction(toolName = "", toolArgs = {}, toolResult = null) {
   if (toolName === "analyze_etsy_shop_crawl_screenshots") return { actionKind: "screenshot_interpretation", actionLabel: "店铺截图独立解读", lifecycle: "不打开新标签页，只分析已缓存截图 artifact" };
   if (toolName === "close_tab") return { actionKind: "tab_close", actionLabel: "关闭已完成取证的标签页", lifecycle: "关闭由 workflow 创建或指定的标签页" };
   return { actionKind: toolName || "tool", actionLabel: toolName || "工具执行", lifecycle: "" };
+}
+
+function stripRuntimeToolArgs(toolArgs = {}) {
+  const clean = { ...toolArgs };
+  delete clean.__progress;
+  return clean;
 }
 
 async function runToolWithTimeout(toolName, toolArgs) {
@@ -3586,6 +3593,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         actionKind: plannedToolAction.actionKind,
         actionLabel: plannedToolAction.actionLabel,
         tabLifecycle: plannedToolAction.lifecycle,
+        message: `准备调用动作: ${plannedToolAction.actionLabel}`,
       });
       await saveCheckpoint({
         status: "tool_pending",
@@ -3630,6 +3638,25 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       const toolAction = describeToolAction(toolName, toolArgs);
       const tabsBeforeTool = await snapshotTabIds();
       try {
+        const executableToolArgs = {
+          ...toolArgs,
+          __progress: (stage = {}) => {
+            const stageMessage = stage.message || `${toolAction.actionLabel} 正在执行`;
+            sendProgress({
+              type: "tool_stage",
+              step,
+              toolName,
+              actionKind: stage.actionKind || toolAction.actionKind,
+              actionLabel: stage.actionLabel || toolAction.actionLabel,
+              tabLifecycle: stage.tabLifecycle || toolAction.lifecycle,
+              stage: stage.stage || "tool_stage",
+              tabId: stage.tabId,
+              searchUrl: stage.searchUrl,
+              elapsedSeconds: Math.max(0, Math.round((Date.now() - toolStartedAt) / 1000)),
+              message: stageMessage,
+            });
+          },
+        };
         toolHeartbeatTimer = setInterval(() => {
           const elapsedSeconds = Math.max(1, Math.round((Date.now() - toolStartedAt) / 1000));
           sendProgress({
@@ -3644,7 +3671,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
             message: `${toolAction.actionLabel} 已运行 ${elapsedSeconds} 秒，最长等待 ${Math.round(toolTimeoutMs / 1000)} 秒；${toolAction.lifecycle || "若超时会返回阶段错误并保留 workflow 上下文。"}。`,
           });
         }, 30000);
-        toolResult = await runToolWithTimeout(toolName, toolArgs);
+        toolResult = await runToolWithTimeout(toolName, executableToolArgs);
         if (workflowId && !(await isWorkflowGenerationCurrent(workflowId, workflowGeneration))) {
           toolResult = {
             ok: false,
@@ -3706,7 +3733,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         toolResult.actionLabel = toolResult.actionLabel || completedToolAction.actionLabel;
         toolResult.tabLifecycle = toolResult.tabLifecycle || completedToolAction.lifecycle;
       }
-      toolHistory.push({ tool: toolName, arguments: toolArgs, result: toolResult });
+      toolHistory.push({ tool: toolName, arguments: stripRuntimeToolArgs(toolArgs), result: toolResult });
 
       sendProgress({
         type: "tool_result",
