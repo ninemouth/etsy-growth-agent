@@ -98,6 +98,10 @@ function delay(ms = 0) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function sameTabId(a, b) {
+  return Number.isInteger(Number(a)) && Number.isInteger(Number(b)) && Number(a) === Number(b);
+}
+
 function checkTabUrl(url) {
   if (!url) return;
   const lowerUrl = url.toLowerCase();
@@ -1168,6 +1172,17 @@ export const tools = {
       }
     }
 
+    if (sameTabId(targetTabId, __sourceTabId)) {
+      const sourceTab = await chrome.tabs.get(targetTabId);
+      sourceUrl = sourceUrl || sourceTab?.url || "";
+      if (!/etsy\.com\/shop\//i.test(String(sourceUrl || ""))) {
+        throw new Error("collect_etsy_shop_pages requires an Etsy shop URL or an active Etsy shop tab.");
+      }
+      const created = await createOwnedTab({ workflowId, url: safeEncodeURI(sourceUrl), active: true, openerTabId: __sourceTabId });
+      targetTabId = created.id;
+      openedByTool = true;
+    }
+
     if (!/etsy\.com\/shop\//i.test(String(sourceUrl || ""))) {
       const tab = await chrome.tabs.get(targetTabId);
       sourceUrl = tab?.url || sourceUrl;
@@ -1472,6 +1487,7 @@ export const tools = {
       keepTab = false,
       delayMs = 900,
       workflowId = "default",
+      __sourceTabId = null,
     } = args;
     const pageLimit = Math.max(1, Math.min(Number(maxPages) || 3, 8));
     let targetTabId = tabId ? parseInt(tabId) : null;
@@ -1479,15 +1495,25 @@ export const tools = {
     let sourceUrl = url;
     if (!targetTabId) {
       if (url) {
-        const created = await createOwnedTab({ workflowId, url: safeEncodeURI(url), active: true });
+        const created = await createOwnedTab({ workflowId, url: safeEncodeURI(url), active: true, openerTabId: __sourceTabId });
         targetTabId = created.id;
         openedByTool = true;
       } else {
-        const current = await getCurrentTab();
+        const current = await getSourceOrCurrentTab(__sourceTabId);
         if (!current) throw new Error("No active tab found");
         targetTabId = current.id;
         sourceUrl = current.url || "";
       }
+    }
+    if (sameTabId(targetTabId, __sourceTabId)) {
+      const sourceTab = await chrome.tabs.get(targetTabId);
+      sourceUrl = sourceUrl || sourceTab?.url || "";
+      if (!/etsy\.com\/listing\//i.test(String(sourceUrl || ""))) {
+        throw new Error("collect_etsy_listing_reviews requires an Etsy listing URL or active listing tab.");
+      }
+      const created = await createOwnedTab({ workflowId, url: safeEncodeURI(sourceUrl), active: true, openerTabId: __sourceTabId });
+      targetTabId = created.id;
+      openedByTool = true;
     }
     if (!/etsy\.com\/listing\//i.test(String(sourceUrl || ""))) {
       const tab = await chrome.tabs.get(targetTabId);
@@ -1590,7 +1616,9 @@ export const tools = {
     } finally {
       if (openedByTool && !keepTab && targetTabId) {
         await closeOwnedTab(workflowId, targetTabId).catch(() => {});
+        await closeTabQuietly(targetTabId, __sourceTabId).catch(() => {});
       }
+      await restoreSourceTabFocus(__sourceTabId);
     }
   },
 
@@ -1810,20 +1838,40 @@ Context:
   },
 
   navigate_to: async (args) => {
-    const { url, __sourceTabId = null } = args;
+    const { url, workflowId = "default", readDelayMs = 1200, __sourceTabId = null } = args;
     if (!url) throw new Error("url is required");
-    const tab = await getSourceOrCurrentTab(__sourceTabId);
-    if (!tab) throw new Error("No active tab found");
-    
-    return new Promise((resolve) => {
-      chrome.tabs.onUpdated.addListener(function listener(tabId, info) {
-        if (tabId === tab.id && info.status === "complete") {
-          chrome.tabs.onUpdated.removeListener(listener);
-          setTimeout(() => resolve({ ok: true, message: `Navigated to and loaded: ${url}` }), 2000);
-        }
-      });
-      chrome.tabs.update(tab.id, { url: safeEncodeURI(url) });
-    });
+
+    const created = await createOwnedTab({ workflowId, url: safeEncodeURI(url), active: true, openerTabId: __sourceTabId });
+    try {
+      const loadedTab = await waitForTabLoad(created.id);
+      await delay(Math.max(250, Math.min(Number(readDelayMs) || 1200, 4000)));
+      const pageData = await readPageDataFromTab(created.id);
+      const evidenceOk = hasUsablePageEvidence(pageData);
+      return {
+        ok: evidenceOk,
+        tabId: created.id,
+        url,
+        finalUrl: pageData?.url || loadedTab?.url || url,
+        pageData: pageData || {},
+        evidenceOk,
+        openedByTool: true,
+        message: `Opened temporary tab and loaded: ${url}`,
+        readError: evidenceOk ? "" : "Page loaded but no usable DOM evidence was captured",
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        tabId: created.id,
+        url,
+        finalUrl: url,
+        pageData: {},
+        evidenceOk: false,
+        openedByTool: true,
+        readError: err.message,
+      };
+    } finally {
+      await restoreSourceTabFocus(__sourceTabId);
+    }
   },
 
   query_market_data: async (args) => {
