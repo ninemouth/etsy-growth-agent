@@ -151,6 +151,9 @@ assert.match(contentSource, /chat-new-session-btn[\s\S]*\+ 新会话[\s\S]*chat-
 assert.match(contentSource, /pickLatestOverlayResumableSessionForContinue[\s\S]*legacyContinueInstruction[\s\S]*pickLatestOverlayResumableSessionForContinue/, "floating overlay plain continue messages should auto-select the latest resumable checkpoint");
 assert.match(contentSource, /workflowSessionId[\s\S]*continueSession[\s\S]*forceNewSession/, "floating overlay should pass explicit session intent into RUN_SKILL");
 assert.match(contentSource, /startOverlayNewSessionMode[\s\S]*不会沿用旧断点/, "floating overlay should make fresh-session mode visible instead of hidden behind implicit behavior");
+assert.match(contentSource, /resumableEntries\.length > 0[\s\S]*已暂停自动运行[\s\S]*return;[\s\S]*runOverlayGrowthActionNow/, "floating overlay action clicks should pause for session choice when resumable checkpoints exist");
+assert.match(contentSource, /chat-session-resume-btn[\s\S]*overlayPendingGrowthAction[\s\S]*resume:\s*true/, "choosing a history item from the floating overlay should resume the pending action instead of requiring a race before auto-start");
+assert.match(contentSource, /chat-new-session-btn[\s\S]*overlayPendingGrowthAction[\s\S]*resume:\s*false/, "clicking + new session from a pending floating action should start a fresh run explicitly");
 assert.doesNotMatch(contentSource, /Привет|Здравствуйте|Спасибо|Пожалуйста/, "content overlay should not contain Russian copy in the Etsy plugin UI");
 assert.match(backgroundSource, /resumeState:\s*shouldResumeFromCheckpoint\s*\?/, "background should pass resumable workflow state into the agent loop");
 assert.match(backgroundSource, /onCheckpoint:\s*async/, "background should persist checkpoint updates emitted by the agent loop");
