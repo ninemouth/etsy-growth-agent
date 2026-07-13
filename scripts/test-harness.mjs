@@ -58,7 +58,7 @@ global.fetch = async (url, options) => {
   return originalFetch(url, options);
 };
 
-// ── Import Agent Loop & Start Mock Run ──
+// ── Import Agent Loop & Start Offline Dry Run ──
 async function main() {
   console.log("⚡ Starting Etsy AI Agent Offline Dry-Run Harness...");
   
@@ -66,12 +66,12 @@ async function main() {
 
   const mockPageContext = {
     url: "https://www.etsy.com/listing/123456789/personalized-gift/",
-    title: "Электрическая зубная щетка Oral-B - купить по выгодной цене",
-    h1: "Электрическая зубная щетка Oral-B Pro 500",
+    title: "Personalized Wedding Clutch - Handmade Gift",
+    h1: "Personalized Satin Wedding Clutch",
     price: "2 990 $",
     rating: "4.8",
-    reviewCount: "420 отзывов",
-    description: "Ультразвуковая зубная щетка с 5 режимами чистки, зарядной базой и чехлом.",
+    reviewCount: "420 reviews",
+    description: "Handmade satin clutch for brides, bridesmaids, wedding guests, and personalized gift occasions.",
     images: [
       { src: "https://i.etsystatic.com/123456/r/il/mock.jpg", roleHint: "product_media", searchScore: 800 }
     ],

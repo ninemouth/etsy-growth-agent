@@ -9,21 +9,21 @@ console.log("🔍 Running Etsy AI Assistant QA Validation Suite...");
 const mockValidReport = {
   type: "final",
   output: {
-    overview: "本报告评估了 Etsy 平台上的电动牙刷，目标销售市场为Etsy 主要欧美礼品市场。",
-    analysis: "消费者反馈良好，前台售价为 1290 $ 美元。但在拿样时需注意欧美 Etsy 目标市场法规所要求的 CE/CPC/FDA/IP 认证强制限制。物流成本按 Etsy 自发货 集运重量 0.4kg 计费。",
-    summary: "本款电动牙刷利润空间较大，建议启动 1688 图片开发并向供应商索要 CE/CPC/FDA 等合规文件。",
+    overview: "本报告评估了 Etsy 平台上的个性化婚礼手拿包，目标销售市场为 Etsy 主要欧美礼品与婚礼配饰市场。",
+    analysis: "消费者反馈良好，前台售价为 49 $ 美元。拿样时需注意材质、色差、包装、个性化拼写确认和 IP/商标表达风险。物流成本按 Etsy 自发货小包重量 0.4kg 计费。",
+    summary: "本款婚礼手拿包具备小批量测试价值，建议启动图片匹配寻源并向供应商确认材质、尺寸、包装和定制工艺。",
     data: [
       {
-        title: "Электрическая зубная щетка ультразвуковая",
+        title: "Personalized Satin Wedding Clutch",
         product_link: "https://detail.1688.com/offer/65489012.html",
         target_profile: {
-          visual_descriptors: "蓝色磨砂手柄，附带4个欧标配头",
-          refined_query: "超声波智能电动牙刷",
+          visual_descriptors: "缎面云朵包造型，金属链条，可刺绣名字",
+          refined_query: "个性化婚礼手拿包 缎面 晚宴包",
           routing_decision: "非标品(图片检索)"
         },
         spec_audit: {
-          target_spec: "智能充电底座，5挡震动",
-          sourced_spec: "USB直充底座，5挡震动",
+          target_spec: "缎面材质，金属链条，可定制名字，婚礼包装",
+          sourced_spec: "缎面材质，金属链条，支持刺绣定制，普通包装",
           status: "完全一致"
         },
         financial_ledger: {

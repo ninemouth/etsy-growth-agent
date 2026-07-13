@@ -8,6 +8,11 @@ let currentExcelData = null;
 let pastedTargetImageDataUrl = "";
 let activeGrowthAction = null;
 let availableSkills = [];
+let sessionMode = "new";
+let selectedResumeSessionKey = "";
+let selectedResumeSessionMeta = null;
+
+const WORKFLOW_CHECKPOINTS_KEY = "agentWorkflowCheckpoints";
 
 const MODEL_HINTS = {
   openai: ["gpt-5.2-omni", "gpt-4o", "gpt-4o-mini", "o1-mini", "o3-mini"],
@@ -173,6 +178,80 @@ function showView(name) {
   });
 }
 
+function createWorkflowSessionId() {
+  return `workflow_session_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function getSessionTitle(checkpoint = {}) {
+  const skillName = String(checkpoint.skillPath || checkpoint.skillId || "").split("/").pop()?.replace(".skill.md", "") || "Etsy workflow";
+  const stage = checkpoint.lastStage || checkpoint.lastNode || checkpoint.status || "checkpoint";
+  return `${skillName} · ${stage}`;
+}
+
+function updateSessionModeUI() {
+  const modeText = $("sessionModeText");
+  if (!modeText) return;
+  if (sessionMode === "resume" && selectedResumeSessionKey) {
+    modeText.textContent = `恢复历史会话：${getSessionTitle(selectedResumeSessionMeta || {})}`;
+    modeText.classList.add("resume");
+  } else {
+    modeText.textContent = "新会话：不会沿用旧断点";
+    modeText.classList.remove("resume");
+  }
+}
+
+function startNewSessionMode() {
+  sessionMode = "new";
+  selectedResumeSessionKey = "";
+  selectedResumeSessionMeta = null;
+  updateSessionModeUI();
+}
+
+async function getWorkflowCheckpointEntries() {
+  const data = await new Promise((resolve) => chrome.storage.local.get([WORKFLOW_CHECKPOINTS_KEY], resolve));
+  return Object.entries(data[WORKFLOW_CHECKPOINTS_KEY] || {})
+    .map(([key, checkpoint]) => ({ key, checkpoint: checkpoint || {} }))
+    .filter(({ checkpoint }) => !["completed", "cancelled"].includes(String(checkpoint.status || "")))
+    .sort((a, b) => new Date(b.checkpoint.updatedAt || 0) - new Date(a.checkpoint.updatedAt || 0));
+}
+
+async function renderSessionHistory() {
+  const list = $("sessionHistoryList");
+  if (!list) return;
+  const entries = await getWorkflowCheckpointEntries();
+  if (!entries.length) {
+    list.innerHTML = `<div class="session-empty">暂无可恢复会话。</div>`;
+    return;
+  }
+  list.innerHTML = entries.slice(0, 12).map(({ key, checkpoint }) => {
+    const updatedAt = checkpoint.updatedAt ? new Date(checkpoint.updatedAt).toLocaleString() : "未知时间";
+    const status = checkpoint.status || "checkpoint";
+    const step = checkpoint.step !== undefined ? ` · step ${checkpoint.step}` : "";
+    return `
+      <div class="session-history-item" data-session-key="${escapeHtml(key)}">
+        <div class="session-history-title">${escapeHtml(getSessionTitle(checkpoint))}</div>
+        <div class="session-history-meta">${escapeHtml(status)}${escapeHtml(step)} · ${escapeHtml(updatedAt)}</div>
+        <div class="session-history-actions">
+          <button type="button" class="session-resume-btn" data-session-key="${escapeHtml(key)}">恢复这个会话</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+  list.querySelectorAll(".session-resume-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const key = btn.dataset.sessionKey || "";
+      const match = entries.find((entry) => entry.key === key);
+      if (!match) return;
+      sessionMode = "resume";
+      selectedResumeSessionKey = key;
+      selectedResumeSessionMeta = match.checkpoint;
+      updateSessionModeUI();
+      $("sessionHistoryPanel")?.classList.add("hidden");
+      addLog("info", "↩", `已选择历史会话：${getSessionTitle(match.checkpoint)}。点击运行将从该断点恢复。`);
+    });
+  });
+}
+
 // ── Init ──
 document.addEventListener("DOMContentLoaded", async () => {
   showView("main");
@@ -181,6 +260,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await loadGrowthActionQueue();
   await updatePageInfo();
   await loadSettings();
+  updateSessionModeUI();
   bindEvents();
 });
 
@@ -586,15 +666,20 @@ async function runSkill() {
 
     const targetImageUrl = await getTargetImageUrlForRun();
 
-    const shouldContinueSession = $("continueSessionCheckbox").checked || /^(继续|继续推进|恢复|resume|continue)$/i.test(userInstruction.trim());
+    const legacyContinueInstruction = /^(继续|继续推进|恢复|resume|continue)$/i.test(userInstruction.trim());
+    const shouldContinueSession = sessionMode === "resume" && selectedResumeSessionKey || legacyContinueInstruction;
+    const workflowSessionId = sessionMode === "resume" && selectedResumeSessionKey
+      ? selectedResumeSessionKey
+      : createWorkflowSessionId();
 
     activePort.postMessage({
       type: "RUN_SKILL",
       skillPath: selectedSkill.path,
       growthActionId: activeGrowthAction?.id || "",
+      workflowSessionId,
       userInstruction: userInstruction,
       targetImageUrl,
-      continueSession: shouldContinueSession,
+      continueSession: Boolean(shouldContinueSession),
       forceNewSession: !shouldContinueSession,
       highRandomness: $("highRandomnessCheckbox").checked,
       negativeFilter: $("negativeFilterCheckbox").checked,
@@ -1435,6 +1520,18 @@ function bindEvents() {
     loadLibrary();
   });
   $("backFromLibrary").addEventListener("click", () => showView("main"));
+  $("newSessionBtn")?.addEventListener("click", () => {
+    startNewSessionMode();
+    $("sessionHistoryPanel")?.classList.add("hidden");
+    addLog("info", "+", "已切换为新会话：下一次运行不会沿用旧断点。");
+  });
+  $("sessionHistoryBtn")?.addEventListener("click", async () => {
+    const panel = $("sessionHistoryPanel");
+    if (!panel) return;
+    const willShow = panel.classList.contains("hidden");
+    panel.classList.toggle("hidden", !willShow);
+    if (willShow) await renderSessionHistory();
+  });
 
   $("saveSettings").addEventListener("click", saveSettings);
 

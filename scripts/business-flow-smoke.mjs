@@ -112,6 +112,10 @@ assert.match(backgroundSource, /status:\s*"interrupted"/, "background should pre
 assert.match(backgroundSource, /function isExplicitResumeRequest[\s\S]*forceNewSession[\s\S]*continueSession[\s\S]*继续\|继续推进\|恢复\|resume\|continue/, "checkpoint resume should require an explicit continue/resume request");
 assert.doesNotMatch(backgroundSource, /shouldResumeFromCheckpoint[\s\S]{0,220}Boolean\(message\.growthCaseId\)/, "growthCaseId alone must not auto-resume an old checkpoint");
 assert.match(sidepanelSource, /forceNewSession:\s*!shouldContinueSession/, "sidepanel should default to a fresh task unless the user explicitly continues");
+assert.doesNotMatch(sidepanelHtmlSource, /continueSessionCheckbox|延续上一轮的对话记忆/, "sidepanel should not hide resume behavior behind a checkbox");
+assert.match(sidepanelHtmlSource, /newSessionBtn[\s\S]*\+ 新会话[\s\S]*sessionHistoryBtn[\s\S]*历史会话 \/ 恢复断点/, "sidepanel should expose direct new-session and session-history controls");
+assert.match(sidepanelSource, /createWorkflowSessionId[\s\S]*workflowSessionId[\s\S]*selectedResumeSessionKey/, "sidepanel should create fresh workflow sessions and resume only a selected history session");
+assert.doesNotMatch(contentSource, /Привет|Здравствуйте|Спасибо|Пожалуйста/, "content overlay should not contain Russian copy in the Etsy plugin UI");
 assert.match(backgroundSource, /resumeState:\s*shouldResumeFromCheckpoint\s*\?/, "background should pass resumable workflow state into the agent loop");
 assert.match(backgroundSource, /onCheckpoint:\s*async/, "background should persist checkpoint updates emitted by the agent loop");
 assert.match(js, /interrupted:\s*"已保存断点"/, "dashboard should show interrupted runs as saved checkpoints");

@@ -3050,7 +3050,7 @@
       <div class="chat-body" id="chat-messages-container">
         <div class="msg assistant">
           <div class="bubble">
-            Привет! 我已感知当前 Etsy 页面。右侧悬浮栏会根据页面场景提供可运行动作；这里主要用于查看结果、复制内容、继续反馈和推进改进。
+            你好，我已识别当前 Etsy 页面。右侧悬浮栏会根据页面场景提供可执行动作；这里主要用于查看结果、复制内容、继续反馈和推进改进。
           </div>
           <div class="msg-meta">Etsy 智脑舱 • ${new Date().toLocaleTimeString()}</div>
         </div>
@@ -4128,7 +4128,7 @@
     // Track Current Product
     function trackCurrentProduct(options = {}) {
       const productUrl = window.location.href;
-      const title = document.title.replace(/\s*-\s*купить.*$/i, '').trim(); // Strip Russian buying text
+      const title = document.title.replace(/\s*-\s*buy.*$/i, '').trim();
       
       chrome.storage.local.get(['trackedProducts'], (data) => {
         const list = data.trackedProducts || [];
