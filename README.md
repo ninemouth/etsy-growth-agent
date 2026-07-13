@@ -63,6 +63,18 @@ The extension stores Etsy credentials only in `chrome.storage.local` for the cur
 
 This project does not currently implement the full OAuth consent screen or hosted multi-user callback flow. Generate or provide the personal access credentials outside the extension, then save them in the extension settings drawer.
 
+## Before You Run
+
+Etsy Growth Agent works by reading the currently open browser page and, for some skills, opening temporary evidence tabs for Etsy Search, Google Search, Google Trends, competitor shops/listings, and sourcing sites. For reliable runs, prepare the browser session first:
+
+- Sign in to Etsy in the same Chrome profile before running shop diagnosis, listing work, review analysis, or any workflow that depends on seller-visible pages.
+- Open Google Search and Google Trends once in the same Chrome profile, complete any consent, region, language, or verification prompts, then keep the session available for trend and market-research workflows.
+- If sourcing workflows will be used, sign in to 1688, Taobao, or other supplier sites first and resolve any captcha/login prompts manually.
+- Keep the original Etsy shop or listing page open while the workflow runs. The extension protects and restores the source tab, but external login or verification pages may still require manual attention.
+- If a run reports a blocked, login, consent, or verification page, resolve it in Chrome, reload the extension/page if needed, then resume the saved workflow instead of starting from scratch.
+
+Developer Mode users should reload the unpacked extension from `chrome://extensions/` after pulling updates, then refresh the Etsy page so the latest `content.js` is injected.
+
 ## Install
 
 1. Run `npm install`.
