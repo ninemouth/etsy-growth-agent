@@ -109,6 +109,9 @@ assert.match(backgroundSource, /WORKFLOW_CHECKPOINTS_KEY\s*=\s*"agentWorkflowChe
 assert.match(backgroundSource, /buildWorkflowCheckpointKey[\s\S]*workflowSessionId[\s\S]*growthCaseId/, "workflow checkpoint lookup should support session and growth-case ids");
 assert.match(backgroundSource, /lastStage:\s*"port_disconnected"/, "port disconnects should mark the workflow checkpoint as interrupted");
 assert.match(backgroundSource, /status:\s*"interrupted"/, "background should preserve disconnected runs as resumable interrupted checkpoints");
+assert.match(backgroundSource, /function isExplicitResumeRequest[\s\S]*forceNewSession[\s\S]*continueSession[\s\S]*继续\|继续推进\|恢复\|resume\|continue/, "checkpoint resume should require an explicit continue/resume request");
+assert.doesNotMatch(backgroundSource, /shouldResumeFromCheckpoint[\s\S]{0,220}Boolean\(message\.growthCaseId\)/, "growthCaseId alone must not auto-resume an old checkpoint");
+assert.match(sidepanelSource, /forceNewSession:\s*!shouldContinueSession/, "sidepanel should default to a fresh task unless the user explicitly continues");
 assert.match(backgroundSource, /resumeState:\s*shouldResumeFromCheckpoint\s*\?/, "background should pass resumable workflow state into the agent loop");
 assert.match(backgroundSource, /onCheckpoint:\s*async/, "background should persist checkpoint updates emitted by the agent loop");
 assert.match(js, /interrupted:\s*"已保存断点"/, "dashboard should show interrupted runs as saved checkpoints");
@@ -1334,9 +1337,13 @@ assert.equal(messages[0]?.type, "RUN_SKILL", "dashboard should start a real RUN_
 assert.equal(messages[0]?.growthActionId, "diagnose_store_growth", "RUN_SKILL should carry growth action id");
 assert.ok(messages[0]?.growthRunId, "RUN_SKILL should carry growth run id");
 assert.ok(messages[0]?.growthCaseId?.startsWith("store_health_"), "RUN_SKILL should carry growth case id");
+assert.ok(messages[0]?.workflowSessionId?.startsWith("workflow_session_"), "dashboard should start each growth run with a unique workflow session id");
+assert.equal(messages[0]?.forceNewSession, true, "dashboard growth runs should default to a new workflow session");
+assert.equal(messages[0]?.continueSession, false, "dashboard growth runs should not implicitly resume old checkpoints");
 
 const run = storage.growthActionRuns[0];
 assert.equal(run.status, "completed", "growth action run should complete");
+assert.ok(run.workflowSessionId?.startsWith("workflow_session_"), "stored growth run should retain its workflow session id");
 assert.ok(run.savedResultId, "completed run should link to a saved report");
 
 const storeCase = storage.growthCases.find((item) => item.type === "store_health");

@@ -461,6 +461,12 @@ function isResumableCheckpoint(checkpoint) {
   return checkpoint && !["completed", "cancelled"].includes(checkpoint.status);
 }
 
+function isExplicitResumeRequest(message = {}) {
+  if (message.forceNewSession) return false;
+  if (message.continueSession) return true;
+  return /^(继续|继续推进|恢复|resume|continue)$/i.test(String(message.userInstruction || "").trim());
+}
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name === "etsy-agent-loop") {
     const portId = Date.now().toString();
@@ -609,11 +615,8 @@ chrome.runtime.onConnect.addListener((port) => {
             renewWorkflowLease(checkpointKey, portId).catch((err) => console.warn("Could not renew workflow lease:", err.message));
           }, 15_000);
           const existingCheckpoint = await getWorkflowCheckpoint(checkpointKey);
-          const shouldResumeFromCheckpoint = isResumableCheckpoint(existingCheckpoint) && (
-            message.continueSession ||
-            Boolean(message.userInstruction) ||
-            Boolean(message.growthCaseId)
-          );
+          const shouldContinueSession = isExplicitResumeRequest(message);
+          const shouldResumeFromCheckpoint = shouldContinueSession && isResumableCheckpoint(existingCheckpoint);
 
           if (shouldResumeFromCheckpoint) {
             port.postMessage({
@@ -655,9 +658,6 @@ chrome.runtime.onConnect.addListener((port) => {
             if (isCancelled) return;
             port.postMessage({ type: "PROGRESS", data: progressData });
           };
-
-          const shouldContinueSession = Boolean(message.continueSession) ||
-            /^(继续|继续推进|恢复|resume|continue)$/i.test(String(message.userInstruction || "").trim());
 
           const result = await runAgentLoop({
             tabId: tab.id,

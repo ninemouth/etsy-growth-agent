@@ -595,6 +595,7 @@ async function runSkill() {
       userInstruction: userInstruction,
       targetImageUrl,
       continueSession: shouldContinueSession,
+      forceNewSession: !shouldContinueSession,
       highRandomness: $("highRandomnessCheckbox").checked,
       negativeFilter: $("negativeFilterCheckbox").checked,
     });

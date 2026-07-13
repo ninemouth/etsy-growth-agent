@@ -2513,6 +2513,7 @@ async function ensureDashboardSavedEntry(run, successResult = {}) {
     growthActionId: run.actionId,
     growthRunId: run.id,
     growthCaseId: run.caseId,
+    workflowSessionId: run.workflowSessionId || "",
     result: output,
   };
   savedResults.unshift(entry);
@@ -2591,6 +2592,9 @@ function startDashboardGrowthRun(run) {
       growthActionId: run.actionId,
       growthRunId: run.id,
       growthCaseId: run.caseId,
+      workflowSessionId: run.workflowSessionId,
+      continueSession: false,
+      forceNewSession: true,
       userInstruction: run.instruction,
     });
   });
@@ -2606,6 +2610,7 @@ async function createGrowthCaseRun(actionId, sku = "") {
   const run = {
     contractVersion: GROWTH_CONTRACT_VERSION,
     id: `growth_run_${Date.now()}`,
+    workflowSessionId: `workflow_session_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
     caseId,
     caseType,
     shopId,
