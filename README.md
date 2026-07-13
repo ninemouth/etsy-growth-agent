@@ -4,6 +4,8 @@ Etsy Growth Agent is a Manifest V3 Chrome extension adapted from a marketplace g
 
 It provides an AI-driven browser side panel, page-reading tools, Etsy-focused skills, report rendering, local result storage, sourcing workflows, and a growth dashboard for shop optimization work.
 
+Repository: https://github.com/ninemouth/etsy-growth-agent
+
 ## Core Capabilities
 
 - Etsy shop and listing diagnosis from the current browser page.
@@ -69,6 +71,35 @@ This project does not currently implement the full OAuth consent screen or hoste
 4. Click "Load unpacked" and select this project directory.
 5. Open an Etsy listing, shop, or search page, then launch the extension side panel.
 
+## Updates
+
+Chrome extension code updates are controlled by Chrome's extension update system:
+
+- Chrome Web Store releases update automatically through Chrome.
+- Self-hosted or enterprise CRX releases can update automatically when `update_url` is configured in the packaged extension manifest.
+- Developer Mode "Load unpacked" installs cannot silently replace their own source files. In this mode, Etsy Growth Agent can detect a newer open-source release and show update guidance, but the user must pull the latest code or reload the unpacked extension manually.
+
+The extension includes update awareness in the side panel settings:
+
+- `Check for updates` calls Chrome's runtime update check.
+- `onUpdateAvailable` is recorded and applied automatically when no workflow is running.
+- An optional open-source release manifest URL can be configured for GitHub release awareness.
+
+For GitHub releases, publish a `release-manifest.json` with this shape:
+
+```json
+{
+  "latest_version": "1.1.0",
+  "release_url": "https://github.com/ninemouth/etsy-growth-agent/releases/latest",
+  "download_url": "https://github.com/ninemouth/etsy-growth-agent/releases/latest",
+  "published_at": "2026-07-13T00:00:00Z",
+  "minimum_chrome_version": "120",
+  "changelog": "Release notes"
+}
+```
+
+The included GitHub Action packages the extension zip and uploads both the zip and release manifest when a tag like `v1.1.0` is pushed.
+
 ## Development
 
 ```bash
@@ -76,7 +107,17 @@ npm run lint
 npm run test:security
 npm run test:business
 npm run test:sourcing
+npm run test:updates
+npm run package:extension
 ```
+
+## Open-Source Release Checklist
+
+1. Keep `manifest.json` and `package.json` versions aligned.
+2. Run `npm run lint` and the smoke tests.
+3. Run `npm run package:extension` to create `dist/etsy-growth-agent-<version>.zip`.
+4. Push to `github.com/ninemouth/etsy-growth-agent`.
+5. Create a tag such as `v1.1.0`; GitHub Actions will build the release assets.
 
 ## Privacy
 

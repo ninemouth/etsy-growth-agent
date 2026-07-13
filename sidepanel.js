@@ -1392,6 +1392,7 @@ async function loadSettings() {
 
   updateProviderUI(s.llmProvider || "openai");
   updateApiStatusUI(s.helium10ApiKey, s.sellerSpriteApiKey, s.fastmossApiKey);
+  await refreshUpdateStatus();
 }
 
 function updateApiStatusUI(h10Key, ssKey, fmKey) {
@@ -1442,6 +1443,99 @@ function updateProviderUI(provider) {
       });
     });
   }
+}
+
+function formatUpdateTime(value = "") {
+  if (!value) return "尚未检查";
+  try {
+    return new Date(value).toLocaleString();
+  } catch (_) {
+    return value;
+  }
+}
+
+function setUpdateBadge(label, state = "") {
+  const badge = $("updateStatusBadge");
+  if (!badge) return;
+  badge.textContent = label;
+  badge.className = `update-badge ${state}`.trim();
+}
+
+async function refreshUpdateStatus() {
+  const versionEl = $("extensionVersion");
+  const statusEl = $("updateStatusText");
+  if (!versionEl || !statusEl) return;
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "GET_UPDATE_STATUS" });
+    if (!response?.ok) throw new Error(response?.error || "无法读取更新状态");
+    const { currentVersion, settings, status } = response.data;
+    versionEl.textContent = `当前版本：${currentVersion || status.currentVersion || "--"}`;
+    if ($("releaseManifestUrl")) $("releaseManifestUrl").value = settings.releaseManifestUrl || "";
+    if ($("autoApplyRuntimeUpdates")) $("autoApplyRuntimeUpdates").checked = settings.autoApplyRuntimeUpdates !== false;
+    const applyBtn = $("applyUpdateBtn");
+    if (applyBtn) applyBtn.classList.toggle("hidden", !status.runtimeUpdateAvailable);
+    if (status.updateAvailable) {
+      setUpdateBadge("有新版本", "available");
+      const versionText = status.pendingRuntimeVersion || status.latestReleaseVersion || "新版本";
+      const channelText = status.updateChannel === "chrome_runtime" ? "Chrome 已下载运行时更新" : "开源 Release 有新版本";
+      const releaseLink = status.releaseUrl ? `；发布页：${status.releaseUrl}` : "";
+      statusEl.textContent = `${channelText}：${versionText}。上次检查：${formatUpdateTime(status.lastCheckedAt)}${releaseLink}`;
+    } else if (status.releaseManifestStatus === "error" || status.runtimeStatus === "error") {
+      setUpdateBadge("检查失败", "error");
+      statusEl.textContent = `更新检查失败：${status.releaseManifestError || status.runtimeError || "未知错误"}。上次检查：${formatUpdateTime(status.lastCheckedAt)}`;
+    } else {
+      setUpdateBadge("已是最新", "");
+      const manifestText = settings.releaseManifestUrl ? "已启用开源 Release 感知" : "未配置开源 Release Manifest";
+      statusEl.textContent = `${manifestText}。Chrome Web Store / 自托管 CRX 会由 Chrome 自动更新；开发者模式 unpacked 只能提示手动更新。上次检查：${formatUpdateTime(status.lastCheckedAt)}`;
+    }
+  } catch (err) {
+    setUpdateBadge("不可用", "error");
+    statusEl.textContent = err.message;
+  }
+}
+
+async function checkForUpdates() {
+  const btn = $("checkUpdatesBtn");
+  if (btn) btn.textContent = "检查中...";
+  try {
+    await chrome.runtime.sendMessage({ type: "CHECK_FOR_UPDATES" });
+    await refreshUpdateStatus();
+  } catch (err) {
+    setUpdateBadge("检查失败", "error");
+    if ($("updateStatusText")) $("updateStatusText").textContent = err.message;
+  } finally {
+    if (btn) btn.textContent = "检查更新";
+  }
+}
+
+async function saveUpdateSettings() {
+  const msg = $("settingsMsg");
+  try {
+    await chrome.runtime.sendMessage({
+      type: "SAVE_UPDATE_SETTINGS",
+      settings: {
+        releaseManifestUrl: $("releaseManifestUrl")?.value?.trim?.() || "",
+        autoApplyRuntimeUpdates: $("autoApplyRuntimeUpdates")?.checked !== false,
+      },
+    });
+    await refreshUpdateStatus();
+    if (msg) {
+      msg.textContent = "✓ 更新设置已保存";
+      msg.className = "settings-msg success";
+      msg.classList.remove("hidden");
+      setTimeout(() => msg.classList.add("hidden"), 2000);
+    }
+  } catch (err) {
+    if (msg) {
+      msg.textContent = err.message;
+      msg.className = "settings-msg error";
+      msg.classList.remove("hidden");
+    }
+  }
+}
+
+async function applyPendingUpdate() {
+  await chrome.runtime.sendMessage({ type: "APPLY_PENDING_UPDATE" });
 }
 
 async function saveSettings() {
@@ -1534,6 +1628,9 @@ function bindEvents() {
   });
 
   $("saveSettings").addEventListener("click", saveSettings);
+  $("checkUpdatesBtn")?.addEventListener("click", checkForUpdates);
+  $("saveUpdateSettingsBtn")?.addEventListener("click", saveUpdateSettings);
+  $("applyUpdateBtn")?.addEventListener("click", applyPendingUpdate);
 
   $("llmProvider").addEventListener("change", (e) => updateProviderUI(e.target.value));
 

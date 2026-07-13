@@ -1,0 +1,8 @@
+{
+  "latest_version": "1.1.0",
+  "release_url": "https://github.com/ninemouth/etsy-growth-agent/releases/latest",
+  "download_url": "https://github.com/ninemouth/etsy-growth-agent/releases/latest",
+  "published_at": "2026-07-13",
+  "minimum_chrome_version": "120",
+  "changelog": "Initial open-source release with Etsy shop diagnosis, trend research, listing optimization, compliance audit, sourcing guardrails, and update awareness."
+}

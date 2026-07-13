@@ -14,6 +14,15 @@ import {
   saveWorkflowSnapshot,
 } from './modules/workflowRuntime.js';
 import { cleanupOwnedTabs } from './modules/browserSessionManager.js';
+import {
+  applyPendingRuntimeUpdate,
+  checkForUpdates,
+  ensureUpdateAlarm,
+  getUpdateStatus,
+  isUpdateAlarm,
+  markRuntimeUpdateAvailable,
+  saveUpdateSettings,
+} from './modules/updateManager.js';
 
 // ── Keep Service Worker Alive in MV3 ──
 // Calling any Chrome API resets the 30-second idle timer in Manifest V3.
@@ -23,6 +32,21 @@ setInterval(() => {
     if (chrome.runtime.lastError) {} // ignore
   });
 }, 10000);
+
+let activeWorkflowRuns = 0;
+
+async function applyPendingUpdateIfIdle(reason = "idle") {
+  if (activeWorkflowRuns > 0) return false;
+  const updateState = await getUpdateStatus();
+  if (updateState.settings.autoApplyRuntimeUpdates === false) return false;
+  if (!updateState.status.runtimeUpdateAvailable) return false;
+  await markRuntimeUpdateAvailable({
+    version: updateState.status.pendingRuntimeVersion || "",
+    autoApplyReason: reason,
+  });
+  await applyPendingRuntimeUpdate();
+  return true;
+}
 
 // ── Open side panel when toolbar icon is clicked ──
 chrome.action.onClicked.addListener((tab) => {
@@ -505,6 +529,7 @@ chrome.runtime.onConnect.addListener((port) => {
           return;
         }
         runInFlight = true;
+        activeWorkflowRuns++;
         try {
           const tab = await getCurrentTab();
           if (!tab) throw new Error("无法获取当前活动的标签页，请确保浏览器焦点在目标网页上。");
@@ -793,6 +818,8 @@ chrome.runtime.onConnect.addListener((port) => {
           }
         } finally {
           runInFlight = false;
+          activeWorkflowRuns = Math.max(0, activeWorkflowRuns - 1);
+          applyPendingUpdateIfIdle("workflow_completed").catch((err) => console.warn("Failed to apply pending update after workflow:", err.message));
         }
       }
     });
@@ -831,6 +858,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "EXPORT_RESULTS") {
     exportResults()
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "GET_UPDATE_STATUS") {
+    getUpdateStatus()
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "CHECK_FOR_UPDATES") {
+    checkForUpdates({ force: true })
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "SAVE_UPDATE_SETTINGS") {
+    saveUpdateSettings(message.settings || {})
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "APPLY_PENDING_UPDATE") {
+    applyPendingRuntimeUpdate()
       .then((data) => sendResponse({ ok: true, data }))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
@@ -977,6 +1032,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ── Alarms Listener for Scheduled Background Monitoring Checks ──
 chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (isUpdateAlarm(alarm.name)) {
+    try {
+      await checkForUpdates();
+      await applyPendingUpdateIfIdle("scheduled_check");
+    } catch (err) {
+      console.warn("Scheduled update check failed:", err.message);
+    }
+    return;
+  }
+
   if (alarm.name.startsWith("monitor_task_")) {
     const taskJson = alarm.name.slice("monitor_task_".length);
     try {
@@ -1097,6 +1162,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
 // ── Initialize Default Settings on Installation ──
 chrome.runtime.onInstalled.addListener(() => {
+  ensureUpdateAlarm().catch((err) => console.warn("Failed to initialize update alarm:", err.message));
   chrome.storage.local.get(["llmProvider"], (data) => {
     if (!data.llmProvider) {
       chrome.storage.local.set({
@@ -1108,4 +1174,10 @@ chrome.runtime.onInstalled.addListener(() => {
       });
     }
   });
+});
+
+chrome.runtime.onUpdateAvailable.addListener((details) => {
+  markRuntimeUpdateAvailable(details)
+    .then(() => applyPendingUpdateIfIdle("runtime_update_available"))
+    .catch((err) => console.warn("Failed to handle runtime update availability:", err.message));
 });

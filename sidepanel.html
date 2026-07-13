@@ -309,8 +309,32 @@
 
         <div class="settings-section-title">关于</div>
         <p class="settings-about">
-          <b>电商增长 Agent</b> 是一款基于大模型的全自动化电商运营外挂。它能在任意网页直接读取 DOM 和截图，结合预设的专家模型（Skill），自动化执行：跨平台选品挖掘、竞品弱点分析、Listing 优化及流量诊断。所有数据通过本地直连第三方大模型，绝对保护商业隐私。
+          <b>Etsy Growth Agent</b> 是面向 Etsy 卖家的开源 AI 增长插件。它在本地浏览器读取公开页面、截图和个人卖家 API 数据，结合 Etsy 专项 Skill 输出店铺体检、趋势洞察、Listing 优化、合规审查和寻源利润方案。
         </p>
+        <div class="update-card" id="updateCard">
+          <div class="update-card-head">
+            <div>
+              <div class="update-title">版本与更新</div>
+              <div class="update-meta" id="extensionVersion">当前版本：--</div>
+            </div>
+            <span class="update-badge" id="updateStatusBadge">未检查</span>
+          </div>
+          <div class="update-status" id="updateStatusText">Chrome Web Store / 自托管 CRX 会由 Chrome 自动更新；开发者模式加载的 unpacked 插件只能感知新版并提示手动更新。</div>
+          <div class="form-group">
+            <label class="form-label">开源 Release Manifest URL <span class="optional">(可选)</span></label>
+            <input type="url" id="releaseManifestUrl" class="form-input" placeholder="https://github.com/ninemouth/etsy-growth-agent/releases/latest/download/release-manifest.json" />
+            <div class="form-help">用于开源版本感知。Chrome 真正自动替换代码仍依赖 Chrome Web Store 或自托管 update_url。</div>
+          </div>
+          <label class="update-toggle">
+            <input type="checkbox" id="autoApplyRuntimeUpdates" checked />
+            <span>Chrome 下载好运行时更新后，在无任务运行时自动应用</span>
+          </label>
+          <div class="update-actions">
+            <button id="checkUpdatesBtn" class="secondary-btn" type="button">检查更新</button>
+            <button id="saveUpdateSettingsBtn" class="secondary-btn" type="button">保存更新设置</button>
+            <button id="applyUpdateBtn" class="save-settings-btn hidden" type="button">应用已下载更新</button>
+          </div>
+        </div>
       </div>
     </div>
 

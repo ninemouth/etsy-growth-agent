@@ -1,17 +1,19 @@
 {
   "name": "etsy-growth-agent",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "An Etsy-focused AI Chrome Extension for shop optimization, product discovery, competitor analysis, sourcing, and SEO listing generation.",
   "main": "background.js",
   "type": "module",
   "scripts": {
     "lint": "eslint .",
+    "package:extension": "node scripts/package-extension.mjs",
     "test:security": "node scripts/security-smoke.mjs",
     "test:business": "node scripts/business-flow-smoke.mjs",
     "test:sourcing": "node scripts/sourcing-workflow-guard-smoke.mjs",
     "test:compliance": "node scripts/compliance-smoke.mjs",
     "test:etsy-api": "node scripts/etsy-api-contract-smoke.mjs",
     "test:trends": "node scripts/platform-trends-smoke.mjs",
+    "test:updates": "node scripts/update-manager-smoke.mjs",
     "test:runtime": "node scripts/workflow-runtime-smoke.mjs",
     "format": "prettier --write ."
   },

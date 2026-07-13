@@ -1,0 +1,43 @@
+name: Release Extension
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test:business
+      - run: npm run test:trends
+      - run: npm run test:updates
+      - run: npm run package:extension
+      - name: Build release manifest
+        run: |
+          VERSION=$(node -p "require('./manifest.json').version")
+          cat > dist/release-manifest.json <<EOF
+          {
+            "latest_version": "$VERSION",
+            "release_url": "https://github.com/ninemouth/etsy-growth-agent/releases/tag/v$VERSION",
+            "download_url": "https://github.com/ninemouth/etsy-growth-agent/releases/download/v$VERSION/etsy-growth-agent-$VERSION.zip",
+            "published_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "minimum_chrome_version": "120",
+            "changelog": "See GitHub release notes."
+          }
+          EOF
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/etsy-growth-agent-*.zip
+            dist/release-manifest.json
