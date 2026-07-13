@@ -1918,6 +1918,49 @@ function getGoogleTrendsScreenshotEvidence(toolHistory = []) {
   return null;
 }
 
+function getGoogleSearchEvidence(toolHistory = []) {
+  for (let i = toolHistory.length - 1; i >= 0; i--) {
+    const entry = toolHistory[i];
+    if (entry?.tool !== "search_in_browser") continue;
+    const engine = String(entry.arguments?.engine || "").toLowerCase();
+    if (engine !== "google" && engine !== "google_us") continue;
+    const result = entry.result || {};
+    if (result.ok === false || result.error || result.isCaptcha) continue;
+    const pageData = result.pageData || {};
+    const pageHealth = pageData.pageHealth || {};
+    if (pageHealth.isLikelyBlocked) continue;
+    const visibleText = String(pageData.visibleText || pageData.text || "").replace(/\s+/g, " ").trim();
+    const title = String(pageData.title || pageData.h1 || "").trim();
+    const hasReadableEvidence = visibleText.length >= 120 || title.length >= 8 || Boolean(result.screenshotRef || result.screenshotCaptured);
+    if (!hasReadableEvidence) continue;
+    return {
+      query: entry.arguments?.query || entry.arguments?.keyword || result.queryUsed || result.queryOriginal || "",
+      sourceRef: result.searchUrl || pageData.url || "Google Search evidence",
+      screenshotRef: result.screenshotRef || "",
+      screenshotCaptured: Boolean(result.screenshotCaptured),
+      observedValue: [
+        "Google Search/Google US 公开搜索结果页已读取。",
+        title ? `页面标题：${truncateText(title, 120)}` : "",
+        visibleText ? `可见文本摘要：${truncateText(visibleText, 240)}` : "",
+      ].filter(Boolean).join(" "),
+    };
+  }
+  return null;
+}
+
+function buildGoogleSearchLedgerEntry(evidence = {}) {
+  const queryText = evidence.query ? `查询词：${evidence.query}；` : "";
+  const screenshotText = evidence.screenshotRef || evidence.screenshotCaptured ? "；本轮已保留搜索结果页截图 artifact" : "";
+  return {
+    source_type: "google_search",
+    source_ref: evidence.sourceRef || "Google Search evidence",
+    observed_value: `${queryText}${evidence.observedValue || "Google Search 公开结果页可读，用于验证站外表达、买家场景和公开市场线索。"}${screenshotText}`,
+    used_for: "支撑 Google Search/站外市场/欧美买家表达相关结论；不得据此推断 Etsy 平台搜索量、点击率、订单或转化率。",
+    confidence: "medium",
+    limitation: "Google Search 公开结果受地区、时间、个性化和页面可读性影响，只能作为站外表达和市场语义线索，不等于 Etsy 平台内部需求规模。",
+  };
+}
+
 function buildGoogleTrendsToolLedgerEntry(evidence = {}) {
   const queryText = evidence.query ? `查询词：${evidence.query}；` : "";
   const ref = evidence.searchUrl || evidence.sourceRef || "Google Trends search evidence";
@@ -2004,8 +2047,10 @@ export function autoRepairFinalReportForDelivery(parsed, {
   const hasEtsyApiEvidence = hasEvidenceSource(toolHistory, pageContext, "etsy_api");
   const pageDomEvidence = getBestPageDomEvidence(toolHistory, pageContext);
   const shouldAutoAttachPageDom = isShopOptimizerOnly(skillId) && pageDomEvidence;
+  const googleSearchEvidence = getGoogleSearchEvidence(toolHistory);
   const trendsScreenshotEvidence = getGoogleTrendsScreenshotEvidence(toolHistory);
   const reportText = `${repaired.output.overview || ""}\n${repaired.output.analysis || ""}\n${repaired.output.summary || ""}\n${JSON.stringify(repaired.output.data || [])}`;
+  const reportUsesGoogleSearch = /Google Search|Google US|谷歌搜索|站外搜索|搜索结果|站外市场|欧美市场|市场调研|外部流量|站外需求/i.test(reportText);
   const reportUsesTrends = /Google Trends|谷歌趋势|趋势图|搜索趋势|搜索热度|季节性|需求曲线|Interest over time|related queries|related topics|峰值|peak/i.test(reportText);
 
   repaired.output.data.forEach((item, idx) => {
@@ -2015,6 +2060,12 @@ export function autoRepairFinalReportForDelivery(parsed, {
 
     if (shouldAutoAttachPageDom && !hasLedgerType(ledger, "page_dom")) {
       ledger.unshift(buildPageDomLedgerEntry(pageDomEvidence));
+      itemChanged = true;
+    }
+
+    const itemUsesGoogleSearch = reportUsesGoogleSearch || /Google Search|Google US|谷歌搜索|站外搜索|搜索结果|站外市场|欧美市场|市场调研|外部流量|站外需求/i.test(JSON.stringify(item));
+    if (isEtsyBusinessSkill(skillId) && itemUsesGoogleSearch && googleSearchEvidence && !hasLedgerType(ledger, "google_search")) {
+      ledger.push(buildGoogleSearchLedgerEntry(googleSearchEvidence));
       itemChanged = true;
     }
 
@@ -2052,7 +2103,7 @@ export function autoRepairFinalReportForDelivery(parsed, {
     }
 
     if (itemChanged) {
-      reasons.push(`第 ${idx + 1} 项已补齐页面文本/Google Trends 截图证据或降级 API/订单/履约类假设`);
+      reasons.push(`第 ${idx + 1} 项已补齐页面文本/Google Search/Google Trends 证据或降级 API/订单/履约类假设`);
     }
   });
 

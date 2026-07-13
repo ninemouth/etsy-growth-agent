@@ -684,7 +684,23 @@ const meaningfulPageContext = {
     pagination: { hasPagination: true, hasNextPage: true, nextPageUrl: "https://www.etsy.com/shop/MidnightReveriee?page=2" },
   },
 };
-const googleSearchHistory = { tool: "search_in_browser", arguments: { engine: "google_us", query: "wedding clutch" }, result: { ok: true, pageData: { visibleText: "wedding clutch search results" } } };
+const googleSearchHistory = {
+  tool: "search_in_browser",
+  arguments: { engine: "google_us", query: "wedding clutch" },
+  result: {
+    ok: true,
+    evidenceOk: true,
+    searchUrl: "https://www.google.com/search?q=wedding+clutch",
+    screenshotRef: "__GOOGLE_SEARCH_SCREENSHOT_mock__",
+    screenshotCaptured: true,
+    pageData: {
+      url: "https://www.google.com/search?q=wedding+clutch",
+      title: "wedding clutch - Google Search",
+      visibleText: "wedding clutch bridal clutch bridesmaid gift clutch evening bag personalized wedding purse Etsy Pinterest Vogue wedding guest accessories bridal shower gift search results and market wording examples",
+      pageHealth: { isLikelyBlocked: false },
+    },
+  },
+};
 const googleTrendsHistory = {
   tool: "search_in_browser",
   arguments: { engine: "google_trends", query: "wedding clutch" },
@@ -1176,6 +1192,30 @@ assert.deepEqual(
   validateReport(repairedMissingPageDomLedgerReport.parsed, "", "skills/etsy_global_shop_optimizer.skill.md", toolDomHistory, visualOnlyPageContext),
   [],
   "auto-attached page_dom evidence should prevent non-quality critic redo"
+);
+const missingShopGoogleSearchLedgerReport = globalThis.structuredClone(shopOptimizerReportWithEtsyEvidence);
+missingShopGoogleSearchLedgerReport.output.data.forEach((item) => {
+  item.evidence_ledger = item.evidence_ledger.filter((entry) => entry.source_type !== "google_search");
+});
+assert.notDeepEqual(
+  validateReport(missingShopGoogleSearchLedgerReport, "", "skills/etsy_global_shop_optimizer.skill.md", validShopEvidenceHistory, meaningfulPageContext),
+  [],
+  "shop optimizer reports that use Google Search conclusions should fail before google_search ledger auto-repair"
+);
+const repairedMissingShopGoogleSearchLedgerReport = autoRepairFinalReportForDelivery(missingShopGoogleSearchLedgerReport, {
+  skillId: "skills/etsy_global_shop_optimizer.skill.md",
+  toolHistory: validShopEvidenceHistory,
+  pageContext: meaningfulPageContext,
+});
+assert.equal(repairedMissingShopGoogleSearchLedgerReport.changed, true, "shop optimizer reports should auto-attach Google Search ledger when verified search evidence exists");
+assert.ok(
+  repairedMissingShopGoogleSearchLedgerReport.parsed.output.data[0].evidence_ledger.some((entry) => entry.source_type === "google_search"),
+  "auto-repair should add google_search evidence to shop optimizer reports"
+);
+assert.deepEqual(
+  validateReport(repairedMissingShopGoogleSearchLedgerReport.parsed, "", "skills/etsy_global_shop_optimizer.skill.md", validShopEvidenceHistory, meaningfulPageContext),
+  [],
+  "auto-repaired Google Search ledger should prevent non-quality shop optimizer critic redo"
 );
 const missingShopTrendLedgerReport = globalThis.structuredClone(shopOptimizerReportWithEtsyEvidence);
 missingShopTrendLedgerReport.output.data.forEach((item) => {
