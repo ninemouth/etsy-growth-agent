@@ -96,6 +96,9 @@ assert.match(toolRegistrySource, /captureFullPageScreenshot[\s\S]*screenshotCapt
 assert.match(agentLoopSource, /captureFullPageScreenshot[\s\S]*captureVisibleTab_viewport/, "Etsy detail-page loop screenshots should prefer full-page capture and retain viewport fallback");
 assert.match(toolRegistrySource, /createOwnedTab[\s\S]*closeOwnedTab/, "Etsy crawl tabs should have centralized workflow ownership");
 assert.match(browserSessionManagerSource, /openerTabId[\s\S]*chrome\.tabs\.create/, "workflow-created tabs should preserve the source tab as opener instead of replacing the shop page");
+assert.match(browserSessionManagerSource, /protectWorkflowTab[\s\S]*isProtectedWorkflowTab[\s\S]*closeOwnedTab[\s\S]*return false/, "workflow tab manager must refuse to close protected source tabs");
+assert.match(browserSessionManagerSource, /cleanupOwnedTabs[\s\S]*protectedIds[\s\S]*filter\(\(id\) => !protectedIds\.has\(id\)\)/, "workflow cleanup must exclude protected source tabs");
+assert.match(backgroundSource, /protectWorkflowTab\(checkpointKey,\s*tab\.id\)/, "background must register the originating shop tab as protected for the workflow");
 assert.match(agentLoopSource, /__sourceTabId:\s*tabId/, "agent loop should pass the original source tab id into runtime tools");
 assert.match(toolRegistrySource, /getSourceOrCurrentTab[\s\S]*read_current_page/, "current-page tools should prefer the workflow source tab over whichever temporary tab is active");
 assert.match(toolRegistrySource, /restoreSourceTabFocus[\s\S]*search_tab_closed/, "browser searches should restore focus to the source shop tab after closing temporary evidence tabs");
@@ -124,7 +127,7 @@ assert.match(agentLoopSource, /getEtsyBrowserWorkflowGuardResult[\s\S]*重复 op
 assert.match(toolRegistrySource, /attachSearchScreenshotArtifact[\s\S]*search-evidence-screenshot[\s\S]*closeTabQuietly/, "browser searches should persist screenshot evidence before auto-closing temporary tabs");
 assert.match(agentLoopSource, /本轮已有 3 个或以上已完成取证但未关闭的新标签页/, "Etsy browser workflow should require closing evidence tabs before opening more");
 assert.match(agentLoopSource, /runToolWithTimeout[\s\S]*timed out after[\s\S]*toolTimeoutMs/, "agent loop should enforce tool-level timeouts instead of waiting indefinitely");
-assert.match(agentLoopSource, /closeTabsCreatedDuringTimedOutTool[\s\S]*tool_timeout/, "timed-out browser tools should clean up newly created temporary tabs and expose a timeout state");
+assert.match(agentLoopSource, /closeTabsCreatedDuringTimedOutTool\(tabsBeforeTool,\s*new Set\(\[tabId\]\)\)[\s\S]*tool_timeout/, "timed-out browser tools should clean up temporary tabs while protecting the source tab");
 assert.doesNotMatch(agentLoopSource, /requestWorkflowCancellation\(toolArgs\.workflowId,\s*`\$\{toolName\}_timeout`/, "ordinary tool timeout must not cancel the entire workflow");
 assert.match(agentLoopSource, /describeToolAction[\s\S]*Etsy 搜索结果页取证[\s\S]*Etsy 商品详情页取证/, "browser actions should distinguish search result evidence from detail-page evidence");
 assert.match(agentLoopSource, /actionLabel:\s*plannedToolAction\.actionLabel[\s\S]*type:\s*"tool_timeout"[\s\S]*actionLabel:\s*toolAction\.actionLabel[\s\S]*type:\s*"tool_result"[\s\S]*actionLabel:\s*completedToolAction\.actionLabel/, "progress events should carry action labels from tool start through timeout and result");

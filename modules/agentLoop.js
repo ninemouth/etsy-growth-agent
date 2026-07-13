@@ -1243,11 +1243,11 @@ async function snapshotTabIds() {
   return new Set(tabs.map((tab) => tab.id).filter((id) => Number.isInteger(id)));
 }
 
-async function closeTabsCreatedDuringTimedOutTool(beforeTabIds = new Set()) {
+async function closeTabsCreatedDuringTimedOutTool(beforeTabIds = new Set(), protectedTabIds = new Set()) {
   if (typeof chrome === "undefined" || !chrome.tabs?.query) return [];
   const tabs = await new Promise((resolve) => chrome.tabs.query({}, (items) => resolve(items || [])));
   const candidates = tabs.filter((tab) => {
-    if (!Number.isInteger(tab.id) || beforeTabIds.has(tab.id)) return false;
+    if (!Number.isInteger(tab.id) || beforeTabIds.has(tab.id) || protectedTabIds.has(tab.id)) return false;
     const url = String(tab.url || "");
     return /etsy\.com|google\.|bing\.com|1688\.com|taobao\.com/i.test(url);
   });
@@ -3692,7 +3692,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
           elapsedMs: Date.now() - toolStartedAt,
         };
         if (toolTimedOut) {
-          const closedTabIds = await closeTabsCreatedDuringTimedOutTool(tabsBeforeTool);
+          const closedTabIds = await closeTabsCreatedDuringTimedOutTool(tabsBeforeTool, new Set([tabId]));
           toolResult.closedTabIds = closedTabIds;
           toolResult.actionKind = toolAction.actionKind;
           toolResult.actionLabel = toolAction.actionLabel;

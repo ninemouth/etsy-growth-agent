@@ -3,10 +3,26 @@
 // jobs use this manager so cleanup is tied to workflow ownership.
 
 const ownedTabs = new Map();
+const protectedTabs = new Map();
 
 function workflowTabs(workflowId = "default") {
   if (!ownedTabs.has(workflowId)) ownedTabs.set(workflowId, new Set());
   return ownedTabs.get(workflowId);
+}
+
+function workflowProtectedTabs(workflowId = "default") {
+  if (!protectedTabs.has(workflowId)) protectedTabs.set(workflowId, new Set());
+  return protectedTabs.get(workflowId);
+}
+
+export function protectWorkflowTab(workflowId = "default", tabId) {
+  const id = Number(tabId);
+  if (Number.isInteger(id)) workflowProtectedTabs(workflowId).add(id);
+}
+
+export function isProtectedWorkflowTab(workflowId = "default", tabId) {
+  const id = Number(tabId);
+  return Number.isInteger(id) && Boolean(protectedTabs.get(workflowId)?.has(id));
 }
 
 export async function createOwnedTab({ workflowId = "default", url, active = false, openerTabId = null } = {}) {
@@ -42,6 +58,10 @@ export function registerOwnedTab(workflowId = "default", tabId) {
 export async function closeOwnedTab(workflowId = "default", tabId) {
   const id = Number(tabId);
   if (!Number.isInteger(id)) return false;
+  if (isProtectedWorkflowTab(workflowId, id)) {
+    ownedTabs.get(workflowId)?.delete(id);
+    return false;
+  }
   try {
     await chrome.tabs.remove(id);
   } catch (_) {
@@ -52,9 +72,11 @@ export async function closeOwnedTab(workflowId = "default", tabId) {
 }
 
 export async function cleanupOwnedTabs(workflowId = "default") {
-  const ids = Array.from(ownedTabs.get(workflowId) || []);
+  const protectedIds = protectedTabs.get(workflowId) || new Set();
+  const ids = Array.from(ownedTabs.get(workflowId) || []).filter((id) => !protectedIds.has(id));
   await Promise.all(ids.map((id) => closeOwnedTab(workflowId, id)));
   ownedTabs.delete(workflowId);
+  protectedTabs.delete(workflowId);
   return ids;
 }
 
@@ -62,4 +84,4 @@ export function listOwnedTabs(workflowId = "default") {
   return Array.from(ownedTabs.get(workflowId) || []);
 }
 
-export const __testInternals = { ownedTabs };
+export const __testInternals = { ownedTabs, protectedTabs };

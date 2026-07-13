@@ -13,7 +13,7 @@ import {
   requestWorkflowCancellation,
   saveWorkflowSnapshot,
 } from './modules/workflowRuntime.js';
-import { cleanupOwnedTabs } from './modules/browserSessionManager.js';
+import { cleanupOwnedTabs, protectWorkflowTab } from './modules/browserSessionManager.js';
 import {
   applyPendingRuntimeUpdate,
   checkForUpdates,
@@ -671,6 +671,7 @@ chrome.runtime.onConnect.addListener((port) => {
           }
           const checkpointKey = buildWorkflowCheckpointKey({ tabId: tab.id, matchedSkills, message });
           activeCheckpointKey = checkpointKey;
+          protectWorkflowTab(checkpointKey, tab.id);
           const lease = await acquireWorkflowLease(checkpointKey, portId);
           if (!lease.ok) {
             throw new Error("该 workflow 当前已由另一个执行实例占用，请等待其结束或断点过期后再恢复。");

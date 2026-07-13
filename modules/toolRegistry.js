@@ -334,8 +334,9 @@ function searchEvidenceSatisfied(payload, engine) {
   return hasProducts || visibleTextLength >= 120 || Boolean(pageData.title || pageData.h1);
 }
 
-async function closeTabQuietly(tabId) {
+async function closeTabQuietly(tabId, protectedTabId = null) {
   if (!tabId) return false;
+  if (Number.isInteger(Number(protectedTabId)) && Number(tabId) === Number(protectedTabId)) return false;
   return await new Promise((resolve) => {
     chrome.tabs.remove(parseInt(tabId), () => {
       resolve(!chrome.runtime.lastError);
@@ -1343,7 +1344,7 @@ export const tools = {
     } finally {
       if (openedByTool && !keepTab) {
         await closeOwnedTab(workflowId, targetTabId);
-        await closeTabQuietly(targetTabId);
+        await closeTabQuietly(targetTabId, __sourceTabId);
       }
       await restoreSourceTabFocus(__sourceTabId);
     }
@@ -2147,7 +2148,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
           settled = true;
           const payloadWithScreenshot = await attachSearchScreenshotArtifact(newTab.id, payload);
           if (shouldAutoCloseSearchTab) {
-            const closed = await closeTabQuietly(newTab.id);
+            const closed = await closeTabQuietly(newTab.id, __sourceTabId);
             await closeOwnedTab(workflowId, newTab.id);
             emitSearchProgress(
               closed ? "search_tab_closed" : "search_tab_close_failed",
