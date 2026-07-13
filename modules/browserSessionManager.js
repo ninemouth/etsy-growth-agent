@@ -9,10 +9,12 @@ function workflowTabs(workflowId = "default") {
   return ownedTabs.get(workflowId);
 }
 
-export async function createOwnedTab({ workflowId = "default", url, active = false } = {}) {
+export async function createOwnedTab({ workflowId = "default", url, active = false, openerTabId = null } = {}) {
   if (!url) throw new Error("url is required");
   const tab = await new Promise((resolve, reject) => {
-    chrome.tabs.create({ url, active }, (created) => {
+    const createArgs = { url, active };
+    if (Number.isInteger(Number(openerTabId))) createArgs.openerTabId = Number(openerTabId);
+    chrome.tabs.create(createArgs, (created) => {
       if (chrome.runtime.lastError || !created) {
         reject(new Error(chrome.runtime.lastError?.message || "Failed to create owned tab"));
       } else {
@@ -24,8 +26,10 @@ export async function createOwnedTab({ workflowId = "default", url, active = fal
   return tab;
 }
 
-export function createOwnedTabCallback({ workflowId = "default", url, active = false } = {}, callback) {
-  chrome.tabs.create({ url, active }, (tab) => {
+export function createOwnedTabCallback({ workflowId = "default", url, active = false, openerTabId = null } = {}, callback) {
+  const createArgs = { url, active };
+  if (Number.isInteger(Number(openerTabId))) createArgs.openerTabId = Number(openerTabId);
+  chrome.tabs.create(createArgs, (tab) => {
     if (!chrome.runtime.lastError && tab?.id !== undefined) workflowTabs(workflowId).add(tab.id);
     callback(tab);
   });

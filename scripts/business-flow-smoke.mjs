@@ -24,6 +24,7 @@ const backgroundSource = fs.readFileSync(path.join(root, "background.js"), "utf8
 const contentSource = fs.readFileSync(path.join(root, "content.js"), "utf8");
 const agentLoopSource = fs.readFileSync(path.join(root, "modules", "agentLoop.js"), "utf8");
 const toolRegistrySource = fs.readFileSync(path.join(root, "modules", "toolRegistry.js"), "utf8");
+const browserSessionManagerSource = fs.readFileSync(path.join(root, "modules", "browserSessionManager.js"), "utf8");
 const artifactStoreSource = fs.readFileSync(path.join(root, "modules", "artifactStore.js"), "utf8");
 const shopOptimizerSkillSource = fs.readFileSync(path.join(root, "skills", "etsy_global_shop_optimizer.skill.md"), "utf8");
 const productOpportunitySkillSource = fs.readFileSync(path.join(root, "skills", "etsy_product_opportunity_explorer.skill.md"), "utf8");
@@ -94,6 +95,11 @@ assert.match(toolRegistrySource, /executeGenericDomSnapshot[\s\S]*allFrames: tru
 assert.match(toolRegistrySource, /captureFullPageScreenshot[\s\S]*screenshotCaptureMode/, "Etsy evidence capture should use debugger-backed full-page screenshots with fallback");
 assert.match(agentLoopSource, /captureFullPageScreenshot[\s\S]*captureVisibleTab_viewport/, "Etsy detail-page loop screenshots should prefer full-page capture and retain viewport fallback");
 assert.match(toolRegistrySource, /createOwnedTab[\s\S]*closeOwnedTab/, "Etsy crawl tabs should have centralized workflow ownership");
+assert.match(browserSessionManagerSource, /openerTabId[\s\S]*chrome\.tabs\.create/, "workflow-created tabs should preserve the source tab as opener instead of replacing the shop page");
+assert.match(agentLoopSource, /__sourceTabId:\s*tabId/, "agent loop should pass the original source tab id into runtime tools");
+assert.match(toolRegistrySource, /getSourceOrCurrentTab[\s\S]*read_current_page/, "current-page tools should prefer the workflow source tab over whichever temporary tab is active");
+assert.match(toolRegistrySource, /restoreSourceTabFocus[\s\S]*search_tab_closed/, "browser searches should restore focus to the source shop tab after closing temporary evidence tabs");
+assert.match(toolRegistrySource, /protectedSourceTab[\s\S]*Refused to close source tab/, "close_tab must refuse to close the original source tab");
 assert.match(toolRegistrySource, /createOwnedTabCallback[\s\S]*search_in_browser[\s\S]*google_trends/, "browser search tabs should use workflow ownership");
 assert.match(toolRegistrySource, /image_search_1688[\s\S]*createOwnedTabCallback/, "image search tabs should use workflow ownership");
 assert.match(toolRegistrySource, /etsy_crawl_page_started[\s\S]*etsy_crawl_page_completed[\s\S]*etsy_crawl_completed/, "Etsy crawl should expose durable stage events rather than one opaque tool call");

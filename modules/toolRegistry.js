@@ -45,6 +45,33 @@ async function getCurrentTab() {
   return tab;
 }
 
+async function getSourceOrCurrentTab(sourceTabId = null) {
+  if (Number.isInteger(Number(sourceTabId))) {
+    try {
+      const tab = await chrome.tabs.get(Number(sourceTabId));
+      if (tab?.id) return tab;
+    } catch (_) {}
+  }
+  return await getCurrentTab();
+}
+
+async function restoreSourceTabFocus(sourceTabId = null) {
+  if (!Number.isInteger(Number(sourceTabId))) return false;
+  try {
+    const tab = await chrome.tabs.get(Number(sourceTabId));
+    if (!tab?.id) return false;
+    await new Promise((resolve) => chrome.tabs.update(Number(sourceTabId), { active: true }, () => resolve()));
+    if (Number.isInteger(Number(tab.windowId))) {
+      await new Promise((resolve) => chrome.windows?.update
+        ? chrome.windows.update(tab.windowId, { focused: true }, () => resolve())
+        : resolve());
+    }
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 function cachePreparedImage(dataUrl) {
   const ref = `__CLEAN_PRODUCT_IMAGE_${Date.now()}_${Math.random().toString(36).slice(2, 8)}__`;
   preparedImageCache.set(ref, dataUrl);
@@ -1057,8 +1084,8 @@ async function visualClickImageSearchSubmit(tabId) {
 }
 
 export const tools = {
-  read_current_page: async () => {
-    const tab = await getCurrentTab();
+  read_current_page: async (args = {}) => {
+    const tab = await getSourceOrCurrentTab(args.__sourceTabId);
     if (!tab) throw new Error("No active tab found");
     
     let cachedSelectors = null;
@@ -1111,6 +1138,7 @@ export const tools = {
       useCache = true,
       workflowId = "default",
       deepDetail = false,
+      __sourceTabId = null,
     } = args;
     const pageLimit = Math.max(1, Math.min(Number(maxPages) || 3, 10));
     const productLimit = Math.max(2, Math.min(Number(maxProductsPerPage) || 40, 80));
@@ -1128,11 +1156,11 @@ export const tools = {
 
     if (!targetTabId) {
       if (url) {
-        const created = await createOwnedTab({ workflowId, url: safeEncodeURI(url), active: true });
+        const created = await createOwnedTab({ workflowId, url: safeEncodeURI(url), active: true, openerTabId: __sourceTabId });
         targetTabId = created.id;
         openedByTool = true;
       } else {
-        const current = await getCurrentTab();
+        const current = await getSourceOrCurrentTab(__sourceTabId);
         if (!current) throw new Error("No active tab found");
         targetTabId = current.id;
         sourceUrl = current.url || "";
@@ -1317,6 +1345,7 @@ export const tools = {
         await closeOwnedTab(workflowId, targetTabId);
         await closeTabQuietly(targetTabId);
       }
+      await restoreSourceTabFocus(__sourceTabId);
     }
   },
 
@@ -1696,16 +1725,16 @@ Context:
     };
   },
 
-  extract_product_info: async () => {
-    const tab = await getCurrentTab();
+  extract_product_info: async (args = {}) => {
+    const tab = await getSourceOrCurrentTab(args.__sourceTabId);
     if (!tab) throw new Error("No active tab found");
     const result = await sendToContentScript(tab.id, { type: "EXTRACT_PRODUCT_INFO" });
     if (!result?.ok) throw new Error(result?.error || "Failed to extract product");
     return result.data;
   },
 
-  get_selected_text: async () => {
-    const tab = await getCurrentTab();
+  get_selected_text: async (args = {}) => {
+    const tab = await getSourceOrCurrentTab(args.__sourceTabId);
     if (!tab) throw new Error("No active tab found");
     const result = await sendToContentScript(tab.id, { type: "GET_SELECTED_TEXT" });
     if (!result?.ok) throw new Error(result?.error || "Failed to get selection");
@@ -1747,9 +1776,9 @@ Context:
   },
 
   click_by_text: async (args) => {
-    const { text } = args;
+    const { text, __sourceTabId = null } = args;
     if (!text) throw new Error("text is required");
-    const tab = await getCurrentTab();
+    const tab = await getSourceOrCurrentTab(__sourceTabId);
     if (!tab) throw new Error("No active tab found");
     const result = await sendToContentScript(tab.id, { type: "CLICK_BY_TEXT", text });
     if (result.ok) {
@@ -1759,8 +1788,8 @@ Context:
   },
 
   scroll_page: async (args) => {
-    const { direction = "down", amount = 800 } = args || {};
-    const tab = await getCurrentTab();
+    const { direction = "down", amount = 800, __sourceTabId = null } = args || {};
+    const tab = await getSourceOrCurrentTab(__sourceTabId);
     if (!tab) throw new Error("No active tab found");
     const result = await sendToContentScript(tab.id, {
       type: "SCROLL_PAGE",
@@ -1780,9 +1809,9 @@ Context:
   },
 
   navigate_to: async (args) => {
-    const { url } = args;
+    const { url, __sourceTabId = null } = args;
     if (!url) throw new Error("url is required");
-    const tab = await getCurrentTab();
+    const tab = await getSourceOrCurrentTab(__sourceTabId);
     if (!tab) throw new Error("No active tab found");
     
     return new Promise((resolve) => {
@@ -1981,7 +2010,7 @@ Context:
   },
 
   search_in_browser: async (args) => {
-    const { query, engine = "google", keepTab = false, searchType = "listing", workflowId = "default", __progress } = args;
+    const { query, engine = "google", keepTab = false, searchType = "listing", workflowId = "default", __progress, __sourceTabId } = args;
     if (!query) throw new Error("query is required");
     const emitSearchProgress = (stage, message, extra = {}) => {
       if (typeof __progress !== "function") return;
@@ -2025,7 +2054,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
     if (engine === "1688") {
       const searchUrl = "https://s.1688.com/";
       return new Promise((resolve) => {
-        createOwnedTabCallback({ workflowId, url: safeEncodeURI(searchUrl), active: true }, (newTab) => {
+        createOwnedTabCallback({ workflowId, url: safeEncodeURI(searchUrl), active: true, openerTabId: __sourceTabId }, (newTab) => {
           let attempts = 0;
           const maxAttempts = 20; // up to 10 seconds
           const checkLoad = setInterval(() => {
@@ -2045,8 +2074,10 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
                       keyword: targetQuery,
                       tabId: newTab.id
                     });
+                    await restoreSourceTabFocus(__sourceTabId);
                     resolve({ ok: true, tabId: newTab.id, searchUrl, queryUsed: targetQuery, pageData: searchRes.pageData || {} });
                   } catch (err) {
+                    await restoreSourceTabFocus(__sourceTabId);
                     resolve({ ok: true, tabId: newTab.id, searchUrl, queryUsed: targetQuery, pageData: {} });
                   }
                 }, 1500);
@@ -2107,7 +2138,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
 
       const runAttempt = (attempt, attemptIndex) => new Promise((resolve) => {
         emitSearchProgress("search_tab_opening", `${searchActionLabel} 正在打开临时标签页（第 ${attemptIndex + 1}/${searchAttempts.length} 次尝试）。`, { searchUrl: attempt.url });
-        createOwnedTabCallback({ workflowId, url: safeEncodeURI(attempt.url), active: true }, (newTab) => {
+        createOwnedTabCallback({ workflowId, url: safeEncodeURI(attempt.url), active: true, openerTabId: __sourceTabId }, (newTab) => {
         emitSearchProgress("search_tab_opened", `${searchActionLabel} 已打开临时标签页 tabId=${newTab.id}，开始等待页面可读。`, { tabId: newTab.id, searchUrl: attempt.url });
         let settled = false;
         let readInFlight = false;
@@ -2125,6 +2156,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
                 : `${searchActionLabel} 已保存证据，但临时标签页 tabId=${newTab.id} 未能自动关闭。`,
               { tabId: newTab.id, searchUrl: payload.searchUrl }
             );
+            await restoreSourceTabFocus(__sourceTabId);
             resolve({
               ...payloadWithScreenshot,
               tabClosed: closed,
@@ -2542,12 +2574,12 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
   },
 
   click_by_coordinate: async (args) => {
-    const { x, y, tabId, learnKind } = args;
+    const { x, y, tabId, learnKind, __sourceTabId = null } = args;
     if (x === undefined || y === undefined) throw new Error("x and y coordinates are required");
 
     let targetTabId = tabId;
     if (!targetTabId) {
-      const tab = await getCurrentTab();
+      const tab = await getSourceOrCurrentTab(__sourceTabId);
       if (!tab) throw new Error("No active tab found");
       targetTabId = tab.id;
     }
@@ -2558,11 +2590,11 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
   },
 
   open_new_tab: async (args) => {
-    const { url, readDelayMs = 1500, maxAttempts = 20, workflowId = "default" } = args;
+    const { url, readDelayMs = 1500, maxAttempts = 20, workflowId = "default", __sourceTabId = null } = args;
     if (!url) throw new Error("url is required");
     
     return new Promise((resolve, reject) => {
-      createOwnedTabCallback({ workflowId, url: safeEncodeURI(url), active: true }, (tab) => {
+      createOwnedTabCallback({ workflowId, url: safeEncodeURI(url), active: true, openerTabId: __sourceTabId }, (tab) => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
           return;
@@ -2601,6 +2633,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
                 try {
                   const data = await readPageDataFromTab(tab.id);
                   const evidenceOk = hasUsablePageEvidence(data);
+                  await restoreSourceTabFocus(__sourceTabId);
                   resolve({
                     ok: evidenceOk,
                     tabId: tab.id,
@@ -2612,6 +2645,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
                     readError: evidenceOk ? "" : "Page loaded but no usable DOM evidence was captured",
                   });
                 } catch (err) {
+                  await restoreSourceTabFocus(__sourceTabId);
                   resolve({
                     ok: false,
                     tabId: tab.id,
@@ -2632,9 +2666,13 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
   },
 
   close_tab: async (args) => {
-    const { tabId } = args;
+    const { tabId, __sourceTabId = null } = args;
     if (!tabId) throw new Error("tabId is required");
+    if (Number.isInteger(Number(__sourceTabId)) && Number(tabId) === Number(__sourceTabId)) {
+      return { ok: false, protectedSourceTab: true, message: `Refused to close source tab ${tabId}.` };
+    }
     await chrome.tabs.remove(parseInt(tabId));
+    await restoreSourceTabFocus(__sourceTabId);
     return { ok: true, message: `Tab ${tabId} closed.` };
   },
 

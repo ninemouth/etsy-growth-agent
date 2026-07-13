@@ -33,6 +33,7 @@ function toolRunKey(toolName, toolArgs = {}) {
   const dedupeArgs = { ...toolArgs };
   delete dedupeArgs.workflowGeneration;
   delete dedupeArgs.__progress;
+  delete dedupeArgs.__sourceTabId;
   return `${workflowId}:${toolName}:${JSON.stringify(stableToolValue(dedupeArgs))}`;
 }
 
@@ -1205,6 +1206,7 @@ function describeToolAction(toolName = "", toolArgs = {}, toolResult = null) {
 function stripRuntimeToolArgs(toolArgs = {}) {
   const clean = { ...toolArgs };
   delete clean.__progress;
+  delete clean.__sourceTabId;
   return clean;
 }
 
@@ -3640,6 +3642,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       try {
         const executableToolArgs = {
           ...toolArgs,
+          __sourceTabId: tabId,
           __progress: (stage = {}) => {
             const stageMessage = stage.message || `${toolAction.actionLabel} 正在执行`;
             sendProgress({
