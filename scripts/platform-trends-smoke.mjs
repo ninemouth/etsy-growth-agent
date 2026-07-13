@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   __testInternals,
+  autoRepairFinalReportForDelivery,
   isPlatformTrendSkill,
   validateReport,
 } from "../modules/agentLoop.js";
@@ -11,6 +12,16 @@ assert.equal(
   __testInternals.searchEvidenceKey({ engine: "google_trends", searchType: "listing", query: "  “Personalized   Wedding Clutch” " }),
   "google_trends:listing:personalized wedding clutch",
   "trend search dedupe keys should ignore quote, case, and whitespace drift",
+);
+assert.equal(
+  __testInternals.checkpointSkillMatches({ skillId: "skills/etsy_platform_trends.skill.md" }, "skills/etsy_global_shop_optimizer.skill.md"),
+  false,
+  "local latest checkpoint fallback must not restore a trend run into shop optimizer",
+);
+assert.equal(
+  __testInternals.checkpointSkillMatches({}, "skills/etsy_global_shop_optimizer.skill.md"),
+  false,
+  "legacy checkpoints without skillId should not cross skill boundaries",
 );
 
 const pageContext = {
@@ -136,6 +147,22 @@ const validReport = {
 };
 
 assert.deepEqual(validateReport(validReport, "", skillId, toolHistory, pageContext), [], "evidence-backed trend report should pass");
+
+const missingTrendVisualLedger = structuredClone(validReport);
+missingTrendVisualLedger.output.data[0].evidence_ledger = ledger.filter((entry) =>
+  !(entry.source_type === "screenshot_visual" && /Google Trends|trends\.google/i.test(`${entry.source_ref} ${entry.observed_value}`))
+);
+assert.ok(
+  validateReport(missingTrendVisualLedger, "", skillId, toolHistory, pageContext).some((error) => /Google Trends 截图视觉解读|趋势图视觉/.test(error)),
+  "trend report without visual screenshot ledger should fail before auto repair",
+);
+const repairedTrendVisualLedger = autoRepairFinalReportForDelivery(missingTrendVisualLedger, { skillId, toolHistory, pageContext });
+assert.equal(repairedTrendVisualLedger.changed, true, "auto repair should attach existing Google Trends screenshot evidence");
+assert.deepEqual(
+  validateReport(repairedTrendVisualLedger.parsed, "", skillId, toolHistory, pageContext),
+  [],
+  "auto repair should prevent non-substantive quality retry when Google Trends screenshot artifact exists",
+);
 
 const invalid = structuredClone(validReport);
 invalid.output.overview = "Google Trends 显著峰值，需求旺盛，完整市场价格分布为 $21-$62。";

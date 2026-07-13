@@ -466,6 +466,7 @@ export const __testInternals = {
   getPlatformTrendEvidenceState,
   getPlatformTrendStageGuard,
   compactPlatformTrendRunawayToolHistory,
+  checkpointSkillMatches,
 };
 
 async function saveAgentCheckpoint(sessionKey, checkpoint = {}) {
@@ -485,13 +486,28 @@ async function saveAgentCheckpoint(sessionKey, checkpoint = {}) {
   });
 }
 
-async function loadAgentCheckpoint(sessionKey) {
+function checkpointSkillMatches(checkpoint = {}, expectedSkillId = "") {
+  if (!expectedSkillId) return true;
+  if (!checkpoint?.skillId) return false;
+  return String(checkpoint.skillId) === String(expectedSkillId);
+}
+
+async function loadAgentCheckpoint(sessionKey, expectedSkillId = "") {
   if (!checkpointStorageAvailable()) return null;
   const data = await new Promise((resolve) => {
     chrome.storage.local.get([checkpointKey(sessionKey), CHECKPOINT_LATEST_KEY], resolve);
   });
-  const checkpoint = data[checkpointKey(sessionKey)] || data[CHECKPOINT_LATEST_KEY] || null;
+  const exactCheckpoint = data[checkpointKey(sessionKey)] || null;
+  if (exactCheckpoint) {
+    if (!checkpointSkillMatches(exactCheckpoint, expectedSkillId)) return null;
+    return {
+      ...exactCheckpoint,
+      messages: hydrateMessagesFromCheckpoint(exactCheckpoint.messages || []),
+    };
+  }
+  const checkpoint = data[CHECKPOINT_LATEST_KEY] || null;
   if (!checkpoint) return null;
+  if (!checkpointSkillMatches(checkpoint, expectedSkillId)) return null;
   return {
     ...checkpoint,
     messages: hydrateMessagesFromCheckpoint(checkpoint.messages || []),
@@ -1845,6 +1861,40 @@ function buildPageDomLedgerEntry({ sourceRef, observedValue }) {
   };
 }
 
+function getGoogleTrendsScreenshotEvidence(toolHistory = []) {
+  for (let i = toolHistory.length - 1; i >= 0; i--) {
+    const entry = toolHistory[i];
+    if (entry?.tool !== "search_in_browser") continue;
+    if (String(entry.arguments?.engine || "").toLowerCase() !== "google_trends") continue;
+    if (!hasValidGoogleTrendsEvidence(entry.result || {})) continue;
+    if (!entry.result?.screenshotRef && !entry.result?.screenshotCaptured) continue;
+    return {
+      query: entry.arguments?.query || entry.arguments?.keyword || entry.result?.queryUsed || "",
+      sourceRef: entry.result?.screenshotRef || entry.result?.searchUrl || entry.result?.pageData?.url || "Google Trends screenshot artifact",
+      searchUrl: entry.result?.searchUrl || entry.result?.pageData?.url || "",
+      captureMode: entry.result?.screenshotCaptureMode || "unknown",
+      observedValue: [
+        "Google Trends 页面已读取并保存趋势图截图 artifact。",
+        entry.result?.pageData?.visibleText ? `页面可见文本包含：${truncateText(entry.result.pageData.visibleText, 220)}` : "",
+      ].filter(Boolean).join(" "),
+    };
+  }
+  return null;
+}
+
+function buildGoogleTrendsScreenshotLedgerEntry(evidence = {}) {
+  const queryText = evidence.query ? `查询词：${evidence.query}；` : "";
+  const urlText = evidence.searchUrl ? `页面：${evidence.searchUrl}；` : "";
+  return {
+    source_type: "screenshot_visual",
+    source_ref: `Google Trends 截图 ${evidence.sourceRef || evidence.searchUrl || ""}`.trim(),
+    observed_value: `${queryText}${urlText}已取得 Google Trends 趋势图截图，需基于截图记录地区 US、近 12 个月时间范围、Interest over time 曲线、related queries/topics 和图表可见局限。${evidence.observedValue || ""}`,
+    used_for: "支撑趋势/季节性/需求曲线相关结论，并约束报告只能描述截图可见趋势，不得推断真实搜索量或 Etsy 订单。",
+    confidence: "medium",
+    limitation: `截图捕获方式 ${evidence.captureMode || "unknown"}；Google Trends 是相对热度，不等于 Etsy 平台搜索量、点击率、订单或转化率。`,
+  };
+}
+
 function looksLikeReportOutput(value = {}) {
   const narrativeFieldCount = ["overview", "analysis", "summary"].filter((key) =>
     typeof value?.[key] === "string" && value[key].trim().length > 0
@@ -1905,6 +1955,9 @@ export function autoRepairFinalReportForDelivery(parsed, {
   const hasEtsyApiEvidence = hasEvidenceSource(toolHistory, pageContext, "etsy_api");
   const pageDomEvidence = getBestPageDomEvidence(toolHistory, pageContext);
   const shouldAutoAttachPageDom = isShopOptimizerOnly(skillId) && pageDomEvidence;
+  const trendsScreenshotEvidence = getGoogleTrendsScreenshotEvidence(toolHistory);
+  const reportText = `${repaired.output.overview || ""}\n${repaired.output.analysis || ""}\n${repaired.output.summary || ""}\n${JSON.stringify(repaired.output.data || [])}`;
+  const reportUsesTrends = /Google Trends|谷歌趋势|趋势图|搜索趋势|搜索热度|季节性|需求曲线|Interest over time|related queries|related topics|峰值|peak/i.test(reportText);
 
   repaired.output.data.forEach((item, idx) => {
     if (!item || typeof item !== "object") return;
@@ -1913,6 +1966,12 @@ export function autoRepairFinalReportForDelivery(parsed, {
 
     if (shouldAutoAttachPageDom && !hasLedgerType(ledger, "page_dom")) {
       ledger.unshift(buildPageDomLedgerEntry(pageDomEvidence));
+      itemChanged = true;
+    }
+
+    const itemUsesTrends = reportUsesTrends || /Google Trends|谷歌趋势|趋势图|搜索趋势|搜索热度|季节性|需求曲线|Interest over time|related queries|related topics|峰值|peak/i.test(JSON.stringify(item));
+    if (isPlatformTrendSkill(skillId) && itemUsesTrends && trendsScreenshotEvidence && !hasTrendVisualForTrends(ledger)) {
+      ledger.push(buildGoogleTrendsScreenshotLedgerEntry(trendsScreenshotEvidence));
       itemChanged = true;
     }
 
@@ -1940,7 +1999,7 @@ export function autoRepairFinalReportForDelivery(parsed, {
     }
 
     if (itemChanged) {
-      reasons.push(`第 ${idx + 1} 项已补齐页面文本证据或降级 API/订单/履约类假设`);
+      reasons.push(`第 ${idx + 1} 项已补齐页面文本/Google Trends 截图证据或降级 API/订单/履约类假设`);
     }
   });
 
@@ -2085,7 +2144,7 @@ function hasTrendVisualForTrends(ledger = []) {
 function hasPositiveUnsupportedPrivateDataClaim(text = "") {
   return String(text || "").split(/[。！？!?.\n]/).some((sentence) =>
     TREND_FORBIDDEN_PRIVATE_DATA_RE.test(sentence) &&
-    !/不能|不可|不包含|未取得|未获取|未读取|无法|禁止|不得|not available|unavailable|cannot|no access|不支持/i.test(sentence)
+    !/不能|不可|不包含|不等于|未取得|未获取|未读取|无法|禁止|不得|not available|unavailable|cannot|no access|不支持/i.test(sentence)
   );
 }
 
@@ -2747,9 +2806,9 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     } else if (cached?.messages) {
       restoredCheckpoint = cached;
     } else {
-      restoredCheckpoint = await loadAgentCheckpoint(sessionKey);
+      restoredCheckpoint = await loadAgentCheckpoint(sessionKey, skillId);
     }
-    if (restoredCheckpoint?.skillId && restoredCheckpoint.skillId !== skillId) {
+    if (!checkpointSkillMatches(restoredCheckpoint, skillId)) {
       restoredCheckpoint = null;
     }
   }
