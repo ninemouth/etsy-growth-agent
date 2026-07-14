@@ -173,6 +173,7 @@ export function buildResearchScope({
   const path = parsedUrl?.pathname || "";
   const title = normalizeText(pageContext.title || "");
   const seedKeywords = inferSeedKeywords(pageContext, userInstruction, parsedUrl);
+  const explicitInstructionKeywords = extractInstructionKeywords(userInstruction);
   const listingId = extractListingIdFromUrl(url);
   const shopSlug = extractShopSlugFromUrl(url);
   const isEtsy = /(^|\.)etsy\.com$/i.test(host);
@@ -224,9 +225,9 @@ export function buildResearchScope({
     if (!targetName) missingInputs.push("keyword_or_category");
   } else if (url) {
     entryPageType = "external_page";
-    sourcePageRole = hasSpecificKeyword(seedKeywords) ? "user_keyword_only" : "unknown";
-    targetType = hasSpecificKeyword(seedKeywords) ? "keyword" : "unknown";
-    targetName = hasSpecificKeyword(seedKeywords) ? seedKeywords[0] : "";
+    sourcePageRole = hasSpecificKeyword(explicitInstructionKeywords) ? "user_keyword_only" : "unknown";
+    targetType = hasSpecificKeyword(explicitInstructionKeywords) ? "keyword" : "unknown";
+    targetName = hasSpecificKeyword(explicitInstructionKeywords) ? explicitInstructionKeywords[0] : "";
     confidence = targetName ? "medium" : "low";
     if (!targetName) missingInputs.push("etsy_keyword_or_category");
   } else {
@@ -250,10 +251,11 @@ export function buildResearchScope({
   }
 
   const weakEntry = ["etsy_home", "external_page", "unknown"].includes(entryPageType);
+  const weakContextKeywords = entryPageType === "external_page" ? explicitInstructionKeywords : seedKeywords;
   const needsUserClarification = Boolean(
     wantsTrend &&
     weakEntry &&
-    !hasSpecificKeyword(seedKeywords)
+    !hasSpecificKeyword(weakContextKeywords)
   );
   const recommendedNextAction = needsUserClarification
     ? activeShopId
