@@ -222,6 +222,7 @@ function compactToolResultForLLM(toolName = "", result = {}) {
     isCaptcha: result.isCaptcha,
     timedOut: result.timedOut,
     readError: result.readError,
+    evidence_quality: result.evidence_quality,
   };
 
   if (result.pageData && typeof result.pageData === "object") {
@@ -1201,6 +1202,18 @@ function describeToolAction(toolName = "", toolArgs = {}, toolResult = null) {
   if (toolName === "analyze_etsy_shop_crawl_screenshots") return { actionKind: "screenshot_interpretation", actionLabel: "店铺截图独立解读", lifecycle: "不打开新标签页，只分析已缓存截图 artifact" };
   if (toolName === "close_tab") return { actionKind: "tab_close", actionLabel: "关闭已完成取证的标签页", lifecycle: "关闭由 workflow 创建或指定的标签页" };
   return { actionKind: toolName || "tool", actionLabel: toolName || "工具执行", lifecycle: "" };
+}
+
+function formatEvidenceQualityForProgress(toolResult = {}) {
+  const quality = toolResult?.evidence_quality;
+  if (!quality || typeof quality !== "object") return "";
+  const parts = [
+    quality.load_state || "",
+    Number(quality.stable_reads || 0) ? `stableReads=${quality.stable_reads}` : "",
+    quality.screenshot_captured ? "screenshot=ok" : "",
+    quality.risk ? `risk=${quality.risk}` : "",
+  ].filter(Boolean);
+  return parts.length ? `；证据质量：${parts.join(", ")}` : "";
 }
 
 function stripRuntimeToolArgs(toolArgs = {}) {
@@ -3939,6 +3952,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         };
       }
       const completedToolAction = describeToolAction(toolName, toolArgs, toolResult);
+      const evidenceQualityNote = formatEvidenceQualityForProgress(toolResult);
       if (toolResult && typeof toolResult === "object") {
         toolResult.actionKind = toolResult.actionKind || completedToolAction.actionKind;
         toolResult.actionLabel = toolResult.actionLabel || completedToolAction.actionLabel;
@@ -3954,7 +3968,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         actionLabel: completedToolAction.actionLabel,
         tabLifecycle: completedToolAction.lifecycle,
         toolResult,
-        message: `${completedToolAction.actionLabel}执行完毕，已获取并保存相关证据。${completedToolAction.lifecycle ? `（${completedToolAction.lifecycle}）` : ""}`,
+        message: `${completedToolAction.actionLabel}执行完毕，已获取并保存相关证据${evidenceQualityNote}。${completedToolAction.lifecycle ? `（${completedToolAction.lifecycle}）` : ""}`,
       });
       await saveCheckpoint({
         status: toolTimedOut ? "tool_timeout" : "tool_completed",

@@ -666,6 +666,46 @@ function pageDataSignature(pageData = {}) {
   ].join("|");
 }
 
+function buildEvidenceQuality({
+  loadState = "",
+  readyReason = "",
+  stableReads = 0,
+  readinessElapsedMs = 0,
+  readinessAttempts = 0,
+  pageData = {},
+  screenshotCaptured = false,
+  screenshotRef = "",
+  evidenceOk = false,
+  timedOut = false,
+  isCaptcha = false,
+} = {}) {
+  const domEvidenceOk = Boolean(evidenceOk || hasUsablePageEvidence(pageData));
+  const state = loadState || readyReason || "";
+  const risk = isCaptcha || state === "verification_page" || state === "timeout_without_read"
+    ? "high"
+    : timedOut || state === "timeout_with_last_read" || !domEvidenceOk
+    ? "medium"
+    : "low";
+  return {
+    load_state: state || "unknown",
+    ready_reason: readyReason || state || "",
+    stable_reads: Number(stableReads || 0),
+    readiness_elapsed_ms: Number(readinessElapsedMs || 0),
+    readiness_attempts: Number(readinessAttempts || 0),
+    screenshot_captured: Boolean(screenshotCaptured || screenshotRef),
+    screenshot_ref: screenshotRef || "",
+    dom_evidence_ok: domEvidenceOk,
+    timed_out: Boolean(timedOut),
+    verification_required: Boolean(isCaptcha),
+    risk,
+    note: risk === "low"
+      ? "页面证据已稳定读取。"
+      : risk === "medium"
+      ? "页面证据可用但存在超时、截图或 DOM 稳定性限制。"
+      : "页面证据存在登录/验证/不可读等高风险限制。",
+  };
+}
+
 function recordPageDataInSession(pageData = {}) {
   if (Array.isArray(pageData.productCards)) {
     for (const card of pageData.productCards) {
@@ -934,6 +974,19 @@ async function collectEtsyListingDetailsForShop({
         stableReads: readiness.stableReads,
         readinessElapsedMs: readiness.elapsedMs,
         readinessAttempts: readiness.attempts,
+        evidence_quality: buildEvidenceQuality({
+          loadState: readiness.loadState,
+          readyReason: readiness.readyReason,
+          stableReads: readiness.stableReads,
+          readinessElapsedMs: readiness.elapsedMs,
+          readinessAttempts: readiness.attempts,
+          pageData,
+          screenshotCaptured: true,
+          screenshotRef: screenshotArtifact.ref,
+          evidenceOk: true,
+          timedOut: readiness.timedOut,
+          isCaptcha: readiness.isCaptcha,
+        }),
         pageData,
         screenshotRef: screenshotArtifact.ref,
         screenshotCaptureMode: screenshot.captureMode,
@@ -1548,6 +1601,19 @@ export const tools = {
           stableReads: readiness.stableReads,
           readinessElapsedMs: readiness.elapsedMs,
           readinessAttempts: readiness.attempts,
+          evidence_quality: buildEvidenceQuality({
+            loadState: readiness.loadState,
+            readyReason: readiness.readyReason,
+            stableReads: readiness.stableReads,
+            readinessElapsedMs: readiness.elapsedMs,
+            readinessAttempts: readiness.attempts,
+            pageData,
+            screenshotCaptured: Boolean(screenshotRef),
+            screenshotRef,
+            evidenceOk: hasUsablePageEvidence(pageData),
+            timedOut: readiness.timedOut,
+            isCaptcha: readiness.isCaptcha,
+          }),
           readError,
           screenshotCaptured: Boolean(screenshotRef),
           screenshotRef,
@@ -1841,6 +1907,19 @@ export const tools = {
           stableReads: readiness.stableReads,
           readinessElapsedMs: readiness.elapsedMs,
           readinessAttempts: readiness.attempts,
+          evidence_quality: buildEvidenceQuality({
+            loadState: readiness.loadState,
+            readyReason: readiness.readyReason,
+            stableReads: readiness.stableReads,
+            readinessElapsedMs: readiness.elapsedMs,
+            readinessAttempts: readiness.attempts,
+            pageData,
+            screenshotCaptured: Boolean(screenshotRef),
+            screenshotRef,
+            evidenceOk: hasUsablePageEvidence(pageData),
+            timedOut: readiness.timedOut,
+            isCaptcha: readiness.isCaptcha,
+          }),
           sampleCount: reviews.length,
           lowStarCount: reviews.filter((review) => Number(review.rating) > 0 && Number(review.rating) <= 3).length,
           reviews,
@@ -2131,6 +2210,17 @@ Context:
       }
       const pageData = readiness.pageData || {};
       const evidenceOk = hasUsablePageEvidence(pageData);
+      const evidenceQuality = buildEvidenceQuality({
+        loadState: readiness.loadState,
+        readyReason: readiness.readyReason,
+        stableReads: readiness.stableReads,
+        readinessElapsedMs: readiness.elapsedMs,
+        readinessAttempts: readiness.attempts,
+        pageData,
+        evidenceOk,
+        timedOut: readiness.timedOut,
+        isCaptcha: readiness.isCaptcha,
+      });
       return {
         ok: evidenceOk,
         tabId: created.id,
@@ -2144,6 +2234,7 @@ Context:
         stableReads: readiness.stableReads,
         readinessElapsedMs: readiness.elapsedMs,
         readinessAttempts: readiness.attempts,
+        evidence_quality: evidenceQuality,
         openedByTool: true,
         message: `Opened temporary tab and loaded: ${url}`,
         readError: evidenceOk ? "" : (readiness.readError || "Page loaded but no usable DOM evidence was captured"),
@@ -2464,6 +2555,13 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
           screenshotCaptureMode: screenshot.captureMode || "captureVisibleTab_viewport",
           screenshotPolicy: "Search page screenshot is stored as an artifact before the temporary tab is closed.",
           artifactStore: "indexeddb_blob_with_memory_fallback",
+          evidence_quality: buildEvidenceQuality({
+            ...payload,
+            screenshotCaptured: true,
+            screenshotRef: artifact.ref,
+            pageData: payload.pageData || {},
+            evidenceOk: payload.evidenceOk ?? payload.ok,
+          }),
         };
       } catch (err) {
         emitSearchProgress("search_screenshot_failed", `${searchActionLabel} 截图保存失败：${err.message}`, { tabId, searchUrl: payload.searchUrl });
@@ -2471,6 +2569,12 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
           ...payload,
           screenshotCaptured: false,
           screenshotError: err.message,
+          evidence_quality: buildEvidenceQuality({
+            ...payload,
+            screenshotCaptured: false,
+            pageData: payload.pageData || {},
+            evidenceOk: payload.evidenceOk ?? payload.ok,
+          }),
         };
       }
     };
@@ -2970,6 +3074,17 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
           }
           const pageData = readiness.pageData || {};
           const evidenceOk = hasUsablePageEvidence(pageData);
+          const evidenceQuality = buildEvidenceQuality({
+            loadState: readiness.loadState,
+            readyReason: readiness.readyReason,
+            stableReads: readiness.stableReads,
+            readinessElapsedMs: readiness.elapsedMs,
+            readinessAttempts: readiness.attempts,
+            pageData,
+            evidenceOk,
+            timedOut: readiness.timedOut,
+            isCaptcha: readiness.isCaptcha,
+          });
           await restoreSourceTabFocus(__sourceTabId);
           resolve({
             ok: evidenceOk,
@@ -2985,6 +3100,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
             stableReads: readiness.stableReads,
             readinessElapsedMs: readiness.elapsedMs,
             readinessAttempts: readiness.attempts,
+            evidence_quality: evidenceQuality,
             pageData,
             readError: evidenceOk ? "" : (readiness.readError || "Page loaded but no usable DOM evidence was captured"),
           });
