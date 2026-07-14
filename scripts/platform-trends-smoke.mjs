@@ -221,6 +221,41 @@ assert.deepEqual(
   "auto repair should prevent Critic redo when only the google_trends ledger entry was omitted",
 );
 
+const trendToolHistoryWithoutScreenshot = toolHistory.map((entry) => {
+  if (entry.tool !== "search_in_browser" || entry.arguments?.engine !== "google_trends") return entry;
+  const cloned = structuredClone(entry);
+  delete cloned.result.screenshotCaptured;
+  delete cloned.result.screenshotRef;
+  delete cloned.result.screenshotCaptureMode;
+  return cloned;
+});
+const missingTrendToolLedgerNoScreenshot = structuredClone(validReport);
+missingTrendToolLedgerNoScreenshot.output.data[0].evidence_ledger = ledger.filter((entry) =>
+  entry.source_type !== "google_trends" && !(entry.source_type === "screenshot_visual" && /Google Trends|trends\.google/i.test(`${entry.source_ref} ${entry.observed_value}`))
+);
+const repairedTrendToolWithoutScreenshot = autoRepairFinalReportForDelivery(missingTrendToolLedgerNoScreenshot, { skillId, toolHistory: trendToolHistoryWithoutScreenshot, pageContext });
+assert.equal(
+  repairedTrendToolWithoutScreenshot.parsed.output.data[0].evidence_ledger.some((entry) => entry.source_type === "google_trends"),
+  true,
+  "auto repair should add google_trends ledger from valid Trends tool evidence even when screenshot artifact is missing",
+);
+assert.equal(
+  repairedTrendToolWithoutScreenshot.parsed.output.data[0].evidence_ledger.some((entry) => entry.source_type === "screenshot_visual" && /Google Trends|trends\.google/i.test(`${entry.source_ref} ${entry.observed_value}`)),
+  false,
+  "auto repair must not invent Google Trends screenshot visual evidence when no screenshot artifact exists",
+);
+const noScreenshotErrors = validateReport(repairedTrendToolWithoutScreenshot.parsed, "", skillId, trendToolHistoryWithoutScreenshot, pageContext);
+assert.equal(
+  noScreenshotErrors.some((error) => /缺少 google_trends/.test(error)),
+  false,
+  "valid Trends tool evidence should prevent the misleading missing-google_trends Critic rejection",
+);
+assert.equal(
+  noScreenshotErrors.some((error) => /Google Trends 截图视觉解读|趋势图视觉/.test(error)),
+  true,
+  "missing Trends screenshot should remain a separate visual-evidence failure",
+);
+
 const invalid = structuredClone(validReport);
 invalid.output.overview = "Google Trends 显著峰值，需求旺盛，完整市场价格分布为 $21-$62。";
 invalid.output.analysis = "竞品转化率更高，评论区常见物流痛点，香港发货 7-14 工作日。";

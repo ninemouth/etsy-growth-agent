@@ -1927,6 +1927,28 @@ function getGoogleTrendsScreenshotEvidence(toolHistory = []) {
   return null;
 }
 
+function getGoogleTrendsToolEvidence(toolHistory = []) {
+  for (let i = toolHistory.length - 1; i >= 0; i--) {
+    const entry = toolHistory[i];
+    if (entry?.tool !== "search_in_browser") continue;
+    if (String(entry.arguments?.engine || "").toLowerCase() !== "google_trends") continue;
+    if (!hasValidGoogleTrendsEvidence(entry.result || {})) continue;
+    const pageData = entry.result?.pageData || {};
+    return {
+      query: entry.arguments?.query || entry.arguments?.keyword || entry.result?.queryUsed || "",
+      sourceRef: entry.result?.searchUrl || pageData.url || "Google Trends search evidence",
+      searchUrl: entry.result?.searchUrl || pageData.url || "",
+      captureMode: entry.result?.screenshotCaptureMode || "unknown",
+      observedValue: [
+        "Google Trends 页面已通过工具证据校验。",
+        pageData.title ? `页面标题：${truncateText(pageData.title, 120)}` : "",
+        pageData.visibleText ? `可见文本摘要：${truncateText(pageData.visibleText, 240)}` : "",
+      ].filter(Boolean).join(" "),
+    };
+  }
+  return null;
+}
+
 function getGoogleSearchEvidence(toolHistory = []) {
   for (let i = toolHistory.length - 1; i >= 0; i--) {
     const entry = toolHistory[i];
@@ -2057,6 +2079,7 @@ export function autoRepairFinalReportForDelivery(parsed, {
   const pageDomEvidence = getBestPageDomEvidence(toolHistory, pageContext);
   const shouldAutoAttachPageDom = isShopOptimizerOnly(skillId) && pageDomEvidence;
   const googleSearchEvidence = getGoogleSearchEvidence(toolHistory);
+  const trendsToolEvidence = getGoogleTrendsToolEvidence(toolHistory);
   const trendsScreenshotEvidence = getGoogleTrendsScreenshotEvidence(toolHistory);
   const reportText = `${repaired.output.overview || ""}\n${repaired.output.analysis || ""}\n${repaired.output.summary || ""}\n${JSON.stringify(repaired.output.data || [])}`;
   const reportUsesGoogleSearch = /Google Search|Google US|谷歌搜索|站外搜索|搜索结果|站外市场|欧美市场|市场调研|外部流量|站外需求/i.test(reportText);
@@ -2079,8 +2102,8 @@ export function autoRepairFinalReportForDelivery(parsed, {
     }
 
     const itemUsesTrends = reportUsesTrends || /Google Trends|谷歌趋势|趋势图|搜索趋势|搜索热度|季节性|需求曲线|Interest over time|related queries|related topics|峰值|peak/i.test(JSON.stringify(item));
-    if (isEtsyBusinessSkill(skillId) && itemUsesTrends && trendsScreenshotEvidence && !hasLedgerType(ledger, "google_trends")) {
-      ledger.push(buildGoogleTrendsToolLedgerEntry(trendsScreenshotEvidence));
+    if (isEtsyBusinessSkill(skillId) && itemUsesTrends && trendsToolEvidence && !hasLedgerType(ledger, "google_trends")) {
+      ledger.push(buildGoogleTrendsToolLedgerEntry(trendsToolEvidence));
       itemChanged = true;
     }
     if (isEtsyBusinessSkill(skillId) && itemUsesTrends && trendsScreenshotEvidence && !hasTrendVisualForTrends(ledger)) {
