@@ -2293,7 +2293,7 @@
         display: flex;
         flex-direction: column;
         z-index: 2147483642;
-        overflow: hidden;
+        overflow: visible;
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         color: var(--text-color);
       }
@@ -2457,69 +2457,120 @@
       }
 
       .chat-session-control {
-        padding: 10px 14px;
-        border-bottom: 1px solid var(--border-main);
-        background: var(--header-bg);
+        position: absolute;
+        left: -54px;
+        top: 82px;
+        width: 44px;
+        z-index: 4;
         display: flex;
         flex-direction: column;
+        align-items: center;
         gap: 8px;
+        pointer-events: auto;
       }
       .chat-session-row {
         display: flex;
+        flex-direction: column;
         align-items: center;
-        justify-content: space-between;
-        gap: 10px;
+        gap: 8px;
       }
       .chat-session-label {
-        font-size: 10px;
-        color: var(--text-secondary);
-        font-weight: 800;
-        text-transform: uppercase;
-        letter-spacing: 0;
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
       }
       .chat-session-mode-text {
-        font-size: 11px;
+        position: absolute;
+        left: 54px;
+        top: 0;
+        min-width: 178px;
+        max-width: 240px;
+        padding: 7px 10px;
+        border-radius: 10px;
+        border: 1px solid var(--border-main);
+        background: var(--bg-main);
+        box-shadow: 0 8px 24px var(--shadow-color);
+        font-size: 10px;
         color: var(--text-secondary);
         line-height: 1.35;
-        margin-top: 2px;
+        opacity: 0;
+        transform: translateX(-4px);
+        pointer-events: none;
+        transition: opacity 0.16s ease, transform 0.16s ease;
       }
       .chat-session-mode-text.resume {
         color: #005bff;
         font-weight: 700;
       }
+      .chat-session-control:hover .chat-session-mode-text {
+        opacity: 1;
+        transform: translateX(0);
+      }
       .chat-session-actions {
         display: flex;
+        flex-direction: column;
         gap: 6px;
-        flex-shrink: 0;
       }
       .chat-session-btn {
         border: 1px solid var(--border-main);
-        background: var(--input-bg);
+        background: var(--bg-main);
         color: var(--text-color);
-        border-radius: 8px;
-        padding: 6px 9px;
-        font-size: 11px;
-        font-weight: 700;
+        border-radius: 999px;
+        width: 42px;
+        height: 42px;
+        padding: 0;
+        font-size: 0;
+        font-weight: 800;
         cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 10px 28px var(--shadow-color);
+        transition: transform 0.18s ease, border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
       }
       .chat-session-btn:hover {
         border-color: #005bff;
         color: #005bff;
+        background: rgba(0,91,255,0.08);
+        transform: translateX(-2px);
+      }
+      .chat-session-btn svg {
+        width: 18px;
+        height: 18px;
+        stroke: currentColor;
+        stroke-width: 2.3;
+        fill: none;
+        stroke-linecap: round;
+        stroke-linejoin: round;
       }
       .chat-session-history-panel.hidden {
         display: none !important;
       }
       .chat-session-history-panel {
-        max-height: 190px;
+        position: absolute;
+        top: 68px;
+        left: 16px;
+        right: 16px;
+        z-index: 5;
+        max-height: 310px;
         overflow-y: auto;
         border: 1px solid var(--border-main);
-        border-radius: 10px;
-        background: var(--input-bg);
-        padding: 8px;
+        border-radius: 14px;
+        background: var(--bg-main);
+        box-shadow: 0 18px 50px var(--shadow-color);
+        padding: 10px;
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
       }
       .chat-session-history-item {
         border-bottom: 1px solid var(--border-main);
-        padding: 8px 0;
+        padding: 10px 2px;
       }
       .chat-session-history-item:last-child {
         border-bottom: none;
@@ -3173,20 +3224,22 @@
           </button>
         </div>
       </div>
-      <div class="chat-session-control">
+      <div class="chat-session-control" aria-label="会话控制">
         <div class="chat-session-row">
-          <div>
-            <div class="chat-session-label">会话模式</div>
-            <div class="chat-session-mode-text" id="chat-session-mode-text">新会话：不会沿用旧断点</div>
-          </div>
+          <div class="chat-session-label">会话模式</div>
+          <div class="chat-session-mode-text" id="chat-session-mode-text">新会话：不会沿用旧断点</div>
           <div class="chat-session-actions">
-            <button type="button" class="chat-session-btn" id="chat-new-session-btn">+ 新会话</button>
-            <button type="button" class="chat-session-btn" id="chat-session-history-btn">历史会话</button>
+            <button type="button" class="chat-session-btn" id="chat-new-session-btn" title="开启新会话" aria-label="开启新会话">
+              <svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            </button>
+            <button type="button" class="chat-session-btn" id="chat-session-history-btn" title="历史会话" aria-label="历史会话">
+              <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/></svg>
+            </button>
           </div>
         </div>
-        <div class="chat-session-history-panel hidden" id="chat-session-history-panel">
-          <div id="chat-session-history-list" class="chat-session-empty">暂无可恢复会话。</div>
-        </div>
+      </div>
+      <div class="chat-session-history-panel hidden" id="chat-session-history-panel">
+        <div id="chat-session-history-list" class="chat-session-empty">暂无可恢复会话。</div>
       </div>
       <div class="chat-body" id="chat-messages-container">
         <div class="msg assistant">

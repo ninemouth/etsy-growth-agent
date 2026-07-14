@@ -1906,6 +1906,33 @@ function buildPageDomLedgerEntry({ sourceRef, observedValue }) {
   };
 }
 
+function getEtsySearchEvidence(toolHistory = []) {
+  for (let i = toolHistory.length - 1; i >= 0; i--) {
+    const entry = toolHistory[i];
+    if (entry?.tool !== "search_in_browser") continue;
+    if (String(entry.arguments?.engine || "").toLowerCase() !== "etsy") continue;
+    if (!hasValidEtsySearchEvidence(entry.result || {})) continue;
+    const pageData = entry.result?.pageData || {};
+    const cards = Array.isArray(pageData.productCards) ? pageData.productCards : [];
+    const links = Array.isArray(pageData.productLinks) ? pageData.productLinks : [];
+    const prices = cards.map((card) => card.price).filter(Boolean).slice(0, 6).join(", ");
+    const titles = cards.map((card) => card.title || card.text).filter(Boolean).slice(0, 4).join("；");
+    return {
+      query: entry.arguments?.query || entry.arguments?.keyword || entry.result?.queryUsed || "",
+      sourceRef: entry.result?.searchUrl || pageData.url || "Etsy search evidence",
+      screenshotRef: entry.result?.screenshotRef || "",
+      screenshotCaptured: Boolean(entry.result?.screenshotCaptured),
+      observedValue: [
+        `Etsy 公开搜索页已读取，可见商品卡片 ${cards.length} 个、链接 ${links.length} 个。`,
+        prices ? `可见价格样本：${prices}。` : "",
+        titles ? `可见标题样本：${truncateText(titles, 240)}` : "",
+        pageData.visibleText ? `页面文本摘要：${truncateText(pageData.visibleText, 220)}` : "",
+      ].filter(Boolean).join(" "),
+    };
+  }
+  return null;
+}
+
 function getGoogleTrendsScreenshotEvidence(toolHistory = []) {
   for (let i = toolHistory.length - 1; i >= 0; i--) {
     const entry = toolHistory[i];
@@ -1992,6 +2019,19 @@ function buildGoogleSearchLedgerEntry(evidence = {}) {
   };
 }
 
+function buildEtsySearchLedgerEntry(evidence = {}) {
+  const queryText = evidence.query ? `查询词：${evidence.query}；` : "";
+  const screenshotText = evidence.screenshotRef || evidence.screenshotCaptured ? "；本轮已保留 Etsy 搜索结果页截图 artifact" : "";
+  return {
+    source_type: "etsy_search",
+    source_ref: evidence.sourceRef || "Etsy search evidence",
+    observed_value: `${queryText}${evidence.observedValue || "Etsy 公开搜索结果页可读，用于验证平台可见样本、价格带、标题词和竞品入口。"}${screenshotText}`,
+    used_for: "支撑 Etsy 平台公开搜索样本、价格带、可见商品共性和竞品入口判断；不得据此推断全平台搜索量、订单或转化率。",
+    confidence: "medium",
+    limitation: "Etsy Search Grid 只能代表本轮可见样本和查询口径，不代表全平台完整商品数、完整价格分布、真实销量或竞品后台数据。",
+  };
+}
+
 function buildGoogleTrendsToolLedgerEntry(evidence = {}) {
   const queryText = evidence.query ? `查询词：${evidence.query}；` : "";
   const ref = evidence.searchUrl || evidence.sourceRef || "Google Trends search evidence";
@@ -2016,6 +2056,75 @@ function buildGoogleTrendsScreenshotLedgerEntry(evidence = {}) {
     confidence: "medium",
     limitation: `截图捕获方式 ${evidence.captureMode || "unknown"}；Google Trends 是相对热度，不等于 Etsy 平台搜索量、点击率、订单或转化率。`,
   };
+}
+
+function getTrendCompetitorPageLedgerEntries(toolHistory = [], limit = 4) {
+  const entries = [];
+  const seen = new Set();
+  const pushPair = ({ url, title, visibleText, screenshotRef, screenshotCaptured, tool }) => {
+    const normalizedUrl = normalizeUrlForWorkflow(url);
+    if (!normalizedUrl || seen.has(normalizedUrl)) return;
+    if (!/etsy\.com\/(?:listing|shop)\//i.test(normalizedUrl)) return;
+    seen.add(normalizedUrl);
+    const label = /\/listing\//i.test(normalizedUrl) ? "竞品商品详情页" : "竞品店铺页";
+    entries.push({
+      source_type: "page_dom",
+      source_ref: `${label}: ${url}`,
+      observed_value: [
+        `${label}已通过 ${tool || "browser tool"} 读取页面文本。`,
+        title ? `标题：${truncateText(title, 120)}。` : "",
+        visibleText ? `可见文本摘要：${truncateText(visibleText, 260)}` : "",
+      ].filter(Boolean).join(" "),
+      used_for: "支撑趋势机会中的竞品定位、价格表达、评价/促销/定制信息和详情页结构对标。",
+      confidence: "medium",
+      limitation: "公开页面文本只能代表本轮可读取的页面状态，不能证明非公开经营数据或完整 SKU。",
+    });
+    if (screenshotRef || screenshotCaptured) {
+      entries.push({
+        source_type: "screenshot_visual",
+        source_ref: `${label}截图: ${screenshotRef || url}`,
+        observed_value: `${label}已保存截图 artifact，用于观察首图/画廊、视觉调性、促销标签和页面可见结构。`,
+        used_for: "支撑竞品视觉对标和页面陈列方法观察；不得据此推断点击率或转化率。",
+        confidence: "medium",
+        limitation: "截图只覆盖本轮捕获的可见页面或分段页面，不代表完整画廊、真实销量或后台表现。",
+      });
+    }
+  };
+
+  toolHistory.forEach((entry) => {
+    if (!["open_new_tab", "navigate_to"].includes(entry?.tool)) return;
+    const result = entry.result || {};
+    if (result.ok === false || result.error) return;
+    const pageData = result.pageData || {};
+    const url = result.finalUrl || result.url || pageData.url || entry.arguments?.url || "";
+    pushPair({
+      url,
+      title: pageData.title || pageData.h1 || result.title || "",
+      visibleText: pageData.visibleText || "",
+      screenshotRef: result.screenshotRef,
+      screenshotCaptured: result.screenshotCaptured,
+      tool: entry.tool,
+    });
+  });
+
+  toolHistory.forEach((entry) => {
+    if (!["collect_etsy_shop_pages", "collect_etsy_competitor_shops"].includes(entry?.tool)) return;
+    const result = entry.result || {};
+    if (result.ok === false || result.error) return;
+    const pages = entry.tool === "collect_etsy_competitor_shops" ? result.allPages : result.pages;
+    (Array.isArray(pages) ? pages : []).forEach((page) => {
+      pushPair({
+        url: page.url || page.competitorUrl || result.sourceUrl || "",
+        title: page.title || page.shopName || "",
+        visibleText: page.visibleTextSnippet || page.visibleText || "",
+        screenshotRef: page.screenshotRef,
+        screenshotCaptured: page.screenshotCaptured,
+        tool: entry.tool,
+      });
+    });
+  });
+
+  return entries.slice(0, Math.max(0, Number(limit) || 4));
 }
 
 function looksLikeReportOutput(value = {}) {
@@ -2078,9 +2187,11 @@ export function autoRepairFinalReportForDelivery(parsed, {
   const hasEtsyApiEvidence = hasEvidenceSource(toolHistory, pageContext, "etsy_api");
   const pageDomEvidence = getBestPageDomEvidence(toolHistory, pageContext);
   const shouldAutoAttachPageDom = isShopOptimizerOnly(skillId) && pageDomEvidence;
+  const etsySearchEvidence = getEtsySearchEvidence(toolHistory);
   const googleSearchEvidence = getGoogleSearchEvidence(toolHistory);
   const trendsToolEvidence = getGoogleTrendsToolEvidence(toolHistory);
   const trendsScreenshotEvidence = getGoogleTrendsScreenshotEvidence(toolHistory);
+  const trendCompetitorLedgerEntries = isPlatformTrendSkill(skillId) ? getTrendCompetitorPageLedgerEntries(toolHistory) : [];
   const reportText = `${repaired.output.overview || ""}\n${repaired.output.analysis || ""}\n${repaired.output.summary || ""}\n${JSON.stringify(repaired.output.data || [])}`;
   const reportUsesGoogleSearch = /Google Search|Google US|谷歌搜索|站外搜索|搜索结果|站外市场|欧美市场|市场调研|外部流量|站外需求/i.test(reportText);
   const reportUsesTrends = /Google Trends|谷歌趋势|趋势图|搜索趋势|搜索热度|季节性|需求曲线|Interest over time|related queries|related topics|峰值|peak/i.test(reportText);
@@ -2095,8 +2206,13 @@ export function autoRepairFinalReportForDelivery(parsed, {
       itemChanged = true;
     }
 
+    if (isPlatformTrendSkill(skillId) && etsySearchEvidence && !hasLedgerType(ledger, "etsy_search")) {
+      ledger.push(buildEtsySearchLedgerEntry(etsySearchEvidence));
+      itemChanged = true;
+    }
+
     const itemUsesGoogleSearch = reportUsesGoogleSearch || /Google Search|Google US|谷歌搜索|站外搜索|搜索结果|站外市场|欧美市场|市场调研|外部流量|站外需求/i.test(JSON.stringify(item));
-    if (isEtsyBusinessSkill(skillId) && itemUsesGoogleSearch && googleSearchEvidence && !hasLedgerType(ledger, "google_search")) {
+    if (isEtsyBusinessSkill(skillId) && (itemUsesGoogleSearch || isPlatformTrendSkill(skillId)) && googleSearchEvidence && !hasLedgerType(ledger, "google_search")) {
       ledger.push(buildGoogleSearchLedgerEntry(googleSearchEvidence));
       itemChanged = true;
     }
@@ -2108,6 +2224,11 @@ export function autoRepairFinalReportForDelivery(parsed, {
     }
     if (isEtsyBusinessSkill(skillId) && itemUsesTrends && trendsScreenshotEvidence && !hasTrendVisualForTrends(ledger)) {
       ledger.push(buildGoogleTrendsScreenshotLedgerEntry(trendsScreenshotEvidence));
+      itemChanged = true;
+    }
+    const itemUsesCompetitorEvidence = /竞品|头部|高排名|竞品视觉|主图|best.?seller|top shop|competitor|listing|shop/i.test(JSON.stringify(item));
+    if (isPlatformTrendSkill(skillId) && itemUsesCompetitorEvidence && !hasTrendCompetitorPageEvidence(ledger) && trendCompetitorLedgerEntries.length) {
+      ledger.push(...trendCompetitorLedgerEntries);
       itemChanged = true;
     }
 
@@ -2410,7 +2531,7 @@ function hasTrendVisualForTrends(ledger = []) {
 function hasPositiveUnsupportedPrivateDataClaim(text = "") {
   return String(text || "").split(/[。！？!?.\n]/).some((sentence) =>
     TREND_FORBIDDEN_PRIVATE_DATA_RE.test(sentence) &&
-    !/不能|不可|不包含|不等于|未取得|未获取|未读取|无法|禁止|不得|not available|unavailable|cannot|no access|不支持/i.test(sentence)
+    !/不能|不可|不包含|不等于|不代表|未取得|未获取|未读取|无法|禁止|不得|not available|unavailable|cannot|no access|不支持/i.test(sentence)
   );
 }
 

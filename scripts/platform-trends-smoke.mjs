@@ -102,6 +102,44 @@ const toolHistory = [
   },
 ];
 
+const competitorDetailHistory = [
+  ...toolHistory,
+  {
+    tool: "navigate_to",
+    arguments: { url: "https://www.etsy.com/listing/2/competitor-clutch" },
+    result: {
+      ok: true,
+      evidenceOk: true,
+      finalUrl: "https://www.etsy.com/listing/2/competitor-clutch",
+      screenshotCaptured: true,
+      screenshotRef: "artifact://competitor-detail-1.png",
+      pageData: {
+        url: "https://www.etsy.com/listing/2/competitor-clutch",
+        title: "Personalized Bridal Clutch",
+        h1: "Personalized Bridal Clutch",
+        visibleText: "Price $49. Bestseller. Personalized bridal clutch with satin lining and wedding gift positioning.",
+      },
+    },
+  },
+  {
+    tool: "navigate_to",
+    arguments: { url: "https://www.etsy.com/listing/3/competitor-evening-bag" },
+    result: {
+      ok: true,
+      evidenceOk: true,
+      finalUrl: "https://www.etsy.com/listing/3/competitor-evening-bag",
+      screenshotCaptured: true,
+      screenshotRef: "artifact://competitor-detail-2.png",
+      pageData: {
+        url: "https://www.etsy.com/listing/3/competitor-evening-bag",
+        title: "Beaded Evening Bag",
+        h1: "Beaded Evening Bag",
+        visibleText: "Price $58. Wedding guest evening bag with beaded detail, gift packaging and fast processing claims.",
+      },
+    },
+  },
+];
+
 const trendState = __testInternals.getPlatformTrendEvidenceState(toolHistory);
 assert.equal(trendState.searchStageComplete, true, "Etsy + Google Search + Google Trends screenshot should complete the trend search stage");
 const stageRedirect = __testInternals.getPlatformTrendStageGuard({
@@ -219,6 +257,37 @@ assert.deepEqual(
   validateReport(repairedTrendToolLedger.parsed, "", skillId, toolHistory, pageContext),
   [],
   "auto repair should prevent Critic redo when only the google_trends ledger entry was omitted",
+);
+
+const missingMandatoryLedgers = structuredClone(validReport);
+missingMandatoryLedgers.output.data[0].evidence_ledger = ledger.filter((entry) =>
+  !["etsy_search", "google_search"].includes(entry.source_type) &&
+  !/竞品|competitor|listing|shop/i.test(`${entry.source_ref} ${entry.observed_value} ${entry.used_for}`)
+);
+assert.ok(
+  validateReport(missingMandatoryLedgers, "", skillId, competitorDetailHistory, pageContext).some((error) => /Etsy 公开搜索证据|google_search|竞品/.test(error)),
+  "trend report with omitted mandatory ledgers should fail before auto repair",
+);
+const repairedMandatoryLedgers = autoRepairFinalReportForDelivery(missingMandatoryLedgers, { skillId, toolHistory: competitorDetailHistory, pageContext });
+assert.equal(
+  repairedMandatoryLedgers.parsed.output.data[0].evidence_ledger.some((entry) => entry.source_type === "etsy_search"),
+  true,
+  "auto repair should add Etsy search ledger from valid tool evidence",
+);
+assert.equal(
+  repairedMandatoryLedgers.parsed.output.data[0].evidence_ledger.some((entry) => entry.source_type === "google_search"),
+  true,
+  "auto repair should add Google Search ledger from valid tool evidence for trend reports",
+);
+assert.equal(
+  repairedMandatoryLedgers.parsed.output.data[0].evidence_ledger.filter((entry) => /竞品|competitor|listing|shop/i.test(`${entry.source_ref} ${entry.observed_value} ${entry.used_for}`)).length >= 2,
+  true,
+  "auto repair should add at least two competitor page/screenshot ledgers from opened detail pages",
+);
+assert.deepEqual(
+  validateReport(repairedMandatoryLedgers.parsed, "", skillId, competitorDetailHistory, pageContext),
+  [],
+  "auto repair should prevent Critic redo when mandatory trend ledgers were omitted but tool evidence exists",
 );
 
 const trendToolHistoryWithoutScreenshot = toolHistory.map((entry) => {

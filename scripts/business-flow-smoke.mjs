@@ -165,7 +165,16 @@ assert.ok(
   "session controls should be visible near the top of the main view instead of hidden below the instruction area"
 );
 assert.match(sidepanelSource, /pickLatestResumableSessionForContinue[\s\S]*legacyContinueInstruction[\s\S]*pickLatestResumableSessionForContinue/, "plain continue messages should auto-select the latest resumable checkpoint instead of creating a fresh session id");
-assert.match(contentSource, /chat-new-session-btn[\s\S]*\+ 新会话[\s\S]*chat-session-history-btn[\s\S]*历史会话/, "floating content overlay should expose direct new-session and session-history controls");
+assert.match(
+  contentSource,
+  /chat-session-control[\s\S]*chat-new-session-btn[\s\S]*aria-label="开启新会话"[\s\S]*chat-session-history-btn[\s\S]*aria-label="历史会话"[\s\S]*chat-session-history-panel/,
+  "floating content overlay should expose left-floating icon controls for new session and history"
+);
+assert.match(
+  contentSource,
+  /\.chat-session-control\s*\{[\s\S]*left:\s*-54px[\s\S]*flex-direction:\s*column[\s\S]*\.chat-session-history-panel\s*\{[\s\S]*position:\s*absolute[\s\S]*top:\s*68px/,
+  "floating session controls should live to the left of the chat and history should render as an overlay panel"
+);
 assert.match(contentSource, /pickLatestOverlayResumableSessionForContinue[\s\S]*legacyContinueInstruction[\s\S]*pickLatestOverlayResumableSessionForContinue/, "floating overlay plain continue messages should auto-select the latest resumable checkpoint");
 assert.match(contentSource, /workflowSessionId[\s\S]*continueSession[\s\S]*forceNewSession/, "floating overlay should pass explicit session intent into RUN_SKILL");
 assert.match(contentSource, /startOverlayNewSessionMode[\s\S]*不会沿用旧断点/, "floating overlay should make fresh-session mode visible instead of hidden behind implicit behavior");
