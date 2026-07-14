@@ -618,6 +618,7 @@ function getReadinessProfile(url = "", label = "") {
       minWaitMs: 2500,
       timeoutMs: 24000,
       pollMs: 700,
+      minStableReads: 2,
       ready: (pageData) => hasValidGoogleTrendsEvidence({ ok: true, pageData }),
       readyLabel: "google_trends_modules_ready",
     };
@@ -627,6 +628,7 @@ function getReadinessProfile(url = "", label = "") {
       minWaitMs: 1600,
       timeoutMs: 18000,
       pollMs: 650,
+      minStableReads: 2,
       ready: (pageData) => hasUsablePageEvidence(pageData),
       readyLabel: "etsy_dom_evidence_ready",
     };
@@ -635,9 +637,33 @@ function getReadinessProfile(url = "", label = "") {
     minWaitMs: 1200,
     timeoutMs: 12000,
     pollMs: 600,
+    minStableReads: 1,
     ready: (pageData) => hasUsablePageEvidence(pageData),
     readyLabel: "dom_evidence_ready",
   };
+}
+
+function pageDataSignature(pageData = {}) {
+  const text = String(pageData.visibleText || pageData.text || pageData.bodyText || "");
+  const links = Array.isArray(pageData.links) ? pageData.links.length : 0;
+  const productLinks = Array.isArray(pageData.productLinks) ? pageData.productLinks.length : 0;
+  const productCards = Array.isArray(pageData.productCards) ? pageData.productCards.length : 0;
+  const images = Array.isArray(pageData.images) ? pageData.images.length : 0;
+  const trendText = [
+    /interest over time|趋势变化|随时间变化/i.test(text) ? "trend_time" : "",
+    /related queries|related topics|相关查询|相关主题/i.test(text) ? "trend_related" : "",
+  ].filter(Boolean).join(",");
+  return [
+    pageData.url || "",
+    pageData.title || "",
+    pageData.h1 || "",
+    text.length,
+    links,
+    productLinks,
+    productCards,
+    images,
+    trendText,
+  ].join("|");
 }
 
 function recordPageDataInSession(pageData = {}) {
@@ -670,6 +696,7 @@ async function waitForTabReadiness(tabId, options = {}) {
     minWaitMs,
     timeoutMs,
     pollMs,
+    minStableReads,
     requireEvidence = true,
     progress,
   } = options || {};
@@ -677,6 +704,7 @@ async function waitForTabReadiness(tabId, options = {}) {
   const minStayMs = Math.max(250, Number(minWaitMs ?? profile.minWaitMs) || profile.minWaitMs);
   const deadlineMs = Math.max(minStayMs + 1000, Number(timeoutMs ?? profile.timeoutMs) || profile.timeoutMs);
   const intervalMs = Math.max(250, Number(pollMs ?? profile.pollMs) || profile.pollMs);
+  const requiredStableReads = Math.max(1, Number(minStableReads ?? profile.minStableReads) || profile.minStableReads || 1);
   const startedAt = Date.now();
   let attempts = 0;
   let lastTab = null;
@@ -684,6 +712,8 @@ async function waitForTabReadiness(tabId, options = {}) {
   let lastReadError = "";
   let completeSeenAt = 0;
   let emittedWaiting = false;
+  let lastSignature = "";
+  let stableReads = 0;
 
   const emit = (stage, message, extra = {}) => {
     if (typeof progress === "function") {
@@ -691,7 +721,7 @@ async function waitForTabReadiness(tabId, options = {}) {
     }
   };
 
-  emit("tab_readiness_wait_started", `${label} 已打开，等待页面完成加载并形成可读证据。`, { tabId, expectedUrl, minWaitMs: minStayMs, timeoutMs: deadlineMs });
+  emit("tab_readiness_wait_started", `${label} 已打开，等待页面完成加载并形成可读证据。`, { tabId, expectedUrl, minWaitMs: minStayMs, timeoutMs: deadlineMs, minStableReads: requiredStableReads });
 
   while (Date.now() - startedAt <= deadlineMs) {
     attempts++;
@@ -702,8 +732,10 @@ async function waitForTabReadiness(tabId, options = {}) {
         tab: lastTab,
         pageData: lastPageData,
         attempts,
+        stableReads,
         elapsedMs: Date.now() - startedAt,
         readiness: "cancelled",
+        loadState: "cancelled",
         readError: "Workflow cancellation requested while waiting for tab readiness",
       };
     }
@@ -716,8 +748,10 @@ async function waitForTabReadiness(tabId, options = {}) {
         tab: null,
         pageData: lastPageData,
         attempts,
+        stableReads,
         elapsedMs: Date.now() - startedAt,
         readiness: "tab_missing",
+        loadState: "tab_closed_or_missing",
         readError: err.message || "Tab closed or not found",
       };
     }
@@ -731,8 +765,10 @@ async function waitForTabReadiness(tabId, options = {}) {
         tab: lastTab,
         pageData: lastPageData,
         attempts,
+        stableReads,
         elapsedMs: Date.now() - startedAt,
         readiness: "verification_required",
+        loadState: "verification_page",
         readError: "Verification or login page detected",
       };
     }
@@ -746,15 +782,21 @@ async function waitForTabReadiness(tabId, options = {}) {
         const data = await readCompletePageData(tabId, { type: "READ_CURRENT_PAGE" });
         lastPageData = recordPageDataInSession(data?.data || {});
         lastReadError = "";
+        const signature = pageDataSignature(lastPageData);
+        stableReads = signature && signature === lastSignature ? stableReads + 1 : 1;
+        lastSignature = signature;
         const evidenceReady = profile.ready(lastPageData);
         const canReturnWithoutEvidence = !requireEvidence && minStaySatisfied && (lastTab?.status === "complete" || completeSeenAt);
-        if ((evidenceReady && minStaySatisfied) || canReturnWithoutEvidence) {
-          const readiness = evidenceReady ? profile.readyLabel : "load_complete_min_wait_satisfied";
+        const stableSatisfied = stableReads >= requiredStableReads;
+        if ((evidenceReady && minStaySatisfied && stableSatisfied) || (canReturnWithoutEvidence && stableSatisfied)) {
+          const readiness = evidenceReady ? "content_stable" : "load_complete_min_wait_satisfied";
           emit("tab_readiness_ready", `${label} 已完成加载等待并取得可读页面证据。`, {
             tabId,
             url: lastPageData.url || currentUrl,
             readiness,
+            readyReason: evidenceReady ? profile.readyLabel : readiness,
             attempts,
+            stableReads,
             elapsedMs,
           });
           return {
@@ -762,8 +804,11 @@ async function waitForTabReadiness(tabId, options = {}) {
             tab: lastTab,
             pageData: lastPageData,
             attempts,
+            stableReads,
             elapsedMs,
             readiness,
+            readyReason: evidenceReady ? profile.readyLabel : readiness,
+            loadState: readiness,
             readError: "",
           };
         }
@@ -778,6 +823,8 @@ async function waitForTabReadiness(tabId, options = {}) {
         tabId,
         url: currentUrl,
         elapsedMs,
+        stableReads,
+        minStableReads: requiredStableReads,
         status: lastTab?.status || "unknown",
       });
     }
@@ -790,8 +837,11 @@ async function waitForTabReadiness(tabId, options = {}) {
     tab: lastTab,
     pageData: lastPageData,
     attempts,
+    stableReads,
     elapsedMs: Date.now() - startedAt,
     readiness: hasUsablePageEvidence(lastPageData) ? "evidence_ready_after_timeout" : "readiness_timeout",
+    readyReason: hasUsablePageEvidence(lastPageData) ? "timeout_with_last_read" : "timeout_without_read",
+    loadState: hasUsablePageEvidence(lastPageData) ? "timeout_with_last_read" : "timeout_without_read",
     readError: lastReadError || "Timed out waiting for stable readable page evidence",
   };
 }
@@ -879,6 +929,9 @@ async function collectEtsyListingDetailsForShop({
         tabId,
         loaded: Boolean(readiness.tab),
         readiness: readiness.readiness,
+        loadState: readiness.loadState,
+        readyReason: readiness.readyReason,
+        stableReads: readiness.stableReads,
         readinessElapsedMs: readiness.elapsedMs,
         readinessAttempts: readiness.attempts,
         pageData,
@@ -1490,6 +1543,9 @@ export const tools = {
           visibleTextSnippet: summarizeVisibleText(pageData.visibleText),
           pageHealth: pageData.pageHealth || {},
           readiness: readiness.readiness,
+          loadState: readiness.loadState,
+          readyReason: readiness.readyReason,
+          stableReads: readiness.stableReads,
           readinessElapsedMs: readiness.elapsedMs,
           readinessAttempts: readiness.attempts,
           readError,
@@ -1780,6 +1836,9 @@ export const tools = {
           pageIndex,
           url: nextUrl,
           readiness: readiness.readiness,
+          loadState: readiness.loadState,
+          readyReason: readiness.readyReason,
+          stableReads: readiness.stableReads,
           readinessElapsedMs: readiness.elapsedMs,
           readinessAttempts: readiness.attempts,
           sampleCount: reviews.length,
@@ -2080,6 +2139,9 @@ Context:
         pageData: pageData || {},
         evidenceOk,
         readiness: readiness.readiness,
+        loadState: readiness.loadState,
+        readyReason: readiness.readyReason,
+        stableReads: readiness.stableReads,
         readinessElapsedMs: readiness.elapsedMs,
         readinessAttempts: readiness.attempts,
         openedByTool: true,
@@ -2420,6 +2482,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
         const attemptStartedAt = Date.now();
         const readinessProfile = getReadinessProfile(attempt.url, searchActionLabel);
         const minimumTabResidencyMs = Math.max(readinessProfile.minWaitMs, normalizedEngine === "google_trends" ? 2500 : normalizedEngine === "etsy" ? 1600 : 1200);
+        const requiredStableReads = Math.max(1, Number(readinessProfile.minStableReads) || 1);
         let settled = false;
         let readInFlight = false;
         const finish = async (payload) => {
@@ -2452,6 +2515,8 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
         };
 
         let pollCount = 0;
+        let lastSignature = "";
+        let stableReads = 0;
         const readResultPage = async () => {
           if (settled || readInFlight) return;
           if (workflowId !== "default" && await isWorkflowCancellationRequested(workflowId)) {
@@ -2477,6 +2542,9 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
             }
             const data = await readCompletePageData(newTab.id, { type: "READ_CURRENT_PAGE" });
             const pageData = data?.data || {};
+            const signature = pageDataSignature(pageData);
+            stableReads = signature && signature === lastSignature ? stableReads + 1 : 1;
+            lastSignature = signature;
             const payload = withSearchEvidenceStatus({
               ok: true,
               tabId: newTab.id,
@@ -2493,7 +2561,8 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
             const evidenceSatisfied = searchEvidenceSatisfied(payload, normalizedEngine);
             const stableWindowSatisfied = normalizedEngine !== "google_trends" || pollCount >= minStablePollAttempts;
             const residencySatisfied = Date.now() - attemptStartedAt >= minimumTabResidencyMs;
-            if ((evidenceSatisfied && stableWindowSatisfied && residencySatisfied) || pollCount >= maxPollAttempts) {
+            const contentStable = stableReads >= requiredStableReads;
+            if ((evidenceSatisfied && stableWindowSatisfied && residencySatisfied && contentStable) || pollCount >= maxPollAttempts) {
               clearInterval(checkLoad);
               emitSearchProgress(
                 evidenceSatisfied ? "search_evidence_ready" : "search_evidence_timeout",
@@ -2504,10 +2573,14 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
               );
               await finish({
                 ...payload,
-                readiness: evidenceSatisfied && residencySatisfied ? readinessProfile.readyLabel : "search_readiness_timeout",
+                readiness: evidenceSatisfied && residencySatisfied && contentStable ? "content_stable" : "search_readiness_timeout",
+                readyReason: evidenceSatisfied && residencySatisfied && contentStable ? readinessProfile.readyLabel : "search_readiness_timeout",
+                loadState: evidenceSatisfied && residencySatisfied && contentStable ? "content_stable" : "search_readiness_timeout",
+                stableReads,
                 readinessElapsedMs: Date.now() - attemptStartedAt,
                 readinessAttempts: pollCount,
                 minimumTabResidencyMs,
+                minStableReads: requiredStableReads,
               });
             }
           } catch (err) {
@@ -2907,6 +2980,9 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
             isCaptcha: Boolean(readiness.isCaptcha),
             evidenceOk,
             readiness: readiness.readiness,
+            loadState: readiness.loadState,
+            readyReason: readiness.readyReason,
+            stableReads: readiness.stableReads,
             readinessElapsedMs: readiness.elapsedMs,
             readinessAttempts: readiness.attempts,
             pageData,
