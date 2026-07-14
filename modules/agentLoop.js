@@ -2699,6 +2699,26 @@ function validatePlatformTrendToolResult(toolName, toolArgs = {}, toolResult = {
   return errors;
 }
 
+function validateResearchScopeConsistency(out = {}, skillId = "", pageContext = {}) {
+  const errors = [];
+  const scope = out.research_scope || pageContext?.research_scope || {};
+  const entryPageType = String(scope.entry_page_type || "");
+  const sourcePageRole = String(scope.source_page_role || "");
+  const seedKeywords = Array.isArray(scope.seed_keywords) ? scope.seed_keywords : [];
+  const fullText = `${out.overview || ""}\n${out.analysis || ""}\n${out.summary || ""}\n${JSON.stringify(out.data || [])}`;
+  if (!scope || !entryPageType) return errors;
+  if (sourcePageRole === "competitor_reference" && /你的店铺|你店|本店|自营店铺已|当前店铺已|our shop has|your shop has/i.test(fullText)) {
+    errors.push("当前页面是竞品公开参考，但报告把竞品页面写成自营店铺事实。请改为“竞品公开样本观察”。");
+  }
+  if (["etsy_home", "external_page", "unknown"].includes(entryPageType) && seedKeywords.length === 0 && /增长|优化|趋势|机会|建议|pursue|test|watch|avoid/i.test(fullText) && !/需要.*(关键词|类目|研究方向)|待明确|blocked|assumption|无法完成/i.test(fullText)) {
+    errors.push("当前页面是弱上下文且缺少明确关键词/类目，报告不得直接输出强增长动作；必须先要求用户补充研究范围。");
+  }
+  if (isShopOptimizerOnly(skillId) && !["own_shop", "own_listing"].includes(entryPageType) && /店铺体检|店铺诊断|ABC|整改|当前店铺|本店/i.test(fullText) && !/竞品|公开样本|待切换到自营店铺|需要自营店铺/i.test(fullText)) {
+    errors.push("店铺体检/优化必须基于自营店铺或明确说明当前只是竞品/弱上下文；不能把非自营页面写成当前店铺诊断。");
+  }
+  return errors;
+}
+
 export function validateReport(parsed, userInstruction, skillId, toolHistory = [], pageContext = {}) {
   const errors = [];
   if (!parsed || parsed.type !== "final" || !parsed.output) {
@@ -2709,6 +2729,9 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
   if (!out.overview || !out.analysis || !out.summary || !Array.isArray(out.data)) {
     errors.push("final 报告缺少必须的属性（overview, analysis, summary 或 data 数组）");
     return errors;
+  }
+  if (isEtsyBusinessSkill(skillId)) {
+    errors.push(...validateResearchScopeConsistency(out, skillId, pageContext));
   }
 
   if (isComplianceSkill(skillId)) {

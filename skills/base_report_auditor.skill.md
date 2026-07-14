@@ -7,6 +7,13 @@
 ## 📐 Etsy 报告设计基本架构 (Etsy Report Blueprint)
 任何 Etsy Skill 产生的分析报告，其最终的 JSON 输出（"overview", "analysis", "summary", "data"）必须以此框架为基准，并在此之上结合具体业务 Skill 自由发挥：
 
+0. **研究范围与页面角色 (Research Scope)**:
+   - 所有 Etsy Skill 都必须先读取当前上下文中的 `research_scope`，识别当前页面是 `own_shop`、`own_listing`、`etsy_search`、`competitor_shop`、`competitor_listing`、`etsy_home`、`external_page` 还是 `unknown`。
+   - 如果 `source_page_role=competitor_reference`，当前页面只能作为公开对标样本，严禁把竞品页面写成“你的店铺/本店/自营商品”的事实。
+   - 如果当前是 `etsy_home`、`external_page` 或 `unknown` 且缺少明确关键词、类目或商品目标，不得直接输出强增长结论；必须要求用户补充研究方向，或将结论降级为 `blocked/assumption`。
+   - 如果当前是 `own_shop` 或 `own_listing`，报告必须说明结论与当前店铺/商品的适配度，不能只输出泛平台建议。
+   - 最终报告的 overview 或 analysis 必须用业务语言说明当前页面角色和研究范围，不得暴露内部字段名。
+
 1. **全局概述 (Overview)**:
    - **核心要素**：必须包含当前的 **目标市场定位：Etsy 主要欧美礼品市场**、**Etsy 平台上下文**、**欧美买家决策敏感点**，以及本次探索的 **任务广度与核心发现**。
    - **格式要求**：首行标题必须使用一级或二级 Markdown 标题，描述清晰干练。
@@ -27,6 +34,9 @@
    - **店铺优化类实体字段**：当任务是店铺诊断、运营优化、分级整改或 ABC 方案时，优先使用 `plan_id`、`diagnosis_level`、`direction`、`evidence`、`expected_impact`、`first_actions`、`risk_guard`。不得为了满足模板而编造 `product_link` 或采购价。
    - **证据字段要求**：每个 `data` 对象都必须有与该任务匹配的证据字段，例如 `trend_evidence`、`evidence`、`diagnosis_basis` 或 `selection_rationale`，且必须具体说明页面、截图、API、搜索结果或用户提供数据来源。
    - **证据账本要求**：每个 `data` 对象必须包含 `evidence_ledger` 数组；数组里的每条证据必须包含 `source_type`、`source_ref`、`observed_value`、`used_for`、`confidence`、`limitation`，并区分真实工具/页面/API/搜索趋势/供应商页面结果与待验证假设。
+   - **证据来源双轨**：必须区分自营个人 API 事实、当前页面事实、公开市场/竞品页面事实、Google Search/Trends 事实、官方政策/法规和模型假设。推荐 `source_type` 语义为：`own_shop_api`、`own_listing_api`、`own_order_api`、`own_shipping_api`、`current_page_dom`、`current_page_screenshot`、`etsy_search`、`competitor_page_dom`、`competitor_screenshot`、`google_search`、`google_trends`、`official_policy`、`official_regulation`、`supplier_page`、`user_input`、`assumption`。如果具体 skill 仍使用旧类型 `page_dom` 或 `screenshot_visual`，必须在 `source_ref/used_for` 里说明是当前页面还是竞品页面。
+   - **个人 API 边界**：Etsy 个人卖家 API 只能作为当前授权自营店铺事实来源，不得支撑竞品订单、竞品转化率、平台搜索量、Sessions、点击率或加购率。
+   - **证据质量**：如果工具结果提供 `evidence_quality`、`loadState`、`stableReads` 或截图状态，必须在 evidence ledger 的 `limitation` 或 `observed_value` 中吸收关键限制；`timeout_with_last_read` 不能写成高置信完整证据。
    - **字段汉化与自适应**：每个字段的属性名必须符合标准英文 Key，属性值必须为具体翻译好的中文或标准化数据，**绝对禁止输出 `[object Object]` 或未序列化的 JSON**。
 
 ---

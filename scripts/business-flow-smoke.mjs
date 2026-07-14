@@ -28,6 +28,7 @@ const toolRegistrySource = fs.readFileSync(path.join(root, "modules", "toolRegis
 const browserSessionManagerSource = fs.readFileSync(path.join(root, "modules", "browserSessionManager.js"), "utf8");
 const artifactStoreSource = fs.readFileSync(path.join(root, "modules", "artifactStore.js"), "utf8");
 const shopOptimizerSkillSource = fs.readFileSync(path.join(root, "skills", "etsy_global_shop_optimizer.skill.md"), "utf8");
+const baseAuditorSkillSource = fs.readFileSync(path.join(root, "skills", "base_report_auditor.skill.md"), "utf8");
 const productOpportunitySkillSource = fs.readFileSync(path.join(root, "skills", "etsy_product_opportunity_explorer.skill.md"), "utf8");
 const sourcingSkillSource = fs.readFileSync(path.join(root, "skills", "etsy_sourcing_finder.skill.md"), "utf8");
 const operationsSkillSource = fs.readFileSync(path.join(root, "skills", "etsy_operations_tracker.skill.md"), "utf8");
@@ -121,6 +122,7 @@ assert.match(backgroundSource, /buildResearchScope[\s\S]*pageContext\.research_s
 assert.match(agentLoopSource, /当前研究范围与页面角色[\s\S]*source_page_role 是 competitor_reference[\s\S]*entry_page_type 是 etsy_home/, "agent loop prompt should make research_scope a first-class execution constraint");
 assert.match(contentSource, /CLARIFICATION_REQUIRED[\s\S]*需要先明确研究范围/, "floating overlay should render weak-context clarification instead of treating it as a generic failure");
 assert.match(sidepanelSource, /CLARIFICATION_REQUIRED[\s\S]*需要先明确研究范围/, "sidepanel should render weak-context clarification instead of treating it as a generic failure");
+assert.match(baseAuditorSkillSource, /研究范围与页面角色[\s\S]*competitor_reference[\s\S]*个人 API 边界[\s\S]*证据质量/, "base auditor should make research scope, API/public evidence boundaries, and evidence quality mandatory across skills");
 
 const ownShopScope = buildResearchScope({
   pageContext: {
@@ -167,6 +169,41 @@ const etsySearchScope = buildResearchScope({
 });
 assert.equal(etsySearchScope.entry_page_type, "etsy_search", "research scope should recognize Etsy search pages");
 assert.equal(etsySearchScope.target_entity.name, "wedding clutch", "research scope should extract Etsy search query as target keyword");
+
+const competitorContextForShopOptimizer = {
+  url: "https://www.etsy.com/shop/TopWeddingClutch",
+  title: "TopWeddingClutch - Etsy",
+  research_scope: competitorShopScope,
+};
+const competitorAsSelfShopReport = {
+  type: "final",
+  output: {
+    overview: "## 店铺体检\n当前店铺已具备婚礼包趋势优势。",
+    analysis: "本店需要继续强化主图。",
+    summary: "你的店铺下一步做 ABC 整改。",
+    data: [{
+      plan_id: "A-1",
+      diagnosis_level: "A",
+      direction: "优化当前店铺主图",
+      evidence: "竞品页面可见样本。",
+      expected_impact: "提升转化。",
+      first_actions: ["改主图"],
+      risk_guard: "待验证。",
+      evidence_ledger: [{
+        source_type: "page_dom",
+        source_ref: "https://www.etsy.com/shop/TopWeddingClutch",
+        observed_value: "竞品店铺公开页面。",
+        used_for: "页面角色一致性测试。",
+        confidence: "medium",
+        limitation: "竞品页面不能代表自营店铺。",
+      }],
+    }],
+  },
+};
+assert.ok(
+  validateReport(competitorAsSelfShopReport, "", "skills/etsy_global_shop_optimizer.skill.md", [], competitorContextForShopOptimizer).some((error) => /竞品公开参考|非自营页面|自营店铺事实/.test(error)),
+  "global research-scope validation should block treating competitor pages as own-shop diagnosis",
+);
 assert.match(sidepanelSource, /msg\.type === "llm_heartbeat"[\s\S]*AI 正在基于已采集证据规划下一步/, "sidepanel should show LLM heartbeat progress instead of appearing stuck between tool calls");
 assert.match(sidepanelSource, /msg\.type === "llm_retry"[\s\S]*msg\.type === "llm_error"/, "sidepanel should show bounded LLM network recovery state");
 assert.match(agentLoopSource, /etsyAgentCheckpoint:/, "agent loop should persist resumable workflow checkpoints");
