@@ -3132,6 +3132,15 @@ ${availableTools}
 ## 当前页面上下文
 ${JSON.stringify(ctxForPrompt, null, 2)}
 
+## 当前研究范围与页面角色
+${ctxForPrompt.research_scope ? JSON.stringify(ctxForPrompt.research_scope, null, 2) : "未识别到 research_scope。请先通过 read_current_page 确认页面角色。"}
+
+你必须遵守 research_scope：
+- 如果 source_page_role 是 competitor_reference，当前页面只能作为竞品公开样本，不能写成自营店铺事实。
+- 如果 entry_page_type 是 etsy_home、external_page 或 unknown，且缺少明确 seed_keywords，不得输出强趋势或增长结论。
+- 如果 entry_page_type 是 own_shop 或 own_listing，趋势和优化结论必须说明与当前自营店铺/商品的适配度。
+- Search Grid 只能代表本轮可见样本，不能写成完整平台数据。
+
 ## 用户核心焦点 (User Core Focus)
 ${userInstruction ? `用户补充了以下核心探索方向。这是你的**最高优先级探索目标**。请你**必须将第一步的动作（search_web 或 click），以及后续的所有推演，全部紧紧围绕该主题展开**。但同时，仍需遵守 Skill 中定义的所有避坑与打分原则。\n用户的核心方向是：\n"${userInstruction}"` : "（无额外焦点。请严格按 skill 流程自主探索。）"}
 

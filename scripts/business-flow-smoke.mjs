@@ -12,6 +12,7 @@ import {
   validateReport,
 } from "../modules/agentLoop.js";
 import { hasValidEtsySearchEvidence, hasValidGoogleTrendsEvidence } from "../modules/toolRegistry.js";
+import { buildResearchScope, shouldClarifyResearchScope } from "../modules/researchScope.js";
 
 const wait = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 const root = process.cwd();
@@ -116,6 +117,56 @@ assert.match(toolRegistrySource, /etsy_screenshot_observation_started[\s\S]*etsy
 assert.match(sidepanelSource, /msg\.type === "llm_started"/, "sidepanel should show LLM request payload telemetry");
 assert.match(sidepanelSource, /msg\.type === "tool_stage"/, "sidepanel should show concrete browser tool stages");
 assert.match(contentSource, /data\.type === "tool_stage"/, "floating overlay should show concrete browser tool stages");
+assert.match(backgroundSource, /buildResearchScope[\s\S]*pageContext\.research_scope[\s\S]*shouldClarifyResearchScope/, "background should build research_scope before running Etsy workflows and block weak trend scope");
+assert.match(agentLoopSource, /当前研究范围与页面角色[\s\S]*source_page_role 是 competitor_reference[\s\S]*entry_page_type 是 etsy_home/, "agent loop prompt should make research_scope a first-class execution constraint");
+assert.match(contentSource, /CLARIFICATION_REQUIRED[\s\S]*需要先明确研究范围/, "floating overlay should render weak-context clarification instead of treating it as a generic failure");
+assert.match(sidepanelSource, /CLARIFICATION_REQUIRED[\s\S]*需要先明确研究范围/, "sidepanel should render weak-context clarification instead of treating it as a generic failure");
+
+const ownShopScope = buildResearchScope({
+  pageContext: {
+    url: "https://www.etsy.com/shop/MidnightReveriee",
+    title: "MidnightReveriee - Etsy",
+    h1: "MidnightReveriee",
+  },
+  activeShopId: "shop-1",
+  shops: [{ id: "shop-1", name: "MidnightReveriee", shopId: "MidnightReveriee" }],
+  growthActionId: "explore_platform_trends",
+});
+assert.equal(ownShopScope.entry_page_type, "own_shop", "research scope should recognize bound self shop pages");
+assert.equal(ownShopScope.source_page_role, "self_reference", "bound self shop pages should be self references");
+assert.equal(shouldClarifyResearchScope(ownShopScope), false, "self shop trend runs should not require scope clarification");
+
+const competitorShopScope = buildResearchScope({
+  pageContext: {
+    url: "https://www.etsy.com/shop/TopWeddingClutch",
+    title: "TopWeddingClutch - Etsy",
+    h1: "TopWeddingClutch",
+  },
+  activeShopId: "shop-1",
+  shops: [{ id: "shop-1", name: "MidnightReveriee", shopId: "MidnightReveriee" }],
+  userInstruction: "分析这个竞品店铺趋势",
+  growthActionId: "explore_platform_trends",
+});
+assert.equal(competitorShopScope.entry_page_type, "competitor_shop", "research scope should not treat unmatched shop pages as self shop");
+assert.equal(competitorShopScope.source_page_role, "competitor_reference", "unmatched shop pages should be competitor references");
+
+const etsyHomeWeakScope = buildResearchScope({
+  pageContext: { url: "https://www.etsy.com/", title: "Etsy" },
+  userInstruction: "分析平台趋势",
+  growthActionId: "explore_platform_trends",
+});
+assert.equal(etsyHomeWeakScope.entry_page_type, "etsy_home", "research scope should recognize Etsy home as weak context");
+assert.equal(shouldClarifyResearchScope(etsyHomeWeakScope), true, "Etsy home trend runs without a keyword should request clarification");
+
+const etsySearchScope = buildResearchScope({
+  pageContext: {
+    url: "https://www.etsy.com/search?q=wedding%20clutch",
+    title: "Wedding clutch - Etsy",
+  },
+  growthActionId: "explore_platform_trends",
+});
+assert.equal(etsySearchScope.entry_page_type, "etsy_search", "research scope should recognize Etsy search pages");
+assert.equal(etsySearchScope.target_entity.name, "wedding clutch", "research scope should extract Etsy search query as target keyword");
 assert.match(sidepanelSource, /msg\.type === "llm_heartbeat"[\s\S]*AI 正在基于已采集证据规划下一步/, "sidepanel should show LLM heartbeat progress instead of appearing stuck between tool calls");
 assert.match(sidepanelSource, /msg\.type === "llm_retry"[\s\S]*msg\.type === "llm_error"/, "sidepanel should show bounded LLM network recovery state");
 assert.match(agentLoopSource, /etsyAgentCheckpoint:/, "agent loop should persist resumable workflow checkpoints");

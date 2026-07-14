@@ -667,6 +667,12 @@ async function runSkill() {
         }
         showError(message.error);
         cleanupPort();
+      } else if (message.type === "CLARIFICATION_REQUIRED") {
+        if (typeof removeCaptchaAlertBanner === "function") removeCaptchaAlertBanner();
+        const payload = message.result || {};
+        addLog("info", "ℹ️", payload.result || "需要先明确研究范围。");
+        showError(payload.result || "当前页面不足以确定趋势研究范围，请输入 Etsy 关键词或类目后重新启动。");
+        cleanupPort();
       } else if (message.type === "INTERRUPTED") {
         if (typeof removeCaptchaAlertBanner === "function") removeCaptchaAlertBanner();
         const reason = message.result?.result || message.resumeHint || "工作流已保存断点，可发送“继续”恢复。";

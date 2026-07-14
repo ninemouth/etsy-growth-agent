@@ -4107,6 +4107,22 @@
               log(`↩ ${message.resumeHint}`);
             }
             finishGrowthRun("failed", message.error || "unknown error").catch((err) => console.warn("Failed to finish growth run:", err.message));
+          } else if (message.type === "CLARIFICATION_REQUIRED") {
+            statusDot.className = "status-dot";
+            activeAgentPort = null;
+            updateChatRunControls({ running: false });
+            const payload = message.result || {};
+            log(`ℹ️ ${payload.result || "需要先明确研究范围。"}`);
+            addMessage("assistant", [
+              "### 需要先明确研究范围",
+              "",
+              payload.result || "当前页面不足以确定趋势研究范围，请输入一个 Etsy 关键词或类目后重新启动。",
+              "",
+              Array.isArray(payload.options) && payload.options.length
+                ? payload.options.map((item, idx) => `${idx + 1}. ${item}`).join("\n")
+                : "",
+            ].filter(Boolean).join("\n"), true, null, message.skillId || "");
+            finishGrowthRun("interrupted", payload.result || "clarification_required").catch((err) => console.warn("Failed to save clarification-required growth run:", err.message));
           } else if (message.type === "INTERRUPTED") {
             statusDot.className = "status-dot";
             activeAgentPort = null;

@@ -23,6 +23,11 @@ import {
   markRuntimeUpdateAvailable,
   saveUpdateSettings,
 } from './modules/updateManager.js';
+import {
+  buildResearchScope,
+  buildResearchScopeClarification,
+  shouldClarifyResearchScope,
+} from './modules/researchScope.js';
 
 // ── Keep Service Worker Alive in MV3 ──
 // Calling any Chrome API resets the 30-second idle timer in Manifest V3.
@@ -111,6 +116,10 @@ function pushUnique(list, item) {
 async function getActiveShopId() {
   const data = await new Promise((resolve) => chrome.storage.local.get(["activeShopId"], resolve));
   return data.activeShopId || "";
+}
+
+async function getResearchScopeStorage() {
+  return await new Promise((resolve) => chrome.storage.local.get(["activeShopId", "etsyShops"], resolve));
 }
 
 async function cacheEtsyApiSnapshot(kind, args = {}, result = {}) {
@@ -654,12 +663,33 @@ chrome.runtime.onConnect.addListener((port) => {
           const growthActionSkills = Array.isArray(GROWTH_ACTION_SKILL_MAP[message.growthActionId])
             ? GROWTH_ACTION_SKILL_MAP[message.growthActionId]
             : null;
+          const scopeStorage = await getResearchScopeStorage();
+          pageContext.research_scope = buildResearchScope({
+            pageContext,
+            userInstruction: message.userInstruction || "",
+            activeShopId: scopeStorage.activeShopId || "",
+            shops: scopeStorage.etsyShops || [],
+            selectedSkillPath,
+            growthActionId: message.growthActionId || "",
+          });
           const matchedSkills = growthActionSkills
             ? growthActionSkills
             : selectedSkillPath
             ? [selectedSkillPath]
             : await dispatchEtsySkills(message.userInstruction, pageContext);
           console.log("Matched Etsy skills:", matchedSkills);
+          const isPlatformTrendRun = matchedSkills.some((skillPath) => /etsy_platform_trends/.test(skillPath));
+          if (isPlatformTrendRun && shouldClarifyResearchScope(pageContext.research_scope)) {
+            const clarification = buildResearchScopeClarification(pageContext.research_scope);
+            port.postMessage({
+              type: "CLARIFICATION_REQUIRED",
+              result: clarification,
+              skillId: matchedSkills.join("+"),
+              skillName: "etsy_platform_trends",
+            });
+            activeCheckpointKey = "";
+            return;
+          }
           if (requiresComplianceGate({ message, matchedSkills, pageContext })) {
             const complianceDecision = await getComplianceDecision(pageContext.url || tab.url || "");
             if (!complianceDecision) {
