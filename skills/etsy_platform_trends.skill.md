@@ -10,12 +10,21 @@
 
 ## 强制工作流
 
-1. 读取当前页面，确认用户研究的类目、商品、品牌或关键词范围。
+0. 先读取 `research_scope`：确认 `entry_page_type`、`source_page_role`、`target_entity`、`seed_keywords` 和 `page_role_notice`。如果当前是 `etsy_home`、`external_page` 或 `unknown`，且没有明确关键词/类目，不得直接输出深度趋势结论，必须要求用户补充研究方向。
+1. 读取当前页面，确认用户研究的类目、商品、品牌或关键词范围，并把当前页面角色写入最终报告。
 2. 调用 `search_in_browser`，使用 `engine="etsy"` 获取真实 Etsy 搜索/market/热卖结果，记录价格、评价、标题词、商品类别和可见店铺链接。
 3. 需要趋势或季节性判断时，调用 `search_in_browser` 获取 Google Search 和 Google Trends 页面，并保留截图视觉证据。没有趋势截图时只能输出待验证假设。
 4. 对至少 2 个高排名商品或店铺打开公开详情页，分别读取页面文本并截图；Search Grid 不能替代商品详情页。记录店铺/商品 URL、可见排序、价格、促销、评价、SKU/类目和画廊观察，不能声称获得竞品后台数据。
 5. 需要物流结论时，单独搜索发货地、目的地、承运商或运输方式，并在证据中记录查询日期；禁止凭模型常识输出 7-12 或 7-14 个工作日。
 6. 输出平台机会，不要直接把它写成当前店铺已经应该采购或发布的商品。涉及上架、采购、儿童、化妆品、电器、电池、食品接触或 IP 时，下一步必须进入合规审查和独立验证。
+
+## 页面角色分支
+
+- `own_shop`：趋势报告必须回答“这个机会是否适合当前店铺做”。必须输出 `fit_to_current_shop`，并把趋势机会转为当前店铺的低风险验证动作。
+- `own_listing`：趋势报告必须围绕当前商品的关键词、场景、价格、视觉和变体机会展开，不能只写泛市场机会。
+- `etsy_search`：当前搜索词和 Search Grid 只能作为本轮可见样本；必须继续做 Google Search/Trends 和至少 2 个公开详情页取证。
+- `competitor_shop` / `competitor_listing`：当前页面只能作为竞品公开对标样本。必须写明不能代表自营店铺事实，不能使用“你的店铺已经……”这类表达。
+- `etsy_home` / `external_page` / `unknown`：若没有明确 `seed_keywords`，输出 `blocked` 或要求用户补充关键词/类目，不得生成“高增长”“蓝海”“需求旺盛”等强结论。
 
 ## 证据阶段完成条件
 
@@ -39,6 +48,7 @@
 - 物流天数必须来自实时物流主题搜索，并记录发货地、目的地、承运商/运输方式、查询日期和局限。
 - Etsy 个人卖家 API 只支持当前授权自营店铺；禁止输出竞品订单、竞品转化率、竞品 Sessions、平台搜索量或全平台 analytics。
 - CE、CPC、FDA、FCC、RoHS、REACH 等法规/认证必须有官方来源，或明确写成 `assumption`/待验证；普通婚礼手拿包不能默认要求 CE/FDA。
+- 每个趋势机会必须包含 `growth_decision`，用 `pursue|test|watch|avoid` 把趋势研究转为增长决策，并写明 first_test、继续投入所需证据和 stop_condition。
 - validator 会拒绝不完整结构、越过样本覆盖范围的强结论、无证据的趋势峰值以及超出个人 API 能力边界的报告。
 
 ## 输出硬结构
@@ -49,6 +59,9 @@
 {
   "type": "final",
   "output": {
+    "research_scope": {"entry_page_type": "", "source_page_role": "", "target_entity": {}, "seed_keywords": [], "scope_confidence": ""},
+    "page_role_notice": "说明当前页面是自营、竞品、搜索页还是弱上下文",
+    "fit_to_current_shop": {"fit_level": "high|medium|low|unknown", "reason": "", "required_changes": []},
     "overview": "平台趋势概览，明确研究范围、目标市场和证据覆盖",
     "analysis": "Etsy 搜索、Google Search、Google Trends、公开竞品页面和视觉证据的分步分析",
     "summary": "趋势结论、证据限制、下一步验证动作",
@@ -66,6 +79,16 @@
         "sample_count": 0,
         "coverage": "例如：Etsy US 搜索结果前 2 页可见卡片；不代表全平台",
         "limitation": "例如：未取得 Etsy 全平台搜索量和竞品后台数据",
+        "growth_decision": {
+          "recommendation": "pursue|test|watch|avoid",
+          "why": "",
+          "fit_to_current_shop": "high|medium|low|unknown",
+          "first_test": "",
+          "minimum_evidence_to_continue": "",
+          "stop_condition": "",
+          "estimated_effort": "low|medium|high",
+          "risk_level": "low|medium|high"
+        },
         "evidence_ledger": [
           {
             "source_type": "etsy_search|google_search|google_trends|page_dom|screenshot_visual|assumption",

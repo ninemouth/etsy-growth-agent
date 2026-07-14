@@ -2192,6 +2192,11 @@ export function autoRepairFinalReportForDelivery(parsed, {
   const trendsToolEvidence = getGoogleTrendsToolEvidence(toolHistory);
   const trendsScreenshotEvidence = getGoogleTrendsScreenshotEvidence(toolHistory);
   const trendCompetitorLedgerEntries = isPlatformTrendSkill(skillId) ? getTrendCompetitorPageLedgerEntries(toolHistory) : [];
+  if (isPlatformTrendSkill(skillId) && pageContext?.research_scope && !repaired.output.research_scope) {
+    repaired.output.research_scope = pageContext.research_scope;
+    repaired.output.page_role_notice = repaired.output.page_role_notice || pageContext.research_scope.page_role_notice || "";
+    reasons.push("趋势报告已补齐 research_scope/page_role_notice");
+  }
   const reportText = `${repaired.output.overview || ""}\n${repaired.output.analysis || ""}\n${repaired.output.summary || ""}\n${JSON.stringify(repaired.output.data || [])}`;
   const reportUsesGoogleSearch = /Google Search|Google US|谷歌搜索|站外搜索|搜索结果|站外市场|欧美市场|市场调研|外部流量|站外需求/i.test(reportText);
   const reportUsesTrends = /Google Trends|谷歌趋势|趋势图|搜索趋势|搜索热度|季节性|需求曲线|Interest over time|related queries|related topics|峰值|peak/i.test(reportText);
@@ -2262,7 +2267,7 @@ export function autoRepairFinalReportForDelivery(parsed, {
 
   return {
     parsed: repaired,
-    changed: reasons.length > 0 || JSON.stringify(repaired.output.data) !== JSON.stringify(parsed.output.data),
+    changed: reasons.length > 0 || JSON.stringify(repaired.output) !== JSON.stringify(parsed.output),
     reasons,
   };
 }
@@ -2540,8 +2545,27 @@ function validatePlatformTrendReport(out, toolHistory = [], pageContext = {}) {
   const items = Array.isArray(out.data) ? out.data : [];
   const fullText = `${out.overview || ""}\n${out.analysis || ""}\n${out.summary || ""}\n${JSON.stringify(items)}`;
   const allLedger = items.flatMap((item) => Array.isArray(item?.evidence_ledger) ? item.evidence_ledger : []);
+  const scope = out.research_scope || pageContext?.research_scope || {};
+  const entryPageType = String(scope.entry_page_type || "");
+  const sourcePageRole = String(scope.source_page_role || "");
+  const seedKeywords = Array.isArray(scope.seed_keywords) ? scope.seed_keywords : [];
 
   if (items.length === 0) return ["Etsy 趋势报告至少需要一个结构化机会项，不能返回空 data。"];
+  if (!out.research_scope && !pageContext?.research_scope) {
+    errors.push("趋势报告缺少 research_scope，必须先说明当前页面角色、研究对象、seed keywords 和范围置信度。");
+  }
+  if (!out.page_role_notice && !scope.page_role_notice) {
+    errors.push("趋势报告缺少 page_role_notice，必须明确当前页面是自营、竞品、搜索页还是弱上下文。");
+  }
+  if (["etsy_home", "external_page", "unknown"].includes(entryPageType) && seedKeywords.length === 0 && !/待明确|需要.*关键词|无法.*趋势|blocked|assumption/i.test(fullText)) {
+    errors.push("当前页面是 Etsy 首页/外部页/未知弱上下文且缺少明确关键词，趋势报告不得输出强结论；必须先要求用户选择关键词或类目。");
+  }
+  if (sourcePageRole === "competitor_reference" && /你的店铺|你店|本店|自营店铺已|当前店铺已|our shop has|your shop has/i.test(fullText)) {
+    errors.push("当前页面被识别为竞品参考，但报告把竞品页面写成自营店铺事实。必须明确它只是公开对标样本。");
+  }
+  if (["own_shop", "own_listing"].includes(entryPageType) && !out.fit_to_current_shop && !/fit_to_current_shop|当前店铺适配|店铺适配度|适合当前店铺|不适合当前店铺/i.test(fullText)) {
+    errors.push("自营店铺/商品页面上的趋势报告必须包含当前店铺适配度或 fit_to_current_shop，不能只输出泛平台机会。");
+  }
   if (hasPositiveUnsupportedPrivateDataClaim(fullText)) {
     errors.push("趋势报告引用了竞品后台、竞品订单/转化率或平台搜索量等不可得数据。Etsy 个人卖家 API 只能读取当前授权自营店铺；竞品和平台趋势必须使用公开页面、Etsy 搜索、Google Search 或 Google Trends。");
   }
@@ -2585,6 +2609,15 @@ function validatePlatformTrendReport(out, toolHistory = [], pageContext = {}) {
     if (!hasTrendSampleScope(item)) {
       errors.push(`${label} 缺少 sample_count、coverage 和 limitation。只有少量搜索卡片时必须明确样本量、覆盖范围和局限，不能写成完整市场价格带或全平台结论。`);
     }
+    const decision = item?.growth_decision || {};
+    if (!decision || typeof decision !== "object" || !["pursue", "test", "watch", "avoid"].includes(String(decision.recommendation || "").toLowerCase())) {
+      errors.push(`${label} 缺少 growth_decision.recommendation，必须给出 pursue/test/watch/avoid 之一，把趋势分析转为增长决策。`);
+    }
+    ["why", "first_test", "minimum_evidence_to_continue", "stop_condition", "estimated_effort", "risk_level"].forEach((field) => {
+      if (!hasValue(decision?.[field])) {
+        errors.push(`${label} 的 growth_decision 缺少 ${field}，必须说明低风险验证动作、继续投入证据和停止条件。`);
+      }
+    });
     const ledger = Array.isArray(item?.evidence_ledger) ? item.evidence_ledger : [];
     errors.push(...validateEvidenceLedgerEntries({
       entries: ledger,

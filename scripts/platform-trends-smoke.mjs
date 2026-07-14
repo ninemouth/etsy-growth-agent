@@ -65,6 +65,20 @@ const pageContext = {
   title: "ExampleShop - Etsy",
   visibleText: "Etsy shop wedding accessories listings and reviews",
   screenshot: "artifact://current-shop.png",
+  research_scope: {
+    entry_page_type: "own_shop",
+    source_page_role: "self_reference",
+    target_entity: {
+      type: "shop",
+      name: "ExampleShop",
+      url: "https://www.etsy.com/shop/ExampleShop",
+      is_self: true,
+      confidence: "high",
+    },
+    seed_keywords: ["personalized wedding clutch"],
+    scope_confidence: "high",
+    page_role_notice: "当前页面识别为自营 Etsy 店铺，报告应服务于当前店铺增长。",
+  },
 };
 
 const toolHistory = [
@@ -199,6 +213,13 @@ const ledger = [
 const validReport = {
   type: "final",
   output: {
+    research_scope: pageContext.research_scope,
+    page_role_notice: "当前页面识别为自营 Etsy 店铺，趋势结论必须说明当前店铺适配度。",
+    fit_to_current_shop: {
+      fit_level: "medium",
+      reason: "店铺已有婚礼配饰语境，但仍需用自营 API 与 listing 实验验证真实点击和订单。",
+      required_changes: ["优化首图", "补充 personalized 场景词", "验证 shipping cutoff"],
+    },
     overview: "基于 Etsy US 公开搜索、Google Trends 和两个公开竞品页面的趋势机会观察。",
     analysis: "当前结论只描述公开样本和待验证方向，不把样本包装为全平台市场数据。",
     summary: "下一步用更多 Etsy 搜索页和店主自营数据验证点击、订单与履约结果。",
@@ -215,6 +236,16 @@ const validReport = {
       sample_count: 18,
       coverage: "Etsy US 搜索结果可见卡片与 2 个公开竞品详情页，不代表全平台",
       limitation: "未取得平台搜索量、竞品后台、竞品订单或转化率",
+      growth_decision: {
+        recommendation: "test",
+        why: "公开样本显示 personalized wedding clutch 具备可见搜索和竞品视觉信号，但仍需当前店铺真实指标验证。",
+        fit_to_current_shop: "medium",
+        first_test: "选择 2 个现有婚礼包 listing 改标题、首图和 personalization 文案，运行 14 天观察。",
+        minimum_evidence_to_continue: "收藏率、点击率或订单询盘相对基线改善，并且物流承诺可履约。",
+        stop_condition: "14 天内无收藏/点击改善或出现履约/合规风险时停止扩 SKU。",
+        estimated_effort: "medium",
+        risk_level: "medium",
+      },
       evidence_ledger: ledger,
     }],
   },
@@ -335,6 +366,54 @@ assert.ok(validateReport(invalid, "", skillId, toolHistory, pageContext).length 
 const privateApiClaim = structuredClone(validReport);
 privateApiClaim.output.summary = "拉取 Etsy API 对比竞品转化率和订单。";
 assert.ok(validateReport(privateApiClaim, "", skillId, toolHistory, pageContext).some((error) => /个人卖家 API|竞品后台|竞品订单/.test(error)), "private competitor API claims must be rejected");
+
+const missingGrowthDecision = structuredClone(validReport);
+delete missingGrowthDecision.output.data[0].growth_decision;
+assert.ok(
+  validateReport(missingGrowthDecision, "", skillId, toolHistory, pageContext).some((error) => /growth_decision\.recommendation/.test(error)),
+  "trend opportunity items must include growth_decision so market research becomes an operator action",
+);
+
+const competitorAsOwnContext = {
+  ...pageContext,
+  research_scope: {
+    entry_page_type: "competitor_shop",
+    source_page_role: "competitor_reference",
+    target_entity: { type: "shop", name: "TopWeddingStudio", url: "https://www.etsy.com/shop/TopWeddingStudio", is_self: false, confidence: "high" },
+    seed_keywords: ["personalized wedding clutch"],
+    scope_confidence: "high",
+    page_role_notice: "当前页面识别为竞品 Etsy 店铺，只能作为公开对标样本。",
+  },
+};
+const competitorAsOwnReport = structuredClone(validReport);
+competitorAsOwnReport.output.research_scope = competitorAsOwnContext.research_scope;
+competitorAsOwnReport.output.page_role_notice = "当前页面识别为竞品 Etsy 店铺。";
+competitorAsOwnReport.output.summary = "你的店铺已经具备头部竞品的视觉优势。";
+assert.ok(
+  validateReport(competitorAsOwnReport, "", skillId, toolHistory, competitorAsOwnContext).some((error) => /竞品参考|自营店铺事实/.test(error)),
+  "trend reports must not treat competitor pages as the user's own shop",
+);
+
+const weakHomeContext = {
+  url: "https://www.etsy.com/",
+  title: "Etsy",
+  research_scope: {
+    entry_page_type: "etsy_home",
+    source_page_role: "platform_discovery",
+    target_entity: { type: "unknown", name: "", url: "https://www.etsy.com/", is_self: false, confidence: "low" },
+    seed_keywords: [],
+    scope_confidence: "low",
+    page_role_notice: "当前页面识别为 Etsy 首页，页面上下文较弱。",
+  },
+};
+const weakHomeStrongReport = structuredClone(validReport);
+weakHomeStrongReport.output.research_scope = weakHomeContext.research_scope;
+weakHomeStrongReport.output.page_role_notice = "当前页面识别为 Etsy 首页。";
+weakHomeStrongReport.output.overview = "Etsy 首页显示 personalized wedding clutch 高增长，需求旺盛。";
+assert.ok(
+  validateReport(weakHomeStrongReport, "", skillId, toolHistory, weakHomeContext).some((error) => /弱上下文|关键词|类目/.test(error)),
+  "Etsy home trend runs without seed keywords must not emit strong trend conclusions",
+);
 
 const unsupportedShipping = structuredClone(validReport);
 unsupportedShipping.output.data[0].summary = undefined;
