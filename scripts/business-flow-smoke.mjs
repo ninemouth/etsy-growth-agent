@@ -183,6 +183,7 @@ assert.match(toolRegistrySource, /Tab closed or not found[\s\S]*ok: false/, "ope
 assert.match(toolRegistrySource, /timedOut[\s\S]*readError/, "open_new_tab should report timeout/read-error state for workflow guards");
 assert.match(toolRegistrySource, /shouldAutoCloseSearchTab[\s\S]*google_trends/, "Google and Trends search tabs should be auto-closed after evidence capture");
 assert.match(toolRegistrySource, /search_tab_opening[\s\S]*search_tab_opened[\s\S]*search_page_reading[\s\S]*search_evidence_ready/, "browser search should report real tab-open/read/evidence stages instead of only a pre-call log");
+assert.match(toolRegistrySource, /restoreSourceTabFocusBounded[\s\S]*Promise\.race[\s\S]*search_in_browser[\s\S]*search_tab_closed[\s\S]*resolve\(\{[\s\S]*restoreSourceTabFocusBounded\(__sourceTabId\)\.catch/, "browser search should not block tool completion on source-tab focus restoration after closing evidence tabs");
 assert.match(toolRegistrySource, /hasValidEtsySearchEvidence/, "Etsy search evidence should have a runtime validity gate");
 assert.match(toolRegistrySource, /buildBrowserSearchAttempts[\s\S]*etsy_market_fallback[\s\S]*google_trends_us_no_date_fallback/, "Etsy and Google Trends browser searches should retry alternate evidence URLs");
 assert.match(toolRegistrySource, /hasValidGoogleTrendsEvidence/, "Google Trends search evidence should have a runtime validity gate");

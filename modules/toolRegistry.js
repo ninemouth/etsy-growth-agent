@@ -72,6 +72,23 @@ async function restoreSourceTabFocus(sourceTabId = null) {
   }
 }
 
+async function restoreSourceTabFocusBounded(sourceTabId = null, timeoutMs = 1200) {
+  if (!Number.isInteger(Number(sourceTabId))) return false;
+  let timeoutId = null;
+  try {
+    return await Promise.race([
+      restoreSourceTabFocus(sourceTabId),
+      new Promise((resolve) => {
+        timeoutId = setTimeout(() => resolve(false), Math.max(250, Number(timeoutMs) || 1200));
+      }),
+    ]);
+  } catch (_) {
+    return false;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 function cachePreparedImage(dataUrl) {
   const ref = `__CLEAN_PRODUCT_IMAGE_${Date.now()}_${Math.random().toString(36).slice(2, 8)}__`;
   preparedImageCache.set(ref, dataUrl);
@@ -2205,7 +2222,6 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
                 : `${searchActionLabel} 已保存证据，但临时标签页 tabId=${newTab.id} 未能自动关闭。`,
               { tabId: newTab.id, searchUrl: payload.searchUrl }
             );
-            await restoreSourceTabFocus(__sourceTabId);
             resolve({
               ...payloadWithScreenshot,
               tabClosed: closed,
@@ -2214,9 +2230,11 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
                 ? (payloadWithScreenshot.message || "Search evidence captured and temporary search tab closed.")
                 : (payloadWithScreenshot.message || "Search evidence captured, but the temporary search tab could not be closed automatically."),
             });
+            restoreSourceTabFocusBounded(__sourceTabId).catch(() => {});
             return;
           }
           resolve(payloadWithScreenshot);
+          restoreSourceTabFocusBounded(__sourceTabId).catch(() => {});
         };
 
         let pollCount = 0;
