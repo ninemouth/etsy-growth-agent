@@ -43,6 +43,8 @@
 
 ## 输出硬结构
 
+工具返回值不是最终报告。`open_new_tab`、`navigate_to`、`search_in_browser`、`collect_etsy_shop_pages` 等工具返回的 `ok`、`message`、`tabId`、`url`、`pageData`、`screenshotRef` 只能作为 evidence 输入，严禁原样作为最终 `result` 或 `data` 交付。最终必须跨 Etsy 搜索、Google Search/Trends、竞品详情页和截图分析综合成平台机会项。
+
 ```json
 {
   "type": "final",

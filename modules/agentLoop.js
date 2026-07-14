@@ -3276,6 +3276,28 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     }
 
     if (!parsed) {
+      if (isEtsyBusinessSkill(skillId)) {
+        const formatRetryCount = ctxForPrompt.__formatRetryCount || 0;
+        messages.push({ role: "assistant", content: assistantContent });
+        messages.push({
+          role: "user",
+          content: "【系统格式闸门拒绝】本轮 Etsy 业务输出没有包含可执行的 agent 协议 JSON。请不要输出纯文本、工具结果摘要或裸对象；必须继续调用缺失工具，或输出唯一合法格式：{\"type\":\"final\",\"output\":{\"overview\":\"...\",\"analysis\":\"...\",\"summary\":\"...\",\"data\":[]}}。",
+        });
+        if (formatRetryCount < 1) {
+          ctxForPrompt.__formatRetryCount = formatRetryCount + 1;
+          await saveCheckpoint({ status: "format_retry", step, lastNode: "missing_agent_json", formatRetryCount });
+          continue;
+        }
+        await saveCheckpoint({ status: "quality_gate_blocked", step, lastNode: "missing_agent_json", validationErrors: ["Etsy 业务未输出 final/tool_call 协议 JSON，已阻断交付。"] });
+        return {
+          ok: false,
+          type: "interrupted",
+          result: "Etsy 业务未输出符合协议的 final/tool_call JSON，已保存断点。请发送“继续”从当前证据继续修复。",
+          steps: step,
+          qualityGateBlocked: true,
+          validationErrors: ["Etsy 业务未输出 final/tool_call 协议 JSON，已阻断交付。"],
+        };
+      }
       messages.push({ role: "assistant", content: assistantContent });
       globalSessionCache[sessionKey] = { messages, toolHistory, ctxState: {} };
       await clearAgentCheckpoint(sessionKey);
@@ -3900,6 +3922,30 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       continue;
     }
 
+    if (isEtsyBusinessSkill(skillId) && parsed.type !== "final" && parsed.type !== "tool_call") {
+      const formatRetryCount = ctxForPrompt.__formatRetryCount || 0;
+      const parsedKeys = Object.keys(parsed || {}).slice(0, 12).join(", ");
+      messages.push({ role: "assistant", content: assistantContent });
+      messages.push({
+        role: "user",
+        content: `【系统格式闸门拒绝】你输出的是非协议 JSON（字段：${parsedKeys || "unknown"}），不能作为 Etsy 业务成功结果。不要把工具返回值、listing/pageData、搜索结果或中间证据对象当 final 报告。下一步必须继续完成缺失证据阶段，或输出唯一合法 final：{"type":"final","output":{"overview":"...","analysis":"...","summary":"...","data":[]}}。`,
+      });
+      if (formatRetryCount < 1) {
+        ctxForPrompt.__formatRetryCount = formatRetryCount + 1;
+        await saveCheckpoint({ status: "format_retry", step, lastNode: "unsupported_agent_json", parsedKeys });
+        continue;
+      }
+      await saveCheckpoint({ status: "quality_gate_blocked", step, lastNode: "unsupported_agent_json", validationErrors: ["Etsy 业务输出了非 final/tool_call 协议 JSON，疑似把工具结果当报告交付。"] });
+      return {
+        ok: false,
+        type: "interrupted",
+        result: "Etsy 业务输出了非 final/tool_call 协议 JSON，疑似把工具结果当报告交付；已保存断点。请发送“继续”修复。",
+        steps: step,
+        qualityGateBlocked: true,
+        validationErrors: ["Etsy 业务输出了非 final/tool_call 协议 JSON，疑似把工具结果当报告交付。"],
+      };
+    }
+
     messages.push({ role: "assistant", content: assistantContent });
     globalSessionCache[sessionKey] = { messages, toolHistory, ctxState: {} };
     await clearAgentCheckpoint(sessionKey);
@@ -4052,7 +4098,8 @@ export function extractJSONBlock(text) {
 
   // 3. Fallback: Try raw parsing of the entire text
   try {
-    return tryParseJSON(text.trim());
+    const parsed = tryParseJSON(text.trim());
+    return isLikelyAgentJSON(parsed) ? parsed : null;
   } catch (_) {}
 
   return null;

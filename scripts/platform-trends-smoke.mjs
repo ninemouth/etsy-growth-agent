@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   __testInternals,
   autoRepairFinalReportForDelivery,
+  extractJSONBlock,
   isPlatformTrendSkill,
   validateReport,
 } from "../modules/agentLoop.js";
@@ -23,6 +24,22 @@ assert.equal(
   __testInternals.checkpointSkillMatches({}, "skills/etsy_global_shop_optimizer.skill.md"),
   false,
   "legacy checkpoints without skillId should not cross skill boundaries",
+);
+assert.equal(
+  extractJSONBlock(JSON.stringify({
+    ok: true,
+    message: "Successfully navigated to product detail page.",
+    tabId: 1936446025,
+    url: "https://www.etsy.com/listing/1768235753/personalized-beaded-clutch-bag-gifts",
+    title: "Personalized Beaded Clutch Bag Gifts",
+    pageData: { h1: "Personalized Beaded Clutch Bag Gifts", pageType: "etsy_listing" },
+    evidenceOk: true,
+    screenshotCaptured: true,
+    screenshotRef: "artifact://listing-detail-screenshot/1783987245123-abc123def",
+    limitation: "Single competitor listing evidence - need at least one more for comparison",
+  })),
+  null,
+  "bare listing detail tool result must not be accepted as a final trend report or successful JSON response",
 );
 assert.equal(hasValidGoogleTrendsEvidence({
   ok: true,
