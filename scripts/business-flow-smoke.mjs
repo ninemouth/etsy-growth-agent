@@ -107,7 +107,7 @@ assert.match(agentLoopSource, /__sourceTabId:\s*tabId/, "agent loop should pass 
 assert.match(toolRegistrySource, /getSourceOrCurrentTab[\s\S]*read_current_page/, "current-page tools should prefer the workflow source tab over whichever temporary tab is active");
 assert.match(toolRegistrySource, /restoreSourceTabFocus[\s\S]*search_tab_closed/, "browser searches should restore focus to the source shop tab after closing temporary evidence tabs");
 assert.match(toolRegistrySource, /protectedSourceTab[\s\S]*Refused to close source tab/, "close_tab must refuse to close the original source tab");
-assert.match(toolRegistrySource, /navigate_to[\s\S]*createOwnedTab\(\{ workflowId,\s*url:\s*safeEncodeURI\(url\),\s*active:\s*true,\s*openerTabId:\s*__sourceTabId \}\)[\s\S]*readPageDataFromTab\(created\.id\)/, "navigate_to must open a workflow-owned temporary tab instead of replacing the source shop tab");
+assert.match(toolRegistrySource, /navigate_to[\s\S]*createOwnedTab\(\{ workflowId,\s*url:\s*safeEncodeURI\(url\),\s*active:\s*true,\s*openerTabId:\s*__sourceTabId \}\)[\s\S]*waitForTabReadiness\(created\.id/, "navigate_to must open a workflow-owned temporary tab and wait for readiness instead of replacing the source shop tab");
 assert.doesNotMatch(toolRegistrySource, /navigate_to[\s\S]{0,900}chrome\.tabs\.update\([^)]*url:/, "navigate_to must not update the current/source tab URL");
 assert.match(toolRegistrySource, /createOwnedTabCallback[\s\S]*search_in_browser[\s\S]*google_trends/, "browser search tabs should use workflow ownership");
 assert.match(toolRegistrySource, /image_search_1688[\s\S]*createOwnedTabCallback/, "image search tabs should use workflow ownership");
@@ -190,10 +190,15 @@ assert.match(backgroundSource, /onCheckpoint:\s*async/, "background should persi
 assert.match(js, /interrupted:\s*"已保存断点"/, "dashboard should show interrupted runs as saved checkpoints");
 assert.match(js, /后台连接中断，已保存断点，可再次运行继续。/, "dashboard disconnects should not be shown as ordinary failed runs");
 assert.match(toolRegistrySource, /closedTabId/, "browser search should report automatically closed temporary tabs");
-assert.match(toolRegistrySource, /open_new_tab[\s\S]*readPageDataFromTab\(tab\.id\)/, "open_new_tab should read the newly opened tab by tabId instead of relying on the active tab");
+assert.match(toolRegistrySource, /open_new_tab[\s\S]*waitForTabReadiness\(tab\.id/, "open_new_tab should wait on the newly opened tab by tabId instead of relying on the active tab");
 assert.match(toolRegistrySource, /hasUsablePageEvidence[\s\S]*evidenceOk[\s\S]*ok: evidenceOk/, "open_new_tab must not report success without usable page evidence");
 assert.match(toolRegistrySource, /Tab closed or not found[\s\S]*ok: false/, "open_new_tab must mark missing tabs as failed evidence");
 assert.match(toolRegistrySource, /timedOut[\s\S]*readError/, "open_new_tab should report timeout/read-error state for workflow guards");
+assert.match(toolRegistrySource, /function getReadinessProfile[\s\S]*google_trends[\s\S]*minWaitMs:\s*2500[\s\S]*etsy[\s\S]*minWaitMs:\s*1600/, "newly opened browser tabs should have platform-aware minimum loading residency before evidence capture");
+assert.match(toolRegistrySource, /async function waitForTabReadiness[\s\S]*tab_readiness_wait_started[\s\S]*tab_readiness_ready[\s\S]*readiness_timeout/, "tab evidence tools should wait for stable readable DOM evidence instead of relying only on chrome tab complete");
+assert.match(toolRegistrySource, /open_new_tab[\s\S]*waitForTabReadiness\(tab\.id[\s\S]*readinessElapsedMs[\s\S]*readinessAttempts/, "open_new_tab should return readiness telemetry after waiting for stable page evidence");
+assert.match(toolRegistrySource, /navigate_to[\s\S]*waitForTabReadiness\(created\.id[\s\S]*readinessElapsedMs[\s\S]*readinessAttempts/, "navigate_to should use the same loading/readiness gate as other temporary tabs");
+assert.match(toolRegistrySource, /search_in_browser[\s\S]*minimumTabResidencyMs[\s\S]*residencySatisfied[\s\S]*readinessElapsedMs/, "search_in_browser should not close evidence tabs before the minimum loading residency window");
 assert.match(toolRegistrySource, /shouldAutoCloseSearchTab[\s\S]*google_trends/, "Google and Trends search tabs should be auto-closed after evidence capture");
 assert.match(toolRegistrySource, /search_tab_opening[\s\S]*search_tab_opened[\s\S]*search_page_reading[\s\S]*search_evidence_ready/, "browser search should report real tab-open/read/evidence stages instead of only a pre-call log");
 assert.match(toolRegistrySource, /restoreSourceTabFocusBounded[\s\S]*Promise\.race[\s\S]*search_in_browser[\s\S]*search_tab_closed[\s\S]*resolve\(\{[\s\S]*restoreSourceTabFocusBounded\(__sourceTabId\)\.catch/, "browser search should not block tool completion on source-tab focus restoration after closing evidence tabs");

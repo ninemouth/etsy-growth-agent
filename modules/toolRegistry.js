@@ -607,39 +607,40 @@ async function _captureTabScreenshot(tabId, options = {}) {
   });
 }
 
-async function waitForTabLoad(tabId, maxAttempts = 24, intervalMs = 500) {
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const tab = await new Promise((resolve) => {
-      chrome.tabs.get(tabId, (t) => {
-        if (chrome.runtime.lastError || !t) resolve(null);
-        else resolve(t);
-      });
-    });
-    if (!tab) return null;
-    if (tab.status === "complete") return tab;
-    await delay(intervalMs);
-  }
-  return await new Promise((resolve) => {
-    chrome.tabs.get(tabId, (t) => {
-      if (chrome.runtime.lastError || !t) resolve(null);
-      else resolve(t);
-    });
-  });
+function isVerificationUrl(url = "") {
+  return /sec\.1688\.com|login|verify|passport|captcha|challenge/i.test(String(url || ""));
 }
 
-async function focusTab(tabId) {
-  const tab = await chrome.tabs.get(tabId);
-  if (tab?.windowId) {
-    await new Promise((resolve) => chrome.windows.update(tab.windowId, { focused: true }, () => resolve()));
+function getReadinessProfile(url = "", label = "") {
+  const text = `${url} ${label}`.toLowerCase();
+  if (/trends\.google|google_trends/.test(text)) {
+    return {
+      minWaitMs: 2500,
+      timeoutMs: 24000,
+      pollMs: 700,
+      ready: (pageData) => hasValidGoogleTrendsEvidence({ ok: true, pageData }),
+      readyLabel: "google_trends_modules_ready",
+    };
   }
-  await new Promise((resolve) => chrome.tabs.update(tabId, { active: true }, () => resolve()));
-  return tab;
+  if (/etsy\.com\/(?:shop|listing|search|market)|etsy/.test(text)) {
+    return {
+      minWaitMs: 1600,
+      timeoutMs: 18000,
+      pollMs: 650,
+      ready: (pageData) => hasUsablePageEvidence(pageData),
+      readyLabel: "etsy_dom_evidence_ready",
+    };
+  }
+  return {
+    minWaitMs: 1200,
+    timeoutMs: 12000,
+    pollMs: 600,
+    ready: (pageData) => hasUsablePageEvidence(pageData),
+    readyLabel: "dom_evidence_ready",
+  };
 }
 
-async function readPageDataFromTab(tabId) {
-  const result = await readCompletePageData(tabId, { type: "READ_CURRENT_PAGE" });
-  if (!result?.ok) throw new Error(result?.error || "Failed to read page");
-  const pageData = result.data || {};
+function recordPageDataInSession(pageData = {}) {
   if (Array.isArray(pageData.productCards)) {
     for (const card of pageData.productCards) {
       if (card.href && card.title) {
@@ -659,6 +660,155 @@ async function readPageDataFromTab(tabId) {
     }
   }
   return pageData;
+}
+
+async function waitForTabReadiness(tabId, options = {}) {
+  const {
+    workflowId = "default",
+    expectedUrl = "",
+    label = "browser tab",
+    minWaitMs,
+    timeoutMs,
+    pollMs,
+    requireEvidence = true,
+    progress,
+  } = options || {};
+  const profile = getReadinessProfile(expectedUrl, label);
+  const minStayMs = Math.max(250, Number(minWaitMs ?? profile.minWaitMs) || profile.minWaitMs);
+  const deadlineMs = Math.max(minStayMs + 1000, Number(timeoutMs ?? profile.timeoutMs) || profile.timeoutMs);
+  const intervalMs = Math.max(250, Number(pollMs ?? profile.pollMs) || profile.pollMs);
+  const startedAt = Date.now();
+  let attempts = 0;
+  let lastTab = null;
+  let lastPageData = {};
+  let lastReadError = "";
+  let completeSeenAt = 0;
+  let emittedWaiting = false;
+
+  const emit = (stage, message, extra = {}) => {
+    if (typeof progress === "function") {
+      try { progress(stage, message, extra); } catch (_) {}
+    }
+  };
+
+  emit("tab_readiness_wait_started", `${label} 已打开，等待页面完成加载并形成可读证据。`, { tabId, expectedUrl, minWaitMs: minStayMs, timeoutMs: deadlineMs });
+
+  while (Date.now() - startedAt <= deadlineMs) {
+    attempts++;
+    if (workflowId !== "default" && await isWorkflowCancellationRequested(workflowId)) {
+      return {
+        ok: false,
+        cancelled: true,
+        tab: lastTab,
+        pageData: lastPageData,
+        attempts,
+        elapsedMs: Date.now() - startedAt,
+        readiness: "cancelled",
+        readError: "Workflow cancellation requested while waiting for tab readiness",
+      };
+    }
+
+    try {
+      lastTab = await chrome.tabs.get(tabId);
+    } catch (err) {
+      return {
+        ok: false,
+        tab: null,
+        pageData: lastPageData,
+        attempts,
+        elapsedMs: Date.now() - startedAt,
+        readiness: "tab_missing",
+        readError: err.message || "Tab closed or not found",
+      };
+    }
+
+    const currentUrl = lastTab?.url || expectedUrl || "";
+    if (isVerificationUrl(currentUrl)) {
+      emit("tab_readiness_verification", `${label} 命中登录/验证页，已暂停自动读取等待人工处理。`, { tabId, url: currentUrl });
+      return {
+        ok: false,
+        isCaptcha: true,
+        tab: lastTab,
+        pageData: lastPageData,
+        attempts,
+        elapsedMs: Date.now() - startedAt,
+        readiness: "verification_required",
+        readError: "Verification or login page detected",
+      };
+    }
+
+    if (lastTab?.status === "complete" && !completeSeenAt) completeSeenAt = Date.now();
+    const elapsedMs = Date.now() - startedAt;
+    const minStaySatisfied = elapsedMs >= minStayMs;
+
+    if (minStaySatisfied || attempts === 1 || lastTab?.status === "complete") {
+      try {
+        const data = await readCompletePageData(tabId, { type: "READ_CURRENT_PAGE" });
+        lastPageData = recordPageDataInSession(data?.data || {});
+        lastReadError = "";
+        const evidenceReady = profile.ready(lastPageData);
+        const canReturnWithoutEvidence = !requireEvidence && minStaySatisfied && (lastTab?.status === "complete" || completeSeenAt);
+        if ((evidenceReady && minStaySatisfied) || canReturnWithoutEvidence) {
+          const readiness = evidenceReady ? profile.readyLabel : "load_complete_min_wait_satisfied";
+          emit("tab_readiness_ready", `${label} 已完成加载等待并取得可读页面证据。`, {
+            tabId,
+            url: lastPageData.url || currentUrl,
+            readiness,
+            attempts,
+            elapsedMs,
+          });
+          return {
+            ok: evidenceReady || canReturnWithoutEvidence,
+            tab: lastTab,
+            pageData: lastPageData,
+            attempts,
+            elapsedMs,
+            readiness,
+            readError: "",
+          };
+        }
+      } catch (err) {
+        lastReadError = err.message || "Failed to read page";
+      }
+    }
+
+    if (!emittedWaiting && elapsedMs >= Math.min(3000, deadlineMs)) {
+      emittedWaiting = true;
+      emit("tab_readiness_waiting", `${label} 仍在等待动态内容稳定，暂不关闭临时标签页。`, {
+        tabId,
+        url: currentUrl,
+        elapsedMs,
+        status: lastTab?.status || "unknown",
+      });
+    }
+    await delay(intervalMs);
+  }
+
+  return {
+    ok: hasUsablePageEvidence(lastPageData),
+    timedOut: true,
+    tab: lastTab,
+    pageData: lastPageData,
+    attempts,
+    elapsedMs: Date.now() - startedAt,
+    readiness: hasUsablePageEvidence(lastPageData) ? "evidence_ready_after_timeout" : "readiness_timeout",
+    readError: lastReadError || "Timed out waiting for stable readable page evidence",
+  };
+}
+
+async function focusTab(tabId) {
+  const tab = await chrome.tabs.get(tabId);
+  if (tab?.windowId) {
+    await new Promise((resolve) => chrome.windows.update(tab.windowId, { focused: true }, () => resolve()));
+  }
+  await new Promise((resolve) => chrome.tabs.update(tabId, { active: true }, () => resolve()));
+  return tab;
+}
+
+async function readPageDataFromTab(tabId) {
+  const result = await readCompletePageData(tabId, { type: "READ_CURRENT_PAGE" });
+  if (!result?.ok) throw new Error(result?.error || "Failed to read page");
+  return recordPageDataInSession(result.data || {});
 }
 
 function hasUsablePageEvidence(pageData = {}) {
@@ -706,9 +856,15 @@ async function collectEtsyListingDetailsForShop({
     try {
       const tab = await createOwnedTab({ workflowId, url: safeEncodeURI(listingUrl), active: true });
       tabId = tab.id;
-      const loaded = await waitForTabLoad(tabId);
-      await delay(700);
-      const pageData = await readPageDataFromTab(tabId);
+      const readiness = await waitForTabReadiness(tabId, {
+        workflowId,
+        expectedUrl: listingUrl,
+        label: "Etsy 商品详情页取证",
+        minWaitMs: 1800,
+        requireEvidence: true,
+      });
+      if (readiness.isCaptcha) throw new Error(readiness.readError || "Verification required");
+      const pageData = readiness.pageData || await readPageDataFromTab(tabId);
       const screenshot = await _captureTabScreenshot(tabId);
       const screenshotArtifact = await putDataUrlArtifact(screenshot.dataUrl, {
         namespace: "etsy-listing-detail-screenshot",
@@ -721,7 +877,10 @@ async function collectEtsyListingDetailsForShop({
         competitorUrl,
         listingUrl,
         tabId,
-        loaded: Boolean(loaded),
+        loaded: Boolean(readiness.tab),
+        readiness: readiness.readiness,
+        readinessElapsedMs: readiness.elapsedMs,
+        readinessAttempts: readiness.attempts,
         pageData,
         screenshotRef: screenshotArtifact.ref,
         screenshotCaptureMode: screenshot.captureMode,
@@ -1256,9 +1415,14 @@ export const tools = {
         }
         await appendWorkflowEvent(workflowId, "etsy_crawl_page_started", { pageIndex, pagesCollected: pages.length });
         await focusTab(targetTabId);
-        const tab = await waitForTabLoad(targetTabId);
-        await delay(Math.max(250, Number(delayMs) || 900));
-        const currentUrl = tab?.url || "";
+        const readiness = await waitForTabReadiness(targetTabId, {
+          workflowId,
+          expectedUrl: sourceUrl,
+          label: `Etsy 店铺分页商品采集第 ${pageIndex} 页`,
+          minWaitMs: Math.max(1200, Math.min(Number(delayMs) || 900, 5000)),
+          requireEvidence: true,
+        });
+        const currentUrl = readiness.pageData?.url || readiness.tab?.url || "";
         if (seenUrls.has(currentUrl)) {
           stoppedReason = "duplicate_page_url";
           break;
@@ -1268,7 +1432,9 @@ export const tools = {
         let pageData = {};
         let readError = "";
         try {
-          pageData = await readPageDataFromTab(targetTabId);
+          pageData = readiness.pageData && Object.keys(readiness.pageData).length
+            ? readiness.pageData
+            : await readPageDataFromTab(targetTabId);
         } catch (err) {
           readError = err.message;
         }
@@ -1323,6 +1489,9 @@ export const tools = {
           productCardsVisible: productCards.length,
           visibleTextSnippet: summarizeVisibleText(pageData.visibleText),
           pageHealth: pageData.pageHealth || {},
+          readiness: readiness.readiness,
+          readinessElapsedMs: readiness.elapsedMs,
+          readinessAttempts: readiness.attempts,
           readError,
           screenshotCaptured: Boolean(screenshotRef),
           screenshotRef,
@@ -1580,9 +1749,16 @@ export const tools = {
         seenUrls.add(nextUrl);
         await appendWorkflowEvent(workflowId, "etsy_review_page_started", { pageIndex, url: nextUrl });
         await chrome.tabs.update(targetTabId, { url: safeEncodeURI(nextUrl) });
-        await waitForTabLoad(targetTabId);
-        await delay(Math.max(300, Number(delayMs) || 900));
-        const pageData = await readPageDataFromTab(targetTabId);
+        const readiness = await waitForTabReadiness(targetTabId, {
+          workflowId,
+          expectedUrl: nextUrl,
+          label: `Etsy 评论分页采集第 ${pageIndex} 页`,
+          minWaitMs: Math.max(1200, Math.min(Number(delayMs) || 900, 5000)),
+          requireEvidence: true,
+        });
+        const pageData = readiness.pageData && Object.keys(readiness.pageData).length
+          ? readiness.pageData
+          : await readPageDataFromTab(targetTabId);
         let screenshotRef = null;
         let screenshotCaptureMode = "unknown";
         try {
@@ -1603,6 +1779,9 @@ export const tools = {
         const pageRecord = {
           pageIndex,
           url: nextUrl,
+          readiness: readiness.readiness,
+          readinessElapsedMs: readiness.elapsedMs,
+          readinessAttempts: readiness.attempts,
           sampleCount: reviews.length,
           lowStarCount: reviews.filter((review) => Number(review.rating) > 0 && Number(review.rating) <= 3).length,
           reviews,
@@ -1880,20 +2059,32 @@ Context:
 
     const created = await createOwnedTab({ workflowId, url: safeEncodeURI(url), active: true, openerTabId: __sourceTabId });
     try {
-      const loadedTab = await waitForTabLoad(created.id);
-      await delay(Math.max(250, Math.min(Number(readDelayMs) || 1200, 4000)));
-      const pageData = await readPageDataFromTab(created.id);
+      const readiness = await waitForTabReadiness(created.id, {
+        workflowId,
+        expectedUrl: url,
+        label: "navigate_to 页面取证",
+        minWaitMs: Math.max(800, Math.min(Number(readDelayMs) || 1200, 5000)),
+        requireEvidence: true,
+      });
+      if (readiness.isCaptcha) {
+        chrome.tabs.update(created.id, { active: true });
+        chrome.runtime.sendMessage({ type: "CAPTCHA_DETECTED", url: readiness.tab?.url || url });
+      }
+      const pageData = readiness.pageData || {};
       const evidenceOk = hasUsablePageEvidence(pageData);
       return {
         ok: evidenceOk,
         tabId: created.id,
         url,
-        finalUrl: pageData?.url || loadedTab?.url || url,
+        finalUrl: pageData?.url || readiness.tab?.url || url,
         pageData: pageData || {},
         evidenceOk,
+        readiness: readiness.readiness,
+        readinessElapsedMs: readiness.elapsedMs,
+        readinessAttempts: readiness.attempts,
         openedByTool: true,
         message: `Opened temporary tab and loaded: ${url}`,
-        readError: evidenceOk ? "" : "Page loaded but no usable DOM evidence was captured",
+        readError: evidenceOk ? "" : (readiness.readError || "Page loaded but no usable DOM evidence was captured"),
       };
     } catch (err) {
       return {
@@ -2226,6 +2417,9 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
         emitSearchProgress("search_tab_opening", `${searchActionLabel} 正在打开临时标签页（第 ${attemptIndex + 1}/${searchAttempts.length} 次尝试）。`, { searchUrl: attempt.url });
         createOwnedTabCallback({ workflowId, url: safeEncodeURI(attempt.url), active: true, openerTabId: __sourceTabId }, (newTab) => {
         emitSearchProgress("search_tab_opened", `${searchActionLabel} 已打开临时标签页 tabId=${newTab.id}，开始等待页面可读。`, { tabId: newTab.id, searchUrl: attempt.url });
+        const attemptStartedAt = Date.now();
+        const readinessProfile = getReadinessProfile(attempt.url, searchActionLabel);
+        const minimumTabResidencyMs = Math.max(readinessProfile.minWaitMs, normalizedEngine === "google_trends" ? 2500 : normalizedEngine === "etsy" ? 1600 : 1200);
         let settled = false;
         let readInFlight = false;
         const finish = async (payload) => {
@@ -2298,7 +2492,8 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
 
             const evidenceSatisfied = searchEvidenceSatisfied(payload, normalizedEngine);
             const stableWindowSatisfied = normalizedEngine !== "google_trends" || pollCount >= minStablePollAttempts;
-            if ((evidenceSatisfied && stableWindowSatisfied) || pollCount >= maxPollAttempts) {
+            const residencySatisfied = Date.now() - attemptStartedAt >= minimumTabResidencyMs;
+            if ((evidenceSatisfied && stableWindowSatisfied && residencySatisfied) || pollCount >= maxPollAttempts) {
               clearInterval(checkLoad);
               emitSearchProgress(
                 evidenceSatisfied ? "search_evidence_ready" : "search_evidence_timeout",
@@ -2307,7 +2502,13 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
                   : `${searchActionLabel} 已达到轮询上限，当前页面证据仍不足，将按工具结果返回质量状态。`,
                 { tabId: newTab.id, searchUrl: attempt.url }
               );
-              await finish(payload);
+              await finish({
+                ...payload,
+                readiness: evidenceSatisfied && residencySatisfied ? readinessProfile.readyLabel : "search_readiness_timeout",
+                readinessElapsedMs: Date.now() - attemptStartedAt,
+                readinessAttempts: pollCount,
+                minimumTabResidencyMs,
+              });
             }
           } catch (err) {
             if (pollCount >= maxPollAttempts) {
@@ -2499,30 +2700,25 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
           return;
         }
 
-        let attempts = 0;
-        const maxAttempts = 20;
-        const checkLoad = setInterval(() => {
-          attempts++;
-          chrome.tabs.get(newTab.id, (t) => {
-            if (chrome.runtime.lastError || !t) {
-              clearInterval(checkLoad);
-              resolve({ ok: true, tabId: newTab?.id, searchUrl, pageData: {}, message: "1688 tab closed or not found" });
-              return;
-            }
-
-            if (t.status === "complete" || attempts >= maxAttempts) {
-              clearInterval(checkLoad);
-              setTimeout(async () => {
-                try {
-                  const result = await tools.image_search_in_browser({ imageUrl, tabId: newTab.id });
-                  resolve({ ...result, searchUrl, imageSearchEntry: normalizedEngine === "taobao" ? "taobao" : "1688" });
-                } catch (err) {
-                  resolve({ ok: false, tabId: newTab.id, searchUrl, pageData: {}, error: err.message });
-                }
-              }, 1500);
-            }
-          });
-        }, 500);
+        waitForTabReadiness(newTab.id, {
+          workflowId,
+          expectedUrl: searchUrl,
+          label: `${normalizedEngine === "taobao" ? "Taobao" : "1688"} 以图搜图入口页`,
+          minWaitMs: 1800,
+          timeoutMs: 16000,
+          requireEvidence: false,
+        }).then(async (readiness) => {
+          if (readiness.readiness === "tab_missing") {
+            resolve({ ok: true, tabId: newTab?.id, searchUrl, pageData: {}, message: "1688 tab closed or not found", readiness });
+            return;
+          }
+          try {
+            const result = await tools.image_search_in_browser({ imageUrl, tabId: newTab.id });
+            resolve({ ...result, searchUrl, imageSearchEntry: normalizedEngine === "taobao" ? "taobao" : "1688", readiness });
+          } catch (err) {
+            resolve({ ok: false, tabId: newTab.id, searchUrl, pageData: {}, error: err.message, readiness });
+          }
+        });
       });
     });
   },
@@ -2681,73 +2877,53 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
     if (!url) throw new Error("url is required");
     
     return new Promise((resolve, reject) => {
-      createOwnedTabCallback({ workflowId, url: safeEncodeURI(url), active: true, openerTabId: __sourceTabId }, (tab) => {
+      createOwnedTabCallback({ workflowId, url: safeEncodeURI(url), active: true, openerTabId: __sourceTabId }, async (tab) => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
           return;
         }
-        
-        // Poll for tab load and captcha/verification checks
-        let attempts = 0;
-        const maxPollAttempts = Math.max(4, Math.min(Number(maxAttempts) || 20, 40));
-        const poll = setInterval(() => {
-          attempts++;
-          chrome.tabs.get(tab.id, (t) => {
-            if (chrome.runtime.lastError || !t) {
-              clearInterval(poll);
-              resolve({ ok: false, tabId: tab.id, readError: "Tab closed or not found", evidenceOk: false, pageData: {} });
-              return;
-            }
-            
-            const currentUrl = t.url || "";
-            const isVerification = currentUrl.includes("sec.1688.com") || currentUrl.includes("login") || currentUrl.includes("verify") || currentUrl.includes("passport");
-            
-            if (isVerification) {
-              // Focus tab to foreground so user can login/solve captcha
-              chrome.tabs.update(tab.id, { active: true });
-              chrome.runtime.sendMessage({ type: "CAPTCHA_DETECTED", url: currentUrl });
-              // We do not resolve yet, let the user solve it
-              if (attempts >= maxPollAttempts) {
-                clearInterval(poll);
-                resolve({ ok: false, tabId: tab.id, url: currentUrl, isCaptcha: true, evidenceOk: false, pageData: {}, readError: "Verification timeout" });
-              }
-              return;
-            }
-            
-            if (t.status === "complete" || attempts >= maxPollAttempts) {
-              clearInterval(poll);
-              setTimeout(async () => {
-                try {
-                  const data = await readPageDataFromTab(tab.id);
-                  const evidenceOk = hasUsablePageEvidence(data);
-                  await restoreSourceTabFocus(__sourceTabId);
-                  resolve({
-                    ok: evidenceOk,
-                    tabId: tab.id,
-                    url: currentUrl,
-                    finalUrl: currentUrl,
-                    timedOut: attempts >= maxPollAttempts && t.status !== "complete",
-                    evidenceOk,
-                    pageData: data || {},
-                    readError: evidenceOk ? "" : "Page loaded but no usable DOM evidence was captured",
-                  });
-                } catch (err) {
-                  await restoreSourceTabFocus(__sourceTabId);
-                  resolve({
-                    ok: false,
-                    tabId: tab.id,
-                    url: currentUrl,
-                    finalUrl: currentUrl,
-                    timedOut: attempts >= maxPollAttempts && t.status !== "complete",
-                    evidenceOk: false,
-                    pageData: {},
-                    readError: err.message,
-                  });
-                }
-              }, Math.max(250, Math.min(Number(readDelayMs) || 1500, 4000)));
-            }
+        try {
+          const readiness = await waitForTabReadiness(tab.id, {
+            workflowId,
+            expectedUrl: url,
+            label: "open_new_tab 页面取证",
+            minWaitMs: Math.max(1000, Math.min(Number(readDelayMs) || 1500, 5000)),
+            timeoutMs: Math.max(4000, Math.min((Number(maxAttempts) || 20) * 650, 26000)),
+            requireEvidence: true,
           });
-        }, 500);
+          if (readiness.isCaptcha) {
+            chrome.tabs.update(tab.id, { active: true });
+            chrome.runtime.sendMessage({ type: "CAPTCHA_DETECTED", url: readiness.tab?.url || url });
+          }
+          const pageData = readiness.pageData || {};
+          const evidenceOk = hasUsablePageEvidence(pageData);
+          await restoreSourceTabFocus(__sourceTabId);
+          resolve({
+            ok: evidenceOk,
+            tabId: tab.id,
+            url: readiness.tab?.url || url,
+            finalUrl: pageData.url || readiness.tab?.url || url,
+            timedOut: Boolean(readiness.timedOut),
+            isCaptcha: Boolean(readiness.isCaptcha),
+            evidenceOk,
+            readiness: readiness.readiness,
+            readinessElapsedMs: readiness.elapsedMs,
+            readinessAttempts: readiness.attempts,
+            pageData,
+            readError: evidenceOk ? "" : (readiness.readError || "Page loaded but no usable DOM evidence was captured"),
+          });
+        } catch (err) {
+          await restoreSourceTabFocus(__sourceTabId);
+          resolve({
+            ok: false,
+            tabId: tab.id,
+            url,
+            finalUrl: url,
+            evidenceOk: false,
+            pageData: {},
+            readError: err.message,
+          });
+        }
       });
     });
   },
