@@ -1958,6 +1958,7 @@ function getGoogleTrendsScreenshotEvidence(toolHistory = []) {
       sourceRef: entry.result?.screenshotRef || entry.result?.searchUrl || entry.result?.pageData?.url || "Google Trends screenshot artifact",
       searchUrl: entry.result?.searchUrl || entry.result?.pageData?.url || "",
       captureMode: entry.result?.screenshotCaptureMode || "unknown",
+      evidenceQuality: entry.result?.evidence_quality || entry.result?.evidenceQuality || null,
       observedValue: [
         "Google Trends 页面已读取并保存趋势图截图 artifact。",
         entry.result?.pageData?.visibleText ? `页面可见文本包含：${truncateText(entry.result.pageData.visibleText, 220)}` : "",
@@ -1979,6 +1980,7 @@ function getGoogleTrendsToolEvidence(toolHistory = []) {
       sourceRef: entry.result?.searchUrl || pageData.url || "Google Trends search evidence",
       searchUrl: entry.result?.searchUrl || pageData.url || "",
       captureMode: entry.result?.screenshotCaptureMode || "unknown",
+      evidenceQuality: entry.result?.evidence_quality || entry.result?.evidenceQuality || null,
       observedValue: [
         "Google Trends 页面已通过工具证据校验。",
         pageData.title ? `页面标题：${truncateText(pageData.title, 120)}` : "",
@@ -1987,6 +1989,22 @@ function getGoogleTrendsToolEvidence(toolHistory = []) {
     };
   }
   return null;
+}
+
+function summarizeEvidenceQuality(evidence = {}) {
+  const quality = evidence.evidenceQuality || evidence.evidence_quality || {};
+  const parts = [];
+  const loadState = quality.load_state || quality.loadState || quality.ready_reason || quality.readyReason;
+  const stableReads = quality.stable_reads ?? quality.stableReads;
+  const elapsedMs = quality.readiness_elapsed_ms ?? quality.readinessElapsedMs;
+  const attempts = quality.readiness_attempts ?? quality.readinessAttempts;
+  const risk = quality.risk || "";
+  if (loadState) parts.push(`load_state=${loadState}`);
+  if (stableReads !== undefined) parts.push(`stable_reads=${stableReads}`);
+  if (attempts !== undefined) parts.push(`attempts=${attempts}`);
+  if (elapsedMs !== undefined) parts.push(`elapsed_ms=${elapsedMs}`);
+  if (risk) parts.push(`risk=${risk}`);
+  return parts.length ? `证据质量：${parts.join("，")}。` : "";
 }
 
 function getGoogleSearchEvidence(toolHistory = []) {
@@ -2048,12 +2066,13 @@ function buildEtsySearchLedgerEntry(evidence = {}) {
 function buildGoogleTrendsToolLedgerEntry(evidence = {}) {
   const queryText = evidence.query ? `查询词：${evidence.query}；` : "";
   const ref = evidence.searchUrl || evidence.sourceRef || "Google Trends search evidence";
+  const qualityText = summarizeEvidenceQuality(evidence);
   return {
     source_type: "google_trends",
     source_ref: ref,
-    observed_value: `${queryText}Google Trends 页面已通过工具证据校验，可见 Interest over time、related queries/topics 或趋势页面文本。`,
+    observed_value: `${queryText}Google Trends 页面已通过工具证据校验，可见 Interest over time、related queries/topics 或趋势页面文本。${qualityText}`,
     used_for: "支撑趋势/季节性/需求曲线相关结论的工具来源；最终解释仍需结合趋势图截图视觉解读。",
-    confidence: "medium",
+    confidence: /risk=high|timed_out|blocked/i.test(qualityText) ? "low" : "medium",
     limitation: "Google Trends 是相对热度，不等于 Etsy 平台搜索量、点击率、订单或转化率；只能作为公开需求方向证据。",
   };
 }
@@ -2061,12 +2080,13 @@ function buildGoogleTrendsToolLedgerEntry(evidence = {}) {
 function buildGoogleTrendsScreenshotLedgerEntry(evidence = {}) {
   const queryText = evidence.query ? `查询词：${evidence.query}；` : "";
   const urlText = evidence.searchUrl ? `页面：${evidence.searchUrl}；` : "";
+  const qualityText = summarizeEvidenceQuality(evidence);
   return {
     source_type: "screenshot_visual",
     source_ref: `Google Trends 截图 ${evidence.sourceRef || evidence.searchUrl || ""}`.trim(),
-    observed_value: `${queryText}${urlText}已取得 Google Trends 趋势图截图，需基于截图记录地区 US、近 12 个月时间范围、Interest over time 曲线、related queries/topics 和图表可见局限。${evidence.observedValue || ""}`,
+    observed_value: `${queryText}${urlText}已取得 Google Trends 趋势图截图，需基于截图记录地区 US、近 12 个月时间范围、Interest over time 曲线、related queries/topics 和图表可见局限。${qualityText}${evidence.observedValue || ""}`,
     used_for: "支撑趋势/季节性/需求曲线相关结论，并约束报告只能描述截图可见趋势，不得推断真实搜索量或 Etsy 订单。",
-    confidence: "medium",
+    confidence: /risk=high|timed_out|blocked/i.test(qualityText) ? "low" : "medium",
     limitation: `截图捕获方式 ${evidence.captureMode || "unknown"}；Google Trends 是相对热度，不等于 Etsy 平台搜索量、点击率、订单或转化率。`,
   };
 }
@@ -2212,7 +2232,7 @@ export function autoRepairFinalReportForDelivery(parsed, {
   }
   const reportText = `${repaired.output.overview || ""}\n${repaired.output.analysis || ""}\n${repaired.output.summary || ""}\n${JSON.stringify(repaired.output.data || [])}`;
   const reportUsesGoogleSearch = /Google Search|Google US|谷歌搜索|站外搜索|搜索结果|站外市场|欧美市场|市场调研|外部流量|站外需求/i.test(reportText);
-  const reportUsesTrends = /Google Trends|谷歌趋势|趋势图|搜索趋势|搜索热度|季节性|需求曲线|Interest over time|related queries|related topics|峰值|peak/i.test(reportText);
+  const reportUsesTrends = TREND_OR_SEASONAL_RE.test(reportText);
 
   repaired.output.data.forEach((item, idx) => {
     if (!item || typeof item !== "object") return;
@@ -2235,12 +2255,13 @@ export function autoRepairFinalReportForDelivery(parsed, {
       itemChanged = true;
     }
 
-    const itemUsesTrends = reportUsesTrends || /Google Trends|谷歌趋势|趋势图|搜索趋势|搜索热度|季节性|需求曲线|Interest over time|related queries|related topics|峰值|peak/i.test(JSON.stringify(item));
-    if (isEtsyBusinessSkill(skillId) && itemUsesTrends && trendsToolEvidence && !hasLedgerType(ledger, "google_trends")) {
+    const itemUsesTrends = reportUsesTrends || TREND_OR_SEASONAL_RE.test(JSON.stringify(item));
+    const shouldAttachPlatformTrendEvidence = isPlatformTrendSkill(skillId) && Boolean(trendsToolEvidence);
+    if (isEtsyBusinessSkill(skillId) && (itemUsesTrends || shouldAttachPlatformTrendEvidence) && trendsToolEvidence && !hasLedgerType(ledger, "google_trends")) {
       ledger.push(buildGoogleTrendsToolLedgerEntry(trendsToolEvidence));
       itemChanged = true;
     }
-    if (isEtsyBusinessSkill(skillId) && itemUsesTrends && trendsScreenshotEvidence && !hasTrendVisualForTrends(ledger)) {
+    if (isEtsyBusinessSkill(skillId) && (itemUsesTrends || shouldAttachPlatformTrendEvidence) && trendsScreenshotEvidence && !hasTrendVisualForTrends(ledger)) {
       ledger.push(buildGoogleTrendsScreenshotLedgerEntry(trendsScreenshotEvidence));
       itemChanged = true;
     }
@@ -2374,7 +2395,7 @@ function validateOperationsReport(out, toolHistory = [], pageContext = {}) {
 }
 
 const KEYWORD_VOLUME_CLAIM_RE = /^\s*\d+(?:[,.]\d+)*(?:\s*[-–—到至]\s*\d+(?:[,.]\d+)*)?\s*$|高频|高搜索|搜索量高|热度高|high\s+volume|large\s+volume|popular/i;
-const TREND_OR_SEASONAL_RE = /Google Trends|谷歌趋势|趋势图|季节|旺季|淡季|峰值|搜索热度|需求曲线|Interest over time|related queries|related topics|YoY|QoQ|trend|seasonal|peak/i;
+const TREND_OR_SEASONAL_RE = /Google Trends|谷歌趋势|趋势图|搜索趋势|搜索热度|热度|需求曲线|需求上升|需求下降|需求增长|需求回落|需求高点|季节|季节性|季节窗口|婚礼季|旺季|淡季|峰值|高峰|Interest over time|related queries|related topics|YoY|QoQ|trend|trends|seasonal|seasonality|peak/i;
 const SEO_OR_KEYWORD_RE = /SEO|关键词|搜索词|高频词|标题|标签|tags?|keyword|listing title|属性|attribute/i;
 const SENSITIVE_LISTING_RE = /儿童|婴幼儿|玩具|化妆品|护肤|食品接触|餐具|电器|插头|电池|充电|药品|医疗|品牌|迪士尼|Disney|Marvel|Pokemon|Nike|LV|Chanel|商标|版权|角色|children|kids|toy|cosmetic|skin.?care|food contact|electrical|battery|medical|brand|trademark|copyright|character/i;
 const DIRECT_PUBLISH_RE = /可直接发布|直接上架|立即发布|ready to publish|publish-ready|直接投放/i;
@@ -2586,7 +2607,7 @@ function validatePlatformTrendReport(out, toolHistory = [], pageContext = {}) {
     errors.push("趋势报告缺少 Etsy 公开搜索证据。Search Grid 只能作为本轮可见样本，必须先完成真实 Etsy 搜索并记录查询口径。");
   }
 
-  const usesTrend = /Google Trends|谷歌趋势|趋势图|搜索趋势|搜索热度|季节性|需求曲线|Interest over time|related queries|related topics|峰值|peak/i.test(fullText);
+  const usesTrend = TREND_OR_SEASONAL_RE.test(fullText);
   if (usesTrend && !hasLedgerType(allLedger, "google_trends")) {
     errors.push("报告使用了 Google Trends/季节性/需求曲线结论，但 evidence_ledger 缺少 google_trends 工具证据。");
   }

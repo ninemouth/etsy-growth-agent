@@ -11,8 +11,38 @@ let availableSkills = [];
 let sessionMode = "new";
 let selectedResumeSessionKey = "";
 let selectedResumeSessionMeta = null;
+let sessionHistoryCategory = "all";
 
 const WORKFLOW_CHECKPOINTS_KEY = "agentWorkflowCheckpoints";
+const SESSION_HISTORY_CATEGORIES = [
+  { id: "all", label: "全部" },
+  { id: "store", label: "店铺体检" },
+  { id: "trends", label: "平台趋势" },
+  { id: "competitor", label: "竞品研究" },
+  { id: "keyword", label: "关键词" },
+  { id: "listing", label: "Listing" },
+  { id: "review", label: "评论" },
+  { id: "compliance", label: "合规" },
+  { id: "sourcing", label: "货源" },
+  { id: "operations", label: "运营" },
+];
+const SESSION_HISTORY_ACTION_CATEGORY = {
+  diagnose_store_growth: "store",
+  diagnose_visual_conversion: "store",
+  explore_platform_trends: "trends",
+  find_expansion_opportunities: "trends",
+  scan_competitor_changes: "competitor",
+  analyze_keywords: "keyword",
+  rewrite_listing: "listing",
+  diagnose_sku_funnel: "listing",
+  analyze_review_defects: "review",
+  audit_compliance: "compliance",
+  calculate_profit_guardrail: "sourcing",
+  filter_supplier_sources: "sourcing",
+  detect_fulfillment_risk: "operations",
+  create_growth_experiment: "operations",
+  review_experiment_result: "operations",
+};
 
 const MODEL_HINTS = {
   openai: ["gpt-5.2-omni", "gpt-4o", "gpt-4o-mini", "o1-mini", "o3-mini"],
@@ -203,6 +233,59 @@ function getSessionTitle(checkpoint = {}) {
   return `${skillName} · ${stage}`;
 }
 
+function getCheckpointCategoryId(checkpoint = {}) {
+  const actionId = String(checkpoint.growthActionId || "");
+  if (SESSION_HISTORY_ACTION_CATEGORY[actionId]) return SESSION_HISTORY_ACTION_CATEGORY[actionId];
+  const skillText = `${checkpoint.skillPath || ""} ${checkpoint.skillId || ""}`.toLowerCase();
+  if (/platform_trends|opportunity|trend/.test(skillText)) return "trends";
+  if (/shop_optimizer|store|visual_conversion/.test(skillText)) return "store";
+  if (/competitor|monitor/.test(skillText)) return "competitor";
+  if (/keyword|seo/.test(skillText)) return "keyword";
+  if (/listing|sku/.test(skillText)) return "listing";
+  if (/review/.test(skillText)) return "review";
+  if (/compliance|risk/.test(skillText)) return "compliance";
+  if (/sourcing|supplier|profit|fulfillment/.test(skillText)) return "sourcing";
+  return "operations";
+}
+
+function getCheckpointCategoryLabel(checkpoint = {}) {
+  const categoryId = getCheckpointCategoryId(checkpoint);
+  return SESSION_HISTORY_CATEGORIES.find((item) => item.id === categoryId)?.label || "运营";
+}
+
+function getCheckpointTarget(checkpoint = {}) {
+  const scope = checkpoint.research_scope || checkpoint.researchScope || {};
+  const target = scope.target_entity || {};
+  return target.name || checkpoint.pageTitle || checkpoint.pageUrl || "未命名会话";
+}
+
+function getCheckpointRoleLabel(checkpoint = {}) {
+  const scope = checkpoint.research_scope || checkpoint.researchScope || {};
+  const pageType = String(scope.entry_page_type || "");
+  const roleMap = {
+    own_shop: "自营店铺",
+    own_listing: "自营商品",
+    competitor_shop: "竞品店铺",
+    competitor_listing: "竞品商品",
+    etsy_search: "Etsy 搜索页",
+    etsy_home: "Etsy 首页",
+    external_page: "外部页面",
+    unknown: "未知页面",
+  };
+  return roleMap[pageType] || (scope.page_role_notice ? "已识别范围" : "未记录页面角色");
+}
+
+function getCheckpointStatusLabel(checkpoint = {}) {
+  const status = String(checkpoint.status || "checkpoint");
+  const stage = String(checkpoint.lastStage || "");
+  if (status === "quality_gate_blocked" || stage === "quality_gate_blocked") return "质量门禁";
+  if (status === "interrupted") return "已保存断点";
+  if (status === "user_paused" || stage === "user_paused") return "用户暂停";
+  if (status === "running") return "运行中";
+  if (status === "failed") return "失败";
+  return "断点";
+}
+
 function updateSessionModeUI() {
   const modeText = $("sessionModeText");
   if (!modeText) return;
@@ -230,28 +313,53 @@ async function getWorkflowCheckpointEntries() {
     .sort((a, b) => new Date(b.checkpoint.updatedAt || 0) - new Date(a.checkpoint.updatedAt || 0));
 }
 
-async function renderSessionHistory() {
+async function renderSessionHistory(entriesOverride = null, selectedCategory = sessionHistoryCategory) {
   const list = $("sessionHistoryList");
   if (!list) return;
-  const entries = await getWorkflowCheckpointEntries();
+  const entries = Array.isArray(entriesOverride) ? entriesOverride : await getWorkflowCheckpointEntries();
+  const filteredEntries = selectedCategory === "all"
+    ? entries
+    : entries.filter(({ checkpoint }) => getCheckpointCategoryId(checkpoint) === selectedCategory);
+  const filters = `
+    <div class="session-history-filters" role="tablist" aria-label="历史会话分类">
+      ${SESSION_HISTORY_CATEGORIES.map((category) => `
+        <button type="button" class="session-history-filter ${category.id === selectedCategory ? "active" : ""}" data-session-category="${escapeHtml(category.id)}">${escapeHtml(category.label)}</button>
+      `).join("")}
+    </div>
+  `;
   if (!entries.length) {
-    list.innerHTML = `<div class="session-empty">暂无可恢复会话。</div>`;
+    list.innerHTML = `${filters}<div class="session-empty">暂无可恢复会话。</div>`;
     return;
   }
-  list.innerHTML = entries.slice(0, 12).map(({ key, checkpoint }) => {
+  if (!filteredEntries.length) {
+    list.innerHTML = `${filters}<div class="session-empty">该分类暂无可恢复会话。</div>`;
+  } else {
+    list.innerHTML = filters + filteredEntries.slice(0, 12).map(({ key, checkpoint }) => {
     const updatedAt = checkpoint.updatedAt ? new Date(checkpoint.updatedAt).toLocaleString() : "未知时间";
-    const status = checkpoint.status || "checkpoint";
+    const status = getCheckpointStatusLabel(checkpoint);
     const step = checkpoint.step !== undefined ? ` · step ${checkpoint.step}` : "";
     return `
       <div class="session-history-item" data-session-key="${escapeHtml(key)}">
+        <div class="session-history-topline">
+          <span class="session-history-badge">${escapeHtml(getCheckpointCategoryLabel(checkpoint))}</span>
+          <span class="session-history-target" title="${escapeHtml(getCheckpointTarget(checkpoint))}">${escapeHtml(getCheckpointTarget(checkpoint))}</span>
+        </div>
         <div class="session-history-title">${escapeHtml(getSessionTitle(checkpoint))}</div>
         <div class="session-history-meta">${escapeHtml(status)}${escapeHtml(step)} · ${escapeHtml(updatedAt)}</div>
+        <div class="session-history-role">${escapeHtml(getCheckpointRoleLabel(checkpoint))}</div>
         <div class="session-history-actions">
           <button type="button" class="session-resume-btn" data-session-key="${escapeHtml(key)}">恢复这个会话</button>
         </div>
       </div>
     `;
-  }).join("");
+    }).join("");
+  }
+  list.querySelectorAll(".session-history-filter").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      sessionHistoryCategory = btn.dataset.sessionCategory || "all";
+      await renderSessionHistory(entries, sessionHistoryCategory);
+    });
+  });
   list.querySelectorAll(".session-resume-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const key = btn.dataset.sessionKey || "";

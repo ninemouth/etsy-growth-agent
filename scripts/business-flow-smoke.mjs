@@ -263,6 +263,11 @@ assert.match(
   /\.chat-session-control\s*\{[\s\S]*left:\s*-54px[\s\S]*flex-direction:\s*column[\s\S]*\.chat-session-history-panel\s*\{[\s\S]*position:\s*absolute[\s\S]*top:\s*68px/,
   "floating session controls should live to the left of the chat and history should render as an overlay panel"
 );
+assert.match(contentSource, /OVERLAY_HISTORY_CATEGORIES[\s\S]*平台趋势[\s\S]*竞品研究[\s\S]*getOverlayCheckpointCategoryId/, "floating overlay session history should classify checkpoints by business category");
+assert.match(contentSource, /chat-session-history-filter[\s\S]*data-history-category[\s\S]*chat-session-history-badge[\s\S]*chat-session-history-target[\s\S]*chat-session-history-role/, "floating overlay history cards should show category, target and page role");
+assert.match(sidepanelSource, /SESSION_HISTORY_CATEGORIES[\s\S]*店铺体检[\s\S]*平台趋势[\s\S]*getCheckpointCategoryId/, "sidepanel session history should expose the same business categories");
+assert.match(sidepanelSource, /session-history-filter[\s\S]*data-session-category[\s\S]*session-history-badge[\s\S]*session-history-target[\s\S]*session-history-role/, "sidepanel history cards should show category, target and page role");
+assert.match(backgroundSource, /research_scope:\s*pageContext\.research_scope \|\| null[\s\S]*researchScope:\s*pageContext\.research_scope \|\| null/, "workflow checkpoints should persist research scope for session history classification");
 assert.match(contentSource, /pickLatestOverlayResumableSessionForContinue[\s\S]*legacyContinueInstruction[\s\S]*pickLatestOverlayResumableSessionForContinue/, "floating overlay plain continue messages should auto-select the latest resumable checkpoint");
 assert.match(contentSource, /workflowSessionId[\s\S]*continueSession[\s\S]*forceNewSession/, "floating overlay should pass explicit session intent into RUN_SKILL");
 assert.match(contentSource, /startOverlayNewSessionMode[\s\S]*不会沿用旧断点/, "floating overlay should make fresh-session mode visible instead of hidden behind implicit behavior");

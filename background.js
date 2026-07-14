@@ -788,6 +788,8 @@ chrome.runtime.onConnect.addListener((port) => {
                 workflowSessionId: message.workflowSessionId || "",
                 pageUrl: tab.url || "",
                 pageTitle: tab.title || "",
+                research_scope: pageContext.research_scope || null,
+                researchScope: pageContext.research_scope || null,
               });
             },
           });

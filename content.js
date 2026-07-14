@@ -2568,6 +2568,30 @@
         backdrop-filter: blur(18px);
         -webkit-backdrop-filter: blur(18px);
       }
+      .chat-session-history-filters {
+        display: flex;
+        gap: 6px;
+        overflow-x: auto;
+        padding: 0 0 8px;
+        margin-bottom: 4px;
+        border-bottom: 1px solid var(--border-main);
+      }
+      .chat-session-history-filter {
+        flex: 0 0 auto;
+        border: 1px solid var(--border-main);
+        background: rgba(255,255,255,0.72);
+        color: var(--text-secondary);
+        border-radius: 999px;
+        padding: 4px 8px;
+        font-size: 10px;
+        font-weight: 800;
+        cursor: pointer;
+      }
+      .chat-session-history-filter.active {
+        border-color: rgba(0,91,255,0.42);
+        background: rgba(0,91,255,0.1);
+        color: #005bff;
+      }
       .chat-session-history-item {
         border-bottom: 1px solid var(--border-main);
         padding: 10px 2px;
@@ -2575,11 +2599,54 @@
       .chat-session-history-item:last-child {
         border-bottom: none;
       }
+      .chat-session-history-topline {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 4px;
+      }
+      .chat-session-history-badge {
+        display: inline-flex;
+        align-items: center;
+        max-width: 42%;
+        border-radius: 999px;
+        background: rgba(0,91,255,0.08);
+        color: #005bff;
+        font-size: 9px;
+        font-weight: 900;
+        padding: 3px 6px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .chat-session-history-target {
+        flex: 1;
+        min-width: 0;
+        color: var(--text-color);
+        font-size: 10px;
+        font-weight: 850;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        text-align: right;
+      }
       .chat-session-history-title {
         font-size: 11px;
         font-weight: 800;
         color: var(--text-color);
         line-height: 1.35;
+      }
+      .chat-session-history-role {
+        display: inline-flex;
+        align-items: center;
+        margin-top: 4px;
+        border-radius: 6px;
+        background: rgba(0,0,0,0.04);
+        color: var(--text-secondary);
+        font-size: 9px;
+        font-weight: 800;
+        padding: 2px 5px;
       }
       .chat-session-history-meta,
       .chat-session-empty {
@@ -3295,9 +3362,39 @@
     let overlayPendingGrowthAction = null;
     let overlayLastGrowthAction = null;
     let overlayNewSessionConfirmed = false;
+    let overlayHistoryCategory = "all";
     let activeAgentPort = null;
     let activePauseRequested = false;
     const WORKFLOW_CHECKPOINTS_KEY = "agentWorkflowCheckpoints";
+    const OVERLAY_HISTORY_CATEGORIES = [
+      { id: "all", label: "全部" },
+      { id: "store", label: "店铺体检" },
+      { id: "trends", label: "平台趋势" },
+      { id: "competitor", label: "竞品研究" },
+      { id: "keyword", label: "关键词" },
+      { id: "listing", label: "Listing" },
+      { id: "review", label: "评论" },
+      { id: "compliance", label: "合规" },
+      { id: "sourcing", label: "货源" },
+      { id: "operations", label: "运营" },
+    ];
+    const OVERLAY_HISTORY_ACTION_CATEGORY = {
+      diagnose_store_growth: "store",
+      diagnose_visual_conversion: "store",
+      explore_platform_trends: "trends",
+      find_expansion_opportunities: "trends",
+      scan_competitor_changes: "competitor",
+      analyze_keywords: "keyword",
+      rewrite_listing: "listing",
+      diagnose_sku_funnel: "listing",
+      analyze_review_defects: "review",
+      audit_compliance: "compliance",
+      calculate_profit_guardrail: "sourcing",
+      filter_supplier_sources: "sourcing",
+      detect_fulfillment_risk: "operations",
+      create_growth_experiment: "operations",
+      review_experiment_result: "operations",
+    };
 
     const escapeHtmlText = (value = "") => String(value)
       .replace(/&/g, "&amp;")
@@ -3311,6 +3408,59 @@
       const skillName = String(checkpoint.skillPath || checkpoint.skillId || "").split("/").pop()?.replace(".skill.md", "") || "Etsy workflow";
       const stage = checkpoint.lastStage || checkpoint.lastNode || checkpoint.status || "checkpoint";
       return `${skillName} · ${stage}`;
+    };
+
+    const getOverlayCheckpointCategoryId = (checkpoint = {}) => {
+      const actionId = String(checkpoint.growthActionId || "");
+      if (OVERLAY_HISTORY_ACTION_CATEGORY[actionId]) return OVERLAY_HISTORY_ACTION_CATEGORY[actionId];
+      const skillText = `${checkpoint.skillPath || ""} ${checkpoint.skillId || ""}`.toLowerCase();
+      if (/platform_trends|opportunity|trend/.test(skillText)) return "trends";
+      if (/shop_optimizer|store|visual_conversion/.test(skillText)) return "store";
+      if (/competitor|monitor/.test(skillText)) return "competitor";
+      if (/keyword|seo/.test(skillText)) return "keyword";
+      if (/listing|sku/.test(skillText)) return "listing";
+      if (/review/.test(skillText)) return "review";
+      if (/compliance|risk/.test(skillText)) return "compliance";
+      if (/sourcing|supplier|profit|fulfillment/.test(skillText)) return "sourcing";
+      return "operations";
+    };
+
+    const getOverlayCheckpointCategoryLabel = (checkpoint = {}) => {
+      const categoryId = getOverlayCheckpointCategoryId(checkpoint);
+      return OVERLAY_HISTORY_CATEGORIES.find((item) => item.id === categoryId)?.label || "运营";
+    };
+
+    const getOverlayCheckpointTarget = (checkpoint = {}) => {
+      const scope = checkpoint.research_scope || checkpoint.researchScope || {};
+      const target = scope.target_entity || {};
+      return target.name || checkpoint.pageTitle || checkpoint.pageUrl || "未命名会话";
+    };
+
+    const getOverlayCheckpointRoleLabel = (checkpoint = {}) => {
+      const scope = checkpoint.research_scope || checkpoint.researchScope || {};
+      const pageType = String(scope.entry_page_type || "");
+      const roleMap = {
+        own_shop: "自营店铺",
+        own_listing: "自营商品",
+        competitor_shop: "竞品店铺",
+        competitor_listing: "竞品商品",
+        etsy_search: "Etsy 搜索页",
+        etsy_home: "Etsy 首页",
+        external_page: "外部页面",
+        unknown: "未知页面",
+      };
+      return roleMap[pageType] || (scope.page_role_notice ? "已识别范围" : "未记录页面角色");
+    };
+
+    const getOverlayCheckpointStatusLabel = (checkpoint = {}) => {
+      const status = String(checkpoint.status || "checkpoint");
+      const stage = String(checkpoint.lastStage || "");
+      if (status === "quality_gate_blocked" || stage === "quality_gate_blocked") return "质量门禁";
+      if (status === "interrupted") return "已保存断点";
+      if (status === "user_paused" || stage === "user_paused") return "用户暂停";
+      if (status === "running") return "运行中";
+      if (status === "failed") return "失败";
+      return "断点";
     };
 
     const updateOverlaySessionModeUI = () => {
@@ -3385,28 +3535,55 @@
       await runSelectedSkill(runInstruction || instruction, actionId);
     };
 
-    const renderOverlaySessionHistory = async (entriesOverride = null) => {
+    const renderOverlaySessionHistory = async (entriesOverride = null, selectedCategory = overlayHistoryCategory) => {
       const list = shadow.getElementById("chat-session-history-list");
       if (!list) return;
       const entries = Array.isArray(entriesOverride) ? entriesOverride : await getOverlayCheckpointEntries();
+      const filteredEntries = selectedCategory === "all"
+        ? entries
+        : entries.filter(({ checkpoint }) => getOverlayCheckpointCategoryId(checkpoint) === selectedCategory);
+      const filters = `
+        <div class="chat-session-history-filters" role="tablist" aria-label="历史会话分类">
+          ${OVERLAY_HISTORY_CATEGORIES.map((category) => `
+            <button type="button" class="chat-session-history-filter ${category.id === selectedCategory ? "active" : ""}" data-history-category="${escapeHtmlText(category.id)}">
+              ${escapeHtmlText(category.label)}
+            </button>
+          `).join("")}
+        </div>
+      `;
       if (!entries.length) {
-        list.className = "chat-session-empty";
-        list.innerHTML = "暂无可恢复会话。";
+        list.className = "";
+        list.innerHTML = `${filters}<div class="chat-session-empty">暂无可恢复会话。</div>`;
         return;
       }
       list.className = "";
-      list.innerHTML = entries.slice(0, 12).map(({ key, checkpoint }) => {
+      if (!filteredEntries.length) {
+        list.innerHTML = `${filters}<div class="chat-session-empty">该分类暂无可恢复会话。</div>`;
+      } else {
+        list.innerHTML = filters + filteredEntries.slice(0, 12).map(({ key, checkpoint }) => {
         const updatedAt = checkpoint.updatedAt ? new Date(checkpoint.updatedAt).toLocaleString() : "未知时间";
-        const status = checkpoint.status || "checkpoint";
+        const status = getOverlayCheckpointStatusLabel(checkpoint);
         const step = checkpoint.step !== undefined ? ` · step ${checkpoint.step}` : "";
         return `
           <div class="chat-session-history-item" data-session-key="${escapeHtmlText(key)}">
+            <div class="chat-session-history-topline">
+              <span class="chat-session-history-badge">${escapeHtmlText(getOverlayCheckpointCategoryLabel(checkpoint))}</span>
+              <span class="chat-session-history-target" title="${escapeHtmlText(getOverlayCheckpointTarget(checkpoint))}">${escapeHtmlText(getOverlayCheckpointTarget(checkpoint))}</span>
+            </div>
             <div class="chat-session-history-title">${escapeHtmlText(getOverlaySessionTitle(checkpoint))}</div>
             <div class="chat-session-history-meta">${escapeHtmlText(status)}${escapeHtmlText(step)} · ${escapeHtmlText(updatedAt)}</div>
+            <div class="chat-session-history-role">${escapeHtmlText(getOverlayCheckpointRoleLabel(checkpoint))}</div>
             <button type="button" class="chat-session-resume-btn" data-session-key="${escapeHtmlText(key)}">恢复这个会话</button>
           </div>
         `;
-      }).join("");
+        }).join("");
+      }
+      list.querySelectorAll(".chat-session-history-filter").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          overlayHistoryCategory = btn.dataset.historyCategory || "all";
+          await renderOverlaySessionHistory(entries, overlayHistoryCategory);
+        });
+      });
       list.querySelectorAll(".chat-session-resume-btn").forEach((btn) => {
         btn.addEventListener("click", () => {
           const key = btn.dataset.sessionKey || "";

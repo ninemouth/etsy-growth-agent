@@ -102,6 +102,13 @@ const toolHistory = [
       screenshotCaptured: true,
       screenshotRef: "artifact://google-trends-wedding-clutch.png",
       screenshotCaptureMode: "captureVisibleTab_viewport",
+      evidence_quality: {
+        load_state: "content_stable",
+        stable_reads: 2,
+        readiness_attempts: 6,
+        readiness_elapsed_ms: 4200,
+        risk: "low",
+      },
       pageData: {
         url: "https://trends.google.com/trends/explore?geo=US&q=personalized%20wedding%20clutch",
         title: "Google Trends",
@@ -284,10 +291,39 @@ assert.equal(
   true,
   "auto repair should add a google_trends ledger entry when verified tool evidence exists",
 );
+assert.match(
+  repairedTrendToolLedger.parsed.output.data[0].evidence_ledger.find((entry) => entry.source_type === "google_trends")?.observed_value || "",
+  /证据质量：load_state=content_stable，stable_reads=2/,
+  "auto repaired Google Trends ledger should preserve browser evidence quality",
+);
 assert.deepEqual(
   validateReport(repairedTrendToolLedger.parsed, "", skillId, toolHistory, pageContext),
   [],
   "auto repair should prevent Critic redo when only the google_trends ledger entry was omitted",
+);
+
+const implicitPlatformTrendReport = structuredClone(validReport);
+implicitPlatformTrendReport.output.overview = "面向欧美婚礼礼品市场，基于公开平台样本给出婚礼季机会方向。";
+implicitPlatformTrendReport.output.analysis = "当前只建议先做小流量实验，所有需求判断都限定为公开页面与截图证据范围。";
+implicitPlatformTrendReport.output.data[0].seasonality = "婚礼季存在观察价值，下一步按月份持续验证。";
+implicitPlatformTrendReport.output.data[0].evidence_ledger = ledger.filter((entry) =>
+  entry.source_type !== "google_trends" && !(entry.source_type === "screenshot_visual" && /Google Trends|trends\.google/i.test(`${entry.source_ref} ${entry.observed_value}`))
+);
+const repairedImplicitPlatformTrend = autoRepairFinalReportForDelivery(implicitPlatformTrendReport, { skillId, toolHistory, pageContext });
+assert.equal(
+  repairedImplicitPlatformTrend.parsed.output.data[0].evidence_ledger.some((entry) => entry.source_type === "google_trends"),
+  true,
+  "platform trend reports should attach verified google_trends evidence even when the model uses Chinese seasonal wording",
+);
+assert.equal(
+  repairedImplicitPlatformTrend.parsed.output.data[0].evidence_ledger.some((entry) => entry.source_type === "screenshot_visual" && /Google Trends|trends\.google/i.test(`${entry.source_ref} ${entry.observed_value}`)),
+  true,
+  "platform trend reports should attach verified Trends screenshot visual evidence when available",
+);
+assert.deepEqual(
+  validateReport(repairedImplicitPlatformTrend.parsed, "", skillId, toolHistory, pageContext),
+  [],
+  "Chinese seasonal wording should not trigger a non-quality Critic redo when verified Trends evidence exists",
 );
 
 const missingMandatoryLedgers = structuredClone(validReport);
