@@ -96,6 +96,7 @@ assert.match(agentLoopSource, /isWorkflowGenerationCurrent[\s\S]*stale_tool_resu
 assert.match(agentLoopSource, /putDataUrlArtifact[\s\S]*workflow-loop-screenshot/, "immediate workflow screenshots should be retained as evidence artifacts");
 assert.match(toolRegistrySource, /executeGenericDomSnapshot[\s\S]*allFrames: true[\s\S]*scripting_executeScript_dom_fallback/, "page reading should have an all-frame DOM fallback route");
 assert.match(toolRegistrySource, /captureFullPageScreenshot[\s\S]*screenshotCaptureMode/, "Etsy evidence capture should use debugger-backed full-page screenshots with fallback");
+assert.match(toolRegistrySource, /getTabForCapture[\s\S]*isCapturableTabUrl[\s\S]*expectedUrl[\s\S]*_captureTabScreenshot\(tabId,\s*\{ expectedUrl:\s*payload\.searchUrl \}\)/, "search screenshots should wait for a capturable http(s) tab URL and use the search URL as a diagnostic fallback");
 assert.match(agentLoopSource, /captureFullPageScreenshot[\s\S]*captureVisibleTab_viewport/, "Etsy detail-page loop screenshots should prefer full-page capture and retain viewport fallback");
 assert.match(toolRegistrySource, /createOwnedTab[\s\S]*closeOwnedTab/, "Etsy crawl tabs should have centralized workflow ownership");
 assert.match(browserSessionManagerSource, /openerTabId[\s\S]*chrome\.tabs\.create/, "workflow-created tabs should preserve the source tab as opener instead of replacing the shop page");

@@ -566,9 +566,29 @@ function buildPageEvidence(pageData = {}) {
   };
 }
 
-async function _captureTabScreenshot(tabId) {
-  const tab = await chrome.tabs.get(tabId);
+function isCapturableTabUrl(url = "") {
+  return /^https?:\/\//i.test(String(url || ""));
+}
+
+async function getTabForCapture(tabId, { expectedUrl = "", maxAttempts = 12, intervalMs = 250 } = {}) {
+  let lastTab = null;
+  for (let attempt = 0; attempt < Math.max(1, Number(maxAttempts) || 12); attempt++) {
+    lastTab = await chrome.tabs.get(tabId);
+    if (lastTab?.windowId && isCapturableTabUrl(lastTab.url)) return lastTab;
+    await delay(Math.max(50, Number(intervalMs) || 250));
+  }
+  if (lastTab?.windowId && isCapturableTabUrl(expectedUrl)) {
+    return { ...lastTab, url: expectedUrl };
+  }
+  return lastTab;
+}
+
+async function _captureTabScreenshot(tabId, options = {}) {
+  const tab = await getTabForCapture(tabId, options);
   if (!tab?.windowId) throw new Error("Unable to resolve tab window for screenshot");
+  if (!isCapturableTabUrl(tab.url)) {
+    throw new Error(`Tab URL is not capturable yet: ${JSON.stringify(tab.url || "")}`);
+  }
   if (/etsy\.com/i.test(String(tab.url || ""))) {
     try {
       return await captureFullPageScreenshot(tabId);
@@ -2170,7 +2190,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
       if (payload.screenshotRef || payload.screenshotCaptured) return payload;
       try {
         emitSearchProgress("search_screenshot_started", `${searchActionLabel} 正在保存搜索页截图证据。`, { tabId, searchUrl: payload.searchUrl });
-        const screenshot = await _captureTabScreenshot(tabId);
+        const screenshot = await _captureTabScreenshot(tabId, { expectedUrl: payload.searchUrl });
         const artifact = await putDataUrlArtifact(screenshot.dataUrl, {
           namespace: "search-evidence-screenshot",
           metadata: {
