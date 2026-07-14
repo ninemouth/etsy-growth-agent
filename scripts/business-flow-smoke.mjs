@@ -75,6 +75,9 @@ assert.match(js, /isInterruptedSavedResult[\s\S]*filter\(\(entry\) => !isInterru
 assert.match(backgroundSource, /etsy_platform_trends\.skill\.md/, "platform trend action must use a dedicated trend skill");
 assert.match(js, /explore_platform_trends[\s\S]*etsy_platform_trends\.skill\.md/, "dashboard platform trend action must route to dedicated trend skill");
 assert.match(sidepanelSource, /explore_platform_trends[\s\S]*skillId:\s*"etsy_platform_trends"/, "sidepanel platform trend action must route to the dedicated trend skill");
+assert.match(sidepanelSource, /GROWTH_ACTION_SKILL_PATHS[\s\S]*explore_platform_trends:\s*"skills\/etsy_platform_trends\.skill\.md"[\s\S]*resolvedSkillPath/, "sidepanel platform trend runs must pass the explicit trend skill path");
+assert.match(contentSource, /GROWTH_ACTION_SKILL_PATHS[\s\S]*explore_platform_trends:\s*"skills\/etsy_platform_trends\.skill\.md"[\s\S]*skillPath = GROWTH_ACTION_SKILL_PATHS\[growthActionId\]/, "floating overlay platform trend runs must pass the explicit trend skill path instead of relying on shop-page auto routing");
+assert.match(backgroundSource, /hasPlatformTrendIntent[\s\S]*skills\/etsy_platform_trends\.skill\.md[\s\S]*return matched[\s\S]*isEtsyShopPage/, "background auto router must prioritize explicit platform trend intent before shop-page optimizer defaults");
 assert.match(
   backgroundSource,
   /find_expansion_opportunities:\s*\[\s*"skills\/etsy_product_opportunity_explorer\.skill\.md"\s*\]/,

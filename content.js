@@ -2031,6 +2031,18 @@
       return ["diagnose_store_growth", "explore_platform_trends"];
     };
 
+    const GROWTH_ACTION_SKILL_PATHS = {
+      diagnose_store_growth: "skills/etsy_global_shop_optimizer.skill.md",
+      diagnose_sku_funnel: "skills/etsy_operations_tracker.skill.md",
+      scan_competitor_changes: "skills/etsy_global_shop_optimizer.skill.md",
+      find_expansion_opportunities: "skills/etsy_product_opportunity_explorer.skill.md",
+      filter_supplier_sources: "skills/etsy_sourcing_finder.skill.md",
+      explore_platform_trends: "skills/etsy_platform_trends.skill.md",
+      rewrite_listing: "skills/etsy_listing_generator.skill.md",
+      analyze_review_defects: "skills/etsy_review_analyzer.skill.md",
+      review_experiment_result: "skills/etsy_operations_tracker.skill.md",
+    };
+
     // Create Shadow DOM Container
     const container = document.createElement("div");
     container.id = "etsy-assistant-root";
@@ -3936,7 +3948,7 @@
         showToast(`当前「${activeGrowthRun.title || "Etsy 任务"}」仍在运行，请等待完成后再发起新任务。`);
         return;
       }
-      const skillPath = "";
+      const skillPath = GROWTH_ACTION_SKILL_PATHS[growthActionId] || "";
       const statusDot = shadow.getElementById("chat-status-dot");
 
       statusDot.className = "status-dot active";

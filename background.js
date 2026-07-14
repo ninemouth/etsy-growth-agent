@@ -146,8 +146,12 @@ async function dispatchEtsySkills(userInstruction, pageContext = {}) {
 
   const hasShopOptimizationIntent =
     /店铺|卖家主页|seller|store|shop|运营方案|优化方案|店铺优化|店铺分析|店铺诊断|全店|abc|a\/b\/c|a-b-c|分级|整改|改版|增长方案|运营诊断|转化率|加购率|曝光|流量/.test(inst);
+  const hasExplicitShopDiagnosisIntent =
+    /店铺体检|全店体检|店铺诊断|店铺优化|店铺分析|abc|a\/b\/c|a-b-c|分级|整改|运营诊断|增长方案/.test(inst);
   const hasExplicitSourcingIntent =
     /1688|寻源|货源|采购|供应商|源头|工厂|拿样|比价|套利|采购直达|供货|批发|起批/.test(inst);
+  const hasPlatformTrendIntent =
+    /平台趋势|趋势|google trends|谷歌趋势|搜索趋势|季节性|需求曲线|平台需求|类目趋势|热卖|头部商品共性|价格带|评价门槛|趋势窗口|market trend|platform trend/i.test(inst);
   const hasProductOpportunityIntent =
     /选品|开发|类目|爆品|机会|牙刷|合规|eac|准入/.test(inst);
   const hasComplianceIntent =
@@ -157,7 +161,12 @@ async function dispatchEtsySkills(userInstruction, pageContext = {}) {
     /etsy\.com\/shop\//.test(pageUrl) ||
     /etsy\s+shop|shop\s+on\s+etsy|seller|店铺/.test(pageTitle);
 
-  if (isEtsyShopPage && !hasExplicitSourcingIntent && !hasProductOpportunityIntent) {
+  if (hasPlatformTrendIntent && !hasExplicitSourcingIntent && !hasExplicitShopDiagnosisIntent) {
+    pushUnique(matched, "skills/etsy_platform_trends.skill.md");
+    return matched;
+  }
+
+  if (isEtsyShopPage && !hasExplicitSourcingIntent && !hasProductOpportunityIntent && !hasPlatformTrendIntent) {
     pushUnique(matched, "skills/etsy_global_shop_optimizer.skill.md");
   }
   if (hasComplianceIntent) {

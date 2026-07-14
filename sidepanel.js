@@ -101,6 +101,21 @@ const GROWTH_ACTIONS = {
   },
 };
 
+const GROWTH_ACTION_SKILL_PATHS = {
+  diagnose_store_growth: "skills/etsy_global_shop_optimizer.skill.md",
+  diagnose_sku_funnel: "skills/etsy_operations_tracker.skill.md",
+  rewrite_listing: "skills/etsy_listing_generator.skill.md",
+  diagnose_visual_conversion: "skills/etsy_global_shop_optimizer.skill.md",
+  scan_competitor_changes: "skills/etsy_global_shop_optimizer.skill.md",
+  analyze_review_defects: "skills/etsy_review_analyzer.skill.md",
+  calculate_profit_guardrail: "skills/etsy_sourcing_finder.skill.md",
+  filter_supplier_sources: "skills/etsy_sourcing_finder.skill.md",
+  detect_fulfillment_risk: "skills/etsy_operations_tracker.skill.md",
+  find_expansion_opportunities: "skills/etsy_product_opportunity_explorer.skill.md",
+  explore_platform_trends: "skills/etsy_platform_trends.skill.md",
+  review_experiment_result: "skills/etsy_operations_tracker.skill.md",
+};
+
 // ── DOM refs ──
 const $ = (id) => document.getElementById(id);
 
@@ -704,9 +719,10 @@ async function runSkill() {
       ? resumeSessionKey
       : createWorkflowSessionId();
 
+    const resolvedSkillPath = selectedSkill?.path || GROWTH_ACTION_SKILL_PATHS[activeGrowthAction?.id || ""] || "";
     activePort.postMessage({
       type: "RUN_SKILL",
-      skillPath: selectedSkill.path,
+      skillPath: resolvedSkillPath,
       growthActionId: activeGrowthAction?.id || "",
       workflowSessionId,
       userInstruction: userInstruction,
