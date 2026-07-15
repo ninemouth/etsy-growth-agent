@@ -45,6 +45,12 @@ const SESSION_HISTORY_ACTION_CATEGORY = {
   review_experiment_result: "operations",
 };
 
+function isCheckpointFollowupInstruction(value = "") {
+  const text = String(value || "").trim();
+  return /^(继续|继续推进|恢复|resume|continue)$/i.test(text) ||
+    /忽略\s*(?:api|API)|跳过\s*(?:api|API)|未配置\s*(?:api|API)|没有\s*(?:api|API)|无\s*(?:api|API)|不用\s*(?:api|API)|按\s*(?:assumption|假设).{0,12}(?:处理|降级)|(?:api|API).{0,12}(?:assumption|假设|降级|跳过|忽略|未配置|没有|无)/i.test(text);
+}
+
 const MODEL_HINTS = {
   openai: ["gpt-5.2-omni", "gpt-4o", "gpt-4o-mini", "o1-mini", "o3-mini"],
   anthropic: ["claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"],
@@ -870,7 +876,7 @@ async function runSkill() {
 
     const targetImageUrl = await getTargetImageUrlForRun();
 
-    const legacyContinueInstruction = /^(继续|继续推进|恢复|resume|continue)$/i.test(userInstruction.trim());
+    const legacyContinueInstruction = isCheckpointFollowupInstruction(userInstruction);
     let resumeSessionKey = getActiveResumeSessionKey();
     if (!resumeSessionKey && legacyContinueInstruction) {
       resumeSessionKey = await pickLatestResumableSessionForContinue();

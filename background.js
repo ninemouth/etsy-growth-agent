@@ -615,10 +615,16 @@ function isResumableCheckpoint(checkpoint) {
   return checkpoint && !["completed", "cancelled"].includes(checkpoint.status);
 }
 
+function isCheckpointFollowupInstruction(value = "") {
+  const text = String(value || "").trim();
+  return /^(继续|继续推进|恢复|resume|continue)$/i.test(text) ||
+    /忽略\s*(?:api|API)|跳过\s*(?:api|API)|未配置\s*(?:api|API)|没有\s*(?:api|API)|无\s*(?:api|API)|不用\s*(?:api|API)|按\s*(?:assumption|假设).{0,12}(?:处理|降级)|(?:api|API).{0,12}(?:assumption|假设|降级|跳过|忽略|未配置|没有|无)/i.test(text);
+}
+
 function isExplicitResumeRequest(message = {}) {
   if (message.forceNewSession) return false;
   if (message.continueSession) return true;
-  return /^(继续|继续推进|恢复|resume|continue)$/i.test(String(message.userInstruction || "").trim());
+  return isCheckpointFollowupInstruction(message.userInstruction);
 }
 
 chrome.runtime.onConnect.addListener((port) => {

@@ -257,7 +257,8 @@ assert.match(backgroundSource, /WORKFLOW_CHECKPOINTS_KEY\s*=\s*"agentWorkflowChe
 assert.match(backgroundSource, /buildWorkflowCheckpointKey[\s\S]*workflowSessionId[\s\S]*growthCaseId/, "workflow checkpoint lookup should support session and growth-case ids");
 assert.match(backgroundSource, /lastStage:\s*"port_disconnected"/, "port disconnects should mark the workflow checkpoint as interrupted");
 assert.match(backgroundSource, /status:\s*"interrupted"/, "background should preserve disconnected runs as resumable interrupted checkpoints");
-assert.match(backgroundSource, /function isExplicitResumeRequest[\s\S]*forceNewSession[\s\S]*continueSession[\s\S]*继续\|继续推进\|恢复\|resume\|continue/, "checkpoint resume should require an explicit continue/resume request");
+assert.match(backgroundSource, /function isCheckpointFollowupInstruction[\s\S]*继续\|继续推进\|恢复\|resume\|continue[\s\S]*忽略\\s\*\(\?:api\|API\)/, "checkpoint resume should accept explicit continue words and API-ignore follow-up instructions");
+assert.match(backgroundSource, /function isExplicitResumeRequest[\s\S]*forceNewSession[\s\S]*continueSession[\s\S]*isCheckpointFollowupInstruction/, "checkpoint resume should require an explicit continue/resume/follow-up request");
 assert.doesNotMatch(backgroundSource, /shouldResumeFromCheckpoint[\s\S]{0,220}Boolean\(message\.growthCaseId\)/, "growthCaseId alone must not auto-resume an old checkpoint");
 assert.match(sidepanelSource, /forceNewSession:\s*!shouldContinueSession/, "sidepanel should default to a fresh task unless the user explicitly continues");
 assert.doesNotMatch(sidepanelHtmlSource, /continueSessionCheckbox|延续上一轮的对话记忆/, "sidepanel should not hide resume behavior behind a checkbox");
@@ -288,6 +289,7 @@ assert.match(sidepanelSource, /SESSION_HISTORY_CATEGORIES[\s\S]*店铺体检[\s\
 assert.match(sidepanelSource, /session-history-filter[\s\S]*data-session-category[\s\S]*session-history-badge[\s\S]*session-history-target[\s\S]*session-history-role/, "sidepanel history cards should show category, target and page role");
 assert.match(backgroundSource, /research_scope:\s*pageContext\.research_scope \|\| null[\s\S]*researchScope:\s*pageContext\.research_scope \|\| null/, "workflow checkpoints should persist research scope for session history classification");
 assert.match(contentSource, /pickLatestOverlayResumableSessionForContinue[\s\S]*legacyContinueInstruction[\s\S]*pickLatestOverlayResumableSessionForContinue/, "floating overlay plain continue messages should auto-select the latest resumable checkpoint");
+assert.match(contentSource, /isOverlayCheckpointFollowupInstruction[\s\S]*忽略\\s\*\(\?:api\|API\)[\s\S]*legacyContinueInstruction = isOverlayCheckpointFollowupInstruction/, "floating overlay should treat API-ignore messages as checkpoint follow-ups");
 assert.match(contentSource, /workflowSessionId[\s\S]*continueSession[\s\S]*forceNewSession/, "floating overlay should pass explicit session intent into RUN_SKILL");
 assert.match(contentSource, /const startOverlayNewSessionMode[\s\S]*overlaySessionMode = "new"[\s\S]*updateOverlaySessionModeUI\(\)/, "floating overlay should reset state through an explicit fresh-session mode function");
 assert.match(contentSource, /chat-session-mode-text[\s\S]*新会话：不会沿用旧断点/, "floating overlay should make fresh-session mode visible instead of hidden behind implicit behavior");
@@ -475,7 +477,8 @@ assert.match(agentLoopSource, /涉及配送\/物流\/时效判断，但缺少实
 assert.match(agentLoopSource, /选品机会书\/选品机会分析/, "critic should reject shop optimizer reports that are framed as opportunity books");
 assert.match(agentLoopSource, /stage_fit/, "critic should require shop optimizer plans to explain stage fit");
 assert.match(agentLoopSource, /buyer_scenario/, "critic should require shop optimizer plans to name the buyer scenario");
-assert.match(sidepanelSource, /继续\|继续推进\|恢复\|resume\|continue/, "sidepanel should treat a plain continue message as a session resume request");
+assert.match(sidepanelSource, /isCheckpointFollowupInstruction[\s\S]*继续\|继续推进\|恢复\|resume\|continue[\s\S]*忽略\\s\*\(\?:api\|API\)/, "sidepanel should treat plain continue and API-ignore messages as session resume requests");
+assert.match(agentLoopSource, /USER_REQUESTS_API_ASSUMPTION_DOWNGRADE_RE[\s\S]*用户已明确要求忽略\/跳过未配置的 Etsy API[\s\S]*source_type="assumption"/, "resumed workflows should tell the model to downgrade missing Etsy API evidence when the user asks to ignore API");
 assert.match(sidepanelSource, /valueToReadableMarkdown[\s\S]*renderMarkdown\(valueToReadableMarkdown\(val\)\)/, "sidepanel report renderer should expand nested overview/analysis/summary objects instead of stringifying them");
 assert.doesNotMatch(sidepanelSource, /renderMarkdown\(String\(val\)\)/, "sidepanel report renderer must not stringify nested report sections into [object Object]");
 assert.match(js, /valueToReadableMarkdown[\s\S]*resultToReportMarkdown[\s\S]*深度商业诊断/, "dashboard report center should expand nested report objects into readable markdown sections");

@@ -1938,6 +1938,7 @@ export function sanitizeFinalReportForDelivery(parsed) {
 }
 
 const ETSY_API_ASSUMPTION_RE = /API|Seller API|etsy_api|Sessions?|session|流量|会话|访问量|订单|交易|扣费|履约成本|第三方海外仓|Etsy 自发货|conversion|traffic|orders?|fulfillment/i;
+const USER_REQUESTS_API_ASSUMPTION_DOWNGRADE_RE = /忽略\s*(?:api|API)|跳过\s*(?:api|API)|未配置\s*(?:api|API)|没有\s*(?:api|API)|无\s*(?:api|API)|不用\s*(?:api|API)|按\s*(?:assumption|假设).{0,12}(?:处理|降级)|(?:api|API).{0,12}(?:assumption|假设|降级|跳过|忽略|未配置|没有|无)/i;
 
 function cloneReport(parsed) {
   if (typeof globalThis.structuredClone === "function") return globalThis.structuredClone(parsed);
@@ -3417,6 +3418,9 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     }
     if (userInstruction) {
       instructionText += `\n\n用户最新补充信息：\n"${userInstruction}"`;
+      if (USER_REQUESTS_API_ASSUMPTION_DOWNGRADE_RE.test(userInstruction)) {
+        instructionText += `\n\n【用户已明确要求忽略/跳过未配置的 Etsy API】如果当前本地没有可用 Etsy 个人访问 API 证据，不要继续追问或重复调用 API 工具来修复质量门禁；请把 API、订单、Sessions、转化、履约成本、Etsy 自发货或第三方海外仓相关结论全部降级为 evidence_ledger.source_type="assumption"，并在 source_ref/observed_value/used_for/limitation 中明确“未配置/未取得 Etsy 个人 API，需后续授权后复核”。页面、Etsy 搜索、Google Search/Trends 和竞品截图证据仍必须保持真实证据，不得伪造。`;
+      }
     } else {
       instructionText += `\n\n请结合最新 System Prompt 和页面上下文继续推进。`;
     }
