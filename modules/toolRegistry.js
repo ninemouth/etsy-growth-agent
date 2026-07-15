@@ -2275,39 +2275,15 @@ Context:
       throw new Error("三方选品数据 API 未配置，无法查询真实数据。请前往设置页面配置 Key。");
     }
 
-    try {
-      if (settings.sellerSpriteApiKey) {
-        return {
-          ok: true,
-          provider: "卖家精灵 (SellerSprite)",
-          keyword,
-          metrics: {
-            monthly_search_volume: Math.floor(Math.random() * 20000) + 5000,
-            purchase_rate: (Math.random() * 5 + 1).toFixed(2) + "%",
-            monthly_sales_estimate: Math.floor(Math.random() * 1500) + 100,
-            bsr_rank: Math.floor(Math.random() * 10000) + 50,
-            competition_index: Math.floor(Math.random() * 80) + 20,
-            source: "卖家精灵实时大数据接口"
-          }
-        };
-      } else {
-        return {
-          ok: true,
-          provider: "Helium 10 (Cerebro/Magnet)",
-          keyword,
-          metrics: {
-            search_volume: Math.floor(Math.random() * 35000) + 12000,
-            competing_products: Math.floor(Math.random() * 5000) + 200,
-            magnet_score: Math.floor(Math.random() * 4000) + 1000,
-            monthly_sales_estimate: Math.floor(Math.random() * 2500) + 150,
-            cpr_8_day_estimate: Math.floor(Math.random() * 50) + 5,
-            source: "Helium 10 Magnet API"
-          }
-        };
-      }
-    } catch (err) {
-      throw new Error(`三方 API 请求失败: ${err.message}`);
-    }
+    const provider = settings.sellerSpriteApiKey ? "SellerSprite" : "Helium 10";
+    return {
+      ok: false,
+      keyword,
+      provider,
+      evidenceOk: false,
+      integrationStatus: "not_implemented",
+      message: `${provider} 真实 API 查询尚未完成适配，插件不会生成随机市场指标。请改用 Etsy/Google/Google Trends 页面取证或接入正式 API 后再启用该工具。`,
+    };
   },
 
   agentic_web_search: async (args) => {

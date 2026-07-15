@@ -16,6 +16,7 @@
     "test:updates": "node scripts/update-manager-smoke.mjs",
     "test:research-scope": "node scripts/research-scope-matrix-smoke.mjs",
     "test:runtime": "node scripts/workflow-runtime-smoke.mjs",
+    "test:task-logs": "node scripts/task-log-store-smoke.mjs",
     "test:browser-capabilities": "node scripts/browser-capability-contract-smoke.mjs",
     "test:evidence-bundle": "node scripts/evidence-bundle-smoke.mjs",
     "acceptance:matrix": "node scripts/real-browser-acceptance-matrix.mjs",

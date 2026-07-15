@@ -18,6 +18,12 @@ import { getArtifactDataUrl } from './modules/artifactStore.js';
 import { buildEvidenceBundle } from './modules/evidenceBundle.js';
 import { summarizeEvidenceQuality } from './modules/evidenceQuality.js';
 import {
+  appendTaskLog,
+  listTaskLogs,
+  pruneTaskLogs,
+  TASK_LOG_RETENTION,
+} from './modules/taskLogStore.js';
+import {
   applyPendingRuntimeUpdate,
   checkForUpdates,
   ensureUpdateAlarm,
@@ -42,6 +48,17 @@ setInterval(() => {
 }, 10000);
 
 let activeWorkflowRuns = 0;
+const TASK_LOG_RETENTION_ALARM = "etsy_task_log_retention";
+
+function logTaskEvent({ workflowId = "", sessionId = "", skillId = "", severity = "info", category = "workflow", event = "event", message = "", context = {} } = {}) {
+  appendTaskLog({ workflowId, sessionId, skillId, severity, category, event, message, context })
+    .catch((err) => console.warn("Could not persist task log:", err.message));
+}
+
+async function ensureTaskLogRetentionAlarm() {
+  await chrome.alarms.create(TASK_LOG_RETENTION_ALARM, { periodInMinutes: 360 });
+  return await pruneTaskLogs(TASK_LOG_RETENTION);
+}
 
 async function applyPendingUpdateIfIdle(reason = "idle") {
   if (activeWorkflowRuns > 0) return false;
@@ -748,6 +765,15 @@ chrome.runtime.onConnect.addListener((port) => {
           const checkpointKey = buildWorkflowCheckpointKey({ tabId: tab.id, matchedSkills, message });
           activeCheckpointKey = checkpointKey;
           protectWorkflowTab(checkpointKey, tab.id);
+          logTaskEvent({
+            workflowId: checkpointKey,
+            sessionId: message.workflowSessionId || "",
+            skillId: matchedSkills.join("+"),
+            category: "workflow",
+            event: "workflow_start_requested",
+            message: "Workflow accepted by background service worker.",
+            context: { tabId: tab.id, growthActionId: message.growthActionId || "", continueRequested: isExplicitResumeRequest(message) },
+          });
           const lease = await acquireWorkflowLease(checkpointKey, portId);
           if (!lease.ok) {
             throw new Error("该 workflow 当前已由另一个执行实例占用，请等待其结束或断点过期后再恢复。");
@@ -798,6 +824,28 @@ chrome.runtime.onConnect.addListener((port) => {
 
           const sendProgress = (progressData) => {
             if (isCancelled) return;
+            const severity = /error|timeout|blocked|warning|guard/i.test(String(progressData?.type || "")) ? "warn" : "info";
+            logTaskEvent({
+              workflowId: checkpointKey,
+              sessionId: message.workflowSessionId || "",
+              skillId: matchedSkills.join("+"),
+              severity,
+              category: progressData?.type?.startsWith("tool_") ? "tool" : progressData?.type?.startsWith("llm_") ? "llm" : "workflow",
+              event: progressData?.type || "progress",
+              message: progressData?.message || "Workflow progress event.",
+              context: {
+                step: progressData?.step,
+                toolName: progressData?.toolName,
+                toolRunId: progressData?.toolRunId,
+                actionKind: progressData?.actionKind,
+                actionLabel: progressData?.actionLabel,
+                elapsedSeconds: progressData?.elapsedSeconds,
+                timeoutSeconds: progressData?.timeoutSeconds,
+                tabLifecycle: progressData?.tabLifecycle,
+                closedTabIds: progressData?.closedTabIds,
+                evidenceQuality: progressData?.toolResult?.evidence_quality,
+              },
+            });
             port.postMessage({ type: "PROGRESS", data: progressData });
           };
 
@@ -828,6 +876,15 @@ chrome.runtime.onConnect.addListener((port) => {
                 research_scope: pageContext.research_scope || null,
                 researchScope: pageContext.research_scope || null,
               });
+              logTaskEvent({
+                workflowId: checkpointKey,
+                sessionId: message.workflowSessionId || "",
+                skillId: matchedSkills.join("+"),
+                category: "checkpoint",
+                event: checkpoint.status || checkpoint.lastStage || "checkpoint",
+                message: `Checkpoint persisted at ${checkpoint.lastStage || checkpoint.lastNode || checkpoint.status || "workflow"}.`,
+                context: { step: checkpoint.step, toolName: checkpoint.toolName, validationErrors: checkpoint.validationErrors },
+              });
             },
           });
 
@@ -854,6 +911,16 @@ chrome.runtime.onConnect.addListener((port) => {
             leaseRenewTimer = null;
             await releaseWorkflowLease(checkpointKey, portId, "interrupted");
             await cleanupOwnedTabs(checkpointKey);
+            logTaskEvent({
+              workflowId: checkpointKey,
+              sessionId: message.workflowSessionId || "",
+              skillId: matchedSkills.join("+"),
+              severity: "warn",
+              category: "workflow",
+              event: qualityGateBlocked ? "quality_gate_blocked" : "workflow_interrupted",
+              message: result.result || "Workflow interrupted with a resumable checkpoint.",
+              context: { steps: result.steps, validationErrors: result.validationErrors },
+            });
             return;
           }
 
@@ -929,8 +996,26 @@ chrome.runtime.onConnect.addListener((port) => {
             leaseRenewTimer = null;
             await releaseWorkflowLease(checkpointKey, portId, "completed");
             await cleanupOwnedTabs(checkpointKey);
+            logTaskEvent({
+              workflowId: checkpointKey,
+              sessionId: message.workflowSessionId || "",
+              skillId: matchedSkills.join("+"),
+              category: "workflow",
+              event: "workflow_completed",
+              message: "Workflow completed and report delivery was attempted.",
+              context: { steps: result.steps, reportSaved: Boolean(savedEntry), reportId: savedEntry?.id },
+            });
           }
         } catch (err) {
+          logTaskEvent({
+            workflowId: activeCheckpointKey,
+            sessionId: message.workflowSessionId || "",
+            severity: "error",
+            category: "workflow",
+            event: "workflow_error",
+            message: err.message || "Unhandled workflow error.",
+            context: { errorCode: err.code || "WORKFLOW_ERROR" },
+          });
           if (activeCheckpointKey) {
             await setWorkflowCheckpoint(activeCheckpointKey, {
               status: "failed",
@@ -1003,6 +1088,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "EXPORT_EVIDENCE_BUNDLE") {
     exportEvidenceBundle(message.id || message.reportId)
       .then((data) => sendResponse({ ok: true, data }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "GET_TASK_LOGS") {
+    listTaskLogs(message.filters || {})
+      .then((data) => sendResponse({ ok: true, data, retention: TASK_LOG_RETENTION }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "EXPORT_TASK_LOGS") {
+    listTaskLogs({ ...(message.filters || {}), limit: 1000 })
+      .then((data) => sendResponse({
+        ok: true,
+        data: {
+          exportedAt: new Date().toISOString(),
+          retention: TASK_LOG_RETENTION,
+          logs: data,
+        },
+      }))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }
@@ -1176,6 +1282,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ── Alarms Listener for Scheduled Background Monitoring Checks ──
 chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === TASK_LOG_RETENTION_ALARM) {
+    const result = await pruneTaskLogs(TASK_LOG_RETENTION);
+    logTaskEvent({
+      category: "maintenance",
+      event: "task_log_retention_pruned",
+      message: "Task log retention maintenance completed.",
+      context: result,
+    });
+    return;
+  }
+
   if (isUpdateAlarm(alarm.name)) {
     try {
       await checkForUpdates();
@@ -1191,6 +1308,21 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     try {
       const task = JSON.parse(decodeURIComponent(taskJson));
       if (task && task.target_url) {
+        const monitorWorkflowId = `monitor:${task.id || task.target_url}`;
+        logTaskEvent({
+          workflowId: monitorWorkflowId,
+          sessionId: task.growthCaseId || "",
+          skillId: "scheduled_monitor",
+          category: "monitor",
+          event: "monitor_task_started",
+          message: "Scheduled monitor task started.",
+          context: {
+            taskId: task.id || "",
+            targetUrl: task.target_url,
+            targetType: task.target_type || "",
+            platform: task.platform || "",
+          },
+        });
         console.log("Triggering scheduled background monitoring check for:", task.target_url);
         chrome.tabs.create({ url: task.target_url, active: false }, (newTab) => {
           let attempts = 0;
@@ -1200,6 +1332,16 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
             chrome.tabs.get(newTab.id, async (tabInfo) => {
               if (chrome.runtime.lastError || !tabInfo) {
                 clearInterval(checkInterval);
+                logTaskEvent({
+                  workflowId: monitorWorkflowId,
+                  sessionId: task.growthCaseId || "",
+                  skillId: "scheduled_monitor",
+                  severity: "warn",
+                  category: "monitor",
+                  event: "monitor_tab_unavailable",
+                  message: "Scheduled monitor tab became unavailable before extraction.",
+                  context: { taskId: task.id || "", targetUrl: task.target_url, attempts },
+                });
                 return;
               }
               if (tabInfo.status === "complete" || attempts >= maxAttempts) {
@@ -1229,8 +1371,8 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
                         } else {
                           // Etsy shop check
                           if (pageData.productCards && pageData.productCards.length > 0) {
-                            items = pageData.productCards.map(p => ({
-                              id: p.id || p.product_link || Math.random().toString(),
+                            items = pageData.productCards.map((p, index) => ({
+                              id: p.id || p.product_link || p.href || p.listingUrl || `${task.target_url}#item-${index + 1}`,
                               title: p.title || p.name || "Etsy Product",
                               price: p.price || 0,
                               sales: p.sales || 0,
@@ -1286,11 +1428,48 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
                       }
 
                       console.log("Scheduled monitor check processed successfully for:", task.target_url);
+                      logTaskEvent({
+                        workflowId: monitorWorkflowId,
+                        sessionId: task.growthCaseId || "",
+                        skillId: "scheduled_monitor",
+                        category: "monitor",
+                        event: "monitor_task_completed",
+                        message: "Scheduled monitor task completed.",
+                        context: {
+                          taskId: task.id || "",
+                          targetUrl: task.target_url,
+                          itemCount: items.length,
+                          platform: task.platform || "",
+                          attempts,
+                          timedOutWaitingForLoad: attempts >= maxAttempts && tabInfo.status !== "complete",
+                        },
+                      });
+                    } else {
+                      logTaskEvent({
+                        workflowId: monitorWorkflowId,
+                        sessionId: task.growthCaseId || "",
+                        skillId: "scheduled_monitor",
+                        severity: "warn",
+                        category: "monitor",
+                        event: "monitor_page_read_failed",
+                        message: "Scheduled monitor page extraction returned no usable data.",
+                        context: { taskId: task.id || "", targetUrl: task.target_url, attempts, tabStatus: tabInfo.status },
+                      });
                     }
                     chrome.tabs.remove(newTab.id);
                   });
                 } catch (e) {
                   console.error("Scheduled check page extraction failed:", e);
+                  logTaskEvent({
+                    workflowId: monitorWorkflowId,
+                    sessionId: task.growthCaseId || "",
+                    skillId: "scheduled_monitor",
+                    severity: "error",
+                    category: "monitor",
+                    event: "monitor_task_error",
+                    message: e.message || "Scheduled monitor extraction failed.",
+                    context: { taskId: task.id || "", targetUrl: task.target_url, attempts },
+                  });
                   chrome.tabs.remove(newTab.id);
                 }
               }
@@ -1300,6 +1479,13 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
       }
     } catch (err) {
       console.error("Error running alarm task:", err);
+      logTaskEvent({
+        severity: "error",
+        category: "monitor",
+        event: "monitor_alarm_error",
+        message: err.message || "Scheduled monitor alarm failed.",
+        context: { alarmName: alarm.name },
+      });
     }
   }
 });
@@ -1307,6 +1493,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 // ── Initialize Default Settings on Installation ──
 chrome.runtime.onInstalled.addListener(() => {
   ensureUpdateAlarm().catch((err) => console.warn("Failed to initialize update alarm:", err.message));
+  ensureTaskLogRetentionAlarm().catch((err) => console.warn("Failed to initialize task log retention:", err.message));
   chrome.storage.local.get(["llmProvider"], (data) => {
     if (!data.llmProvider) {
       chrome.storage.local.set({
@@ -1319,6 +1506,8 @@ chrome.runtime.onInstalled.addListener(() => {
     }
   });
 });
+
+ensureTaskLogRetentionAlarm().catch((err) => console.warn("Failed to run task log retention startup check:", err.message));
 
 chrome.runtime.onUpdateAvailable.addListener((details) => {
   markRuntimeUpdateAvailable(details)

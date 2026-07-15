@@ -55,6 +55,17 @@ const runtimeBundleSource = [html, js, sidepanelHtmlSource, sidepanelSource, css
   assert.doesNotMatch(runtimeBundleSource, pattern, `runtime plugin UI must not keep mock data hook: ${pattern}`);
 });
 
+assert.doesNotMatch(
+  toolRegistrySource,
+  /monthly_search_volume:\s*Math\.floor|monthly_sales_estimate:\s*Math\.floor|competition_index:\s*Math\.floor|magnet_score:\s*Math\.floor/,
+  "runtime market-data tools must not generate random business metrics"
+);
+assert.match(
+  toolRegistrySource,
+  /integrationStatus:\s*"not_implemented"[\s\S]*不会生成随机市场指标/,
+  "unimplemented third-party market-data integrations must return an explicit unavailable status"
+);
+
 assert.match(agentLoopSource, /type:\s*"tool_heartbeat"/, "long-running tool calls should emit heartbeat progress");
 assert.match(agentLoopSource, /type:\s*"tool_stage"/, "browser tools should emit concrete stage progress after the tool has actually started");
 assert.match(agentLoopSource, /createToolRunId[\s\S]*toolRunId[\s\S]*type:\s*"tool_heartbeat"[\s\S]*type:\s*"tool_result"/, "tool progress events should carry a per-tool-run id so stale heartbeats cannot appear after a completed action");

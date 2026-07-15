@@ -116,12 +116,26 @@ The included GitHub Action packages the extension zip and uploads both the zip a
 
 ```bash
 npm run lint
+npm run test:task-logs
 npm run test:security
 npm run test:business
 npm run test:sourcing
 npm run test:updates
 npm run package:extension
 ```
+
+## Task Observability
+
+Long-running workflows and scheduled monitor jobs write privacy-safe task logs to the extension's local IndexedDB. Logs are retained for 14 days, capped by total entries and per-workflow entries, and pruned automatically on startup/install and by a 6-hour maintenance alarm.
+
+The background service worker accepts:
+
+- `GET_TASK_LOGS` with optional `workflowId`, `sessionId`, `limit`, and `before` filters.
+- `EXPORT_TASK_LOGS` with the same filters and a larger export limit.
+
+Task logs intentionally redact API keys, OAuth tokens, authorization headers, cookies, credentials, screenshots, and data URLs. Screenshot evidence remains in the artifact store; logs should be used to audit execution stages, tab lifecycle, evidence quality, retries, blocked states, and quality-gate loops.
+
+See `operations/architecture_audit.md` for the current runtime risk register and library/custom-code review.
 
 ## Open-Source Release Checklist
 
