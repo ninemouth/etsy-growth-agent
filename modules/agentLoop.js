@@ -1407,8 +1407,72 @@ function getBestPageDomEvidence(toolHistory = [], pageContext = {}) {
   };
 }
 
+const EVIDENCE_SOURCE_TYPE_ALIASES = {
+  own_shop_api: "etsy_api",
+  own_listing_api: "etsy_api",
+  own_order_api: "etsy_api",
+  own_shipping_api: "etsy_api",
+  seller_api: "etsy_api",
+  etsy_seller_api: "etsy_api",
+  current_page_dom: "page_dom",
+  current_shop_dom: "page_dom",
+  current_listing_dom: "page_dom",
+  competitor_page_dom: "page_dom",
+  competitor_shop_dom: "page_dom",
+  competitor_listing_dom: "page_dom",
+  page_text: "page_dom",
+  current_page_screenshot: "screenshot_visual",
+  current_shop_screenshot: "screenshot_visual",
+  current_listing_screenshot: "screenshot_visual",
+  competitor_screenshot: "screenshot_visual",
+  competitor_shop_screenshot: "screenshot_visual",
+  competitor_listing_screenshot: "screenshot_visual",
+  google_trends_screenshot: "screenshot_visual",
+  google_trends_visual: "screenshot_visual",
+  screenshot: "screenshot_visual",
+  visual_screenshot: "screenshot_visual",
+  google_us: "google_search",
+  google_search_us: "google_search",
+  etsy_policy: "official_policy",
+  official_etsy_policy: "official_policy",
+  user_provided: "user_input",
+  user_data: "user_input",
+  user_note: "user_input",
+};
+
+function normalizeEvidenceLedgerSourceType(sourceType = "") {
+  const normalized = String(sourceType || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return EVIDENCE_SOURCE_TYPE_ALIASES[normalized] || normalized;
+}
+
+function normalizeEvidenceLedgerSourceTypesInObject(value) {
+  let changed = false;
+  const visit = (node, key = "") => {
+    if (!node || typeof node !== "object") return;
+    if (key === "evidence_ledger" && Array.isArray(node)) {
+      node.forEach((entry) => {
+        if (!entry || typeof entry !== "object") return;
+        const original = String(entry.source_type || "");
+        const canonical = normalizeEvidenceLedgerSourceType(original);
+        if (original && canonical && canonical !== original) {
+          entry.source_type = canonical;
+          changed = true;
+        }
+      });
+      return;
+    }
+    if (Array.isArray(node)) {
+      node.forEach((item) => visit(item));
+      return;
+    }
+    Object.entries(node).forEach(([childKey, childValue]) => visit(childValue, childKey));
+  };
+  visit(value);
+  return changed;
+}
+
 function hasEvidenceSource(toolHistory = [], pageContext = {}, sourceType = "") {
-  const normalized = String(sourceType || "").toLowerCase();
+  const normalized = normalizeEvidenceLedgerSourceType(sourceType);
   if (normalized === "page_dom") {
     return hasMeaningfulPageDom(pageContext) || hasMeaningfulToolPageDom(toolHistory);
   }
@@ -1464,18 +1528,19 @@ function hasEvidenceSource(toolHistory = [], pageContext = {}, sourceType = "") 
 }
 
 function hasLedgerType(ledger = [], sourceType = "") {
-  return ledger.some((entry) => String(entry?.source_type || "").toLowerCase() === sourceType);
+  const targetType = normalizeEvidenceLedgerSourceType(sourceType);
+  return ledger.some((entry) => normalizeEvidenceLedgerSourceType(entry?.source_type) === targetType);
 }
 
 function hasAnyLedgerType(ledger = [], sourceTypes = []) {
-  const normalizedTypes = sourceTypes.map((type) => String(type || "").toLowerCase());
-  return ledger.some((entry) => normalizedTypes.includes(String(entry?.source_type || "").toLowerCase()));
+  const normalizedTypes = sourceTypes.map((type) => normalizeEvidenceLedgerSourceType(type));
+  return ledger.some((entry) => normalizedTypes.includes(normalizeEvidenceLedgerSourceType(entry?.source_type)));
 }
 
 function hasLedgerTypeTopic(ledger = [], sourceTypes = [], topicRegex) {
-  const normalizedTypes = sourceTypes.map((type) => String(type || "").toLowerCase());
+  const normalizedTypes = sourceTypes.map((type) => normalizeEvidenceLedgerSourceType(type));
   return ledger.some((entry) => {
-    const sourceType = String(entry?.source_type || "").toLowerCase();
+    const sourceType = normalizeEvidenceLedgerSourceType(entry?.source_type);
     if (!normalizedTypes.includes(sourceType)) return false;
     const text = [
       entry?.source_ref,
@@ -1489,7 +1554,7 @@ function hasLedgerTypeTopic(ledger = [], sourceTypes = [], topicRegex) {
 
 function hasCompetitorVisualLedger(ledger = []) {
   return ledger.some((entry) => {
-    if (String(entry?.source_type || "").toLowerCase() !== "screenshot_visual") return false;
+    if (normalizeEvidenceLedgerSourceType(entry?.source_type) !== "screenshot_visual") return false;
     const text = [
       entry?.source_ref,
       entry?.observed_value,
@@ -1631,7 +1696,7 @@ function getCompetitorListingDetailEvidence(toolHistory = []) {
 function countCompetitorVisualLedgerEntries(ledger = []) {
   const refs = new Set();
   ledger.forEach((entry) => {
-    if (String(entry?.source_type || "").toLowerCase() !== "screenshot_visual") return;
+    if (normalizeEvidenceLedgerSourceType(entry?.source_type) !== "screenshot_visual") return;
     const text = [
       entry?.source_ref,
       entry?.observed_value,
@@ -1811,7 +1876,7 @@ function validateShopProductCoverageClaims(out, toolHistory = [], pageContext = 
 
 function hasTrendsVisualLedger(ledger = []) {
   return ledger.some((entry) => {
-    if (String(entry?.source_type || "").toLowerCase() !== "screenshot_visual") return false;
+    if (normalizeEvidenceLedgerSourceType(entry?.source_type) !== "screenshot_visual") return false;
     const text = [
       entry?.source_ref,
       entry?.observed_value,
@@ -1824,7 +1889,7 @@ function hasTrendsVisualLedger(ledger = []) {
 
 function hasAssumptionFallback(ledger = [], topicRegex) {
   return ledger.some((entry) => {
-    const sourceType = String(entry?.source_type || "").toLowerCase();
+    const sourceType = normalizeEvidenceLedgerSourceType(entry?.source_type);
     if (sourceType !== "assumption") return false;
     const text = [
       entry?.source_ref,
@@ -1850,7 +1915,7 @@ function validateEvidenceLedgerEntries({
   }
   entries.forEach((entry, ledgerIdx) => {
     const prefix = `${label} 的 evidence_ledger 第 ${ledgerIdx + 1} 条`;
-    const sourceType = String(entry?.source_type || "").toLowerCase();
+    const sourceType = normalizeEvidenceLedgerSourceType(entry?.source_type);
     const sourceRef = entry?.source_ref;
     const observedValue = entry?.observed_value;
     const usedFor = entry?.used_for;
@@ -2271,6 +2336,9 @@ export function autoRepairFinalReportForDelivery(parsed, {
 
   const repaired = cloneReport(parsed);
   const reasons = [];
+  if (normalizeEvidenceLedgerSourceTypesInObject(repaired.output)) {
+    reasons.push("已自动规范化 evidence_ledger.source_type 别名为可校验的标准类型");
+  }
   const hasEtsyApiEvidence = hasEvidenceSource(toolHistory, pageContext, "etsy_api");
   const pageDomEvidence = getBestPageDomEvidence(toolHistory, pageContext);
   const shouldAutoAttachPageDom = isShopOptimizerOnly(skillId) && pageDomEvidence;
@@ -2327,7 +2395,7 @@ export function autoRepairFinalReportForDelivery(parsed, {
 
     ledger.forEach((entry) => {
       if (!entry || typeof entry !== "object") return;
-      const sourceType = String(entry.source_type || "").toLowerCase();
+      const sourceType = normalizeEvidenceLedgerSourceType(entry.source_type);
       if (sourceType !== "etsy_api" || hasEtsyApiEvidence) return;
       entry.source_type = "assumption";
       entry.confidence = entry.confidence || "low";
@@ -2403,7 +2471,7 @@ function validateComplianceReport(out, toolHistory = [], pageContext = {}) {
     if (level === "high" && decision === "proceed") {
       errors.push(`${label} 为 high 风险时不能直接 proceed。`);
     }
-    if (/已合规|完全合规|无风险|符合\s*(?:FDA|CE|CPC|FCC|RoHS|REACH)/i.test(String(item.finding || "")) && !ledger.some((entry) => ["official_policy", "official_regulation", "page_dom", "screenshot_visual", "user_input"].includes(String(entry?.source_type || "").toLowerCase()))) {
+    if (/已合规|完全合规|无风险|符合\s*(?:FDA|CE|CPC|FCC|RoHS|REACH)/i.test(String(item.finding || "")) && !ledger.some((entry) => ["official_policy", "official_regulation", "page_dom", "screenshot_visual", "user_input"].includes(normalizeEvidenceLedgerSourceType(entry?.source_type)))) {
       errors.push(`${label} 使用确定性合规表述，但没有商品证据或官方来源，必须降级为待补证据。`);
     }
     if (/\b(?:CE|CPC|FDA|FCC|RoHS|REACH)\b/i.test(itemText) && !hasAnyLedgerType(ledger, ["official_policy", "official_regulation"]) && !hasAssumptionFallback(ledger, /CE|CPC|FDA|FCC|RoHS|REACH/i)) {
@@ -2602,7 +2670,7 @@ function hasTrendSampleScope(item = {}) {
 function hasTrendCompetitorPageEvidence(ledger = []) {
   const refs = new Set();
   ledger.forEach((entry) => {
-    const sourceType = String(entry?.source_type || "").toLowerCase();
+    const sourceType = normalizeEvidenceLedgerSourceType(entry?.source_type);
     if (!['page_dom', 'screenshot_visual'].includes(sourceType)) return;
     const text = [entry?.source_ref, entry?.observed_value, entry?.used_for].filter(Boolean).join(" ");
     if (!/competitor|竞品|店铺|shop|listing|商品详情|高排名|best[-\s]?seller|top shop/i.test(text)) return;
@@ -2614,7 +2682,7 @@ function hasTrendCompetitorPageEvidence(ledger = []) {
 
 function hasTrendVisualForTrends(ledger = []) {
   return ledger.some((entry) => {
-    if (String(entry?.source_type || "").toLowerCase() !== "screenshot_visual") return false;
+    if (normalizeEvidenceLedgerSourceType(entry?.source_type) !== "screenshot_visual") return false;
     return /Google Trends|trends\.google|Interest over time|related queries|related topics|趋势图|需求曲线|季节性/i.test(
       [entry?.source_ref, entry?.observed_value, entry?.used_for, entry?.limitation].filter(Boolean).join(" ")
     );
@@ -2725,7 +2793,7 @@ function validatePlatformTrendReport(out, toolHistory = [], pageContext = {}) {
       errors.push(`${label} 使用了评论痛点/买家反馈结论，但没有真实评论页面或截图证据；不能用模型常识替代评论采集。`);
     }
     if (TREND_LOGISTICS_RE.test(itemText) && /\d+\s*[-–—到至]\s*\d+\s*(?:个)?\s*(?:工作日|日|天|business days?|days?)/i.test(itemText)) {
-      const shippingLedger = ledger.filter((entry) => String(entry?.source_type || "").toLowerCase() === "google_search" && /发货地|目的地|承运商|运输方式|物流|shipping|delivery|carrier|origin|destination/i.test(trendLedgerText([entry])));
+      const shippingLedger = ledger.filter((entry) => normalizeEvidenceLedgerSourceType(entry?.source_type) === "google_search" && /发货地|目的地|承运商|运输方式|物流|shipping|delivery|carrier|origin|destination/i.test(trendLedgerText([entry])));
       if (shippingLedger.length === 0) errors.push(`${label} 输出具体物流天数，但缺少包含发货地、目的地、承运商/运输方式和查询日期的实时物流搜索证据。`);
     }
     if (/竞品|头部|高排名|竞品视觉|主图|best.?seller|top shop/i.test(itemText) && !hasTrendCompetitorPageEvidence(ledger)) {
@@ -2885,12 +2953,12 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
 
       ledgerEntries.forEach((entry, ledgerIdx) => {
         const prefix = `店铺优化方案第 ${idx + 1} 项 (${title}) 的 evidence_ledger 第 ${ledgerIdx + 1} 条`;
-        const sourceType = String(entry?.source_type || "").toLowerCase();
+        const sourceType = normalizeEvidenceLedgerSourceType(entry?.source_type);
         const sourceRef = entry?.source_ref;
         const observedValue = entry?.observed_value;
         const usedFor = entry?.used_for;
         const limitation = entry?.limitation;
-        const allowedTypes = ["page_dom", "screenshot_visual", "etsy_api", "etsy_search", "google_search", "google_trends", "official_policy", "official_regulation", "assumption"];
+        const allowedTypes = ["page_dom", "screenshot_visual", "etsy_api", "etsy_search", "google_search", "google_trends", "official_policy", "official_regulation", "user_input", "assumption"];
         if (!allowedTypes.includes(sourceType)) {
           errors.push(`${prefix} 的 source_type 无效，必须是 ${allowedTypes.join(" / ")}。`);
         }

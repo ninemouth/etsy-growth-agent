@@ -252,7 +252,10 @@
   - `etsy_search`: Etsy 站内搜索或榜单页面返回值。
   - `google_search`: Google Search US 搜索返回值。
   - `google_trends`: Google Trends US 趋势页面返回值。
+  - `official_policy` / `official_regulation`: Etsy 官方政策或目标市场官方法规来源。
+  - `user_input`: 用户手动提供的后台指标、订单事实、广告数据、成本或履约资料。
   - `assumption`: 明确标注为待验证假设，不得写成真实数据。
+- 不得输出非标准别名，例如 `own_shop_api`、`own_listing_api`、`current_page_dom`、`competitor_page_dom`、`current_page_screenshot`、`competitor_screenshot`。如需区分自营 API、当前页面、竞品页面或截图对象，把细分语义写入 `source_ref`、`observed_value`、`used_for` 或 `limitation`，`source_type` 仍使用上面的标准枚举。
 - `source_ref` 必须写明来源，例如当前页面 URL、API 工具名、搜索词、结果 URL、截图区域或“用户提供数据”。
 - `observed_value` 必须写具体观察值，不能写“见页面”“较好”“有提升空间”这类空话。
 - `used_for` 必须说明该证据支撑哪个结论，例如“判断 B 级视觉整改”“估算加购率瓶颈”“证明 Etsy 第一页评价门槛”。

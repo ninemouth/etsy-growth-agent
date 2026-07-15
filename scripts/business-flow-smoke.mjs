@@ -1438,6 +1438,40 @@ assert.deepEqual(
   [],
   "auto-repaired shop optimizer API assumptions should pass validation without critic redo"
 );
+const shopOptimizerReportWithSourceTypeAliases = JSON.parse(JSON.stringify(shopOptimizerReportWithEtsyEvidence));
+shopOptimizerReportWithSourceTypeAliases.output.data[0].evidence_ledger[0].source_type = "current_page_dom";
+shopOptimizerReportWithSourceTypeAliases.output.data[0].evidence_ledger[1].source_type = "current_page_screenshot";
+shopOptimizerReportWithSourceTypeAliases.output.data[0].evidence_ledger[2].source_type = "competitor_screenshot";
+shopOptimizerReportWithSourceTypeAliases.output.data[0].evidence_ledger[5].source_type = "google_search_us";
+assert.deepEqual(
+  validateReport(shopOptimizerReportWithSourceTypeAliases, "", "skills/etsy_global_shop_optimizer.skill.md", validShopEvidenceHistory, meaningfulPageContext),
+  [],
+  "shop optimizer validator should accept source_type aliases as canonical evidence classes instead of blocking delivery"
+);
+shopOptimizerReportWithSourceTypeAliases.output.data[0].evidence_ledger.push({
+  source_type: "own_shop_api",
+  source_ref: "Etsy personal API not configured",
+  observed_value: "用户未配置 Etsy 个人 API，本轮不使用 API 数据。",
+  used_for: "验证 API 别名在无 API 证据时会被自动降级。",
+  confidence: "low",
+  limitation: "未配置 Etsy 个人访问 API，需后续授权后复核。",
+});
+const repairedShopOptimizerSourceTypeAliases = autoRepairFinalReportForDelivery(shopOptimizerReportWithSourceTypeAliases, {
+  skillId: "skills/etsy_global_shop_optimizer.skill.md",
+  toolHistory: validShopEvidenceHistory,
+  pageContext: meaningfulPageContext,
+});
+assert.equal(repairedShopOptimizerSourceTypeAliases.changed, true, "source_type aliases should be normalized before delivery");
+assert.deepEqual(
+  repairedShopOptimizerSourceTypeAliases.parsed.output.data[0].evidence_ledger.map((entry) => entry.source_type).slice(0, 6),
+  ["page_dom", "screenshot_visual", "screenshot_visual", "screenshot_visual", "etsy_search", "google_search"],
+  "auto-repair should canonicalize page, screenshot and Google Search source_type aliases"
+);
+assert.equal(
+  repairedShopOptimizerSourceTypeAliases.parsed.output.data[0].evidence_ledger.at(-1).source_type,
+  "assumption",
+  "auto-repair should canonicalize API aliases and then downgrade them when no Etsy API evidence exists"
+);
 
 const dom = new JSDOM(html, {
   url: "chrome-extension://test/dashboard.html",
