@@ -376,6 +376,23 @@ async function renderSessionHistory(entriesOverride = null, selectedCategory = s
   });
 }
 
+async function clearAllSessionHistoryFromSidepanel() {
+  const confirmed = confirm("确定清空所有任务历史会话和断点吗？已保存报告不会被删除；正在运行的任务需要先暂停或结束。");
+  if (!confirmed) return;
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "CLEAR_SESSION_HISTORY", includeTaskLogs: true });
+    if (!response?.ok) {
+      addLog("warning", "⚠️", response?.message || response?.error || "历史会话清理失败。");
+      return;
+    }
+    startNewSessionMode();
+    await renderSessionHistory([]);
+    addLog("info", "🧹", "已清空所有历史会话和断点；下一次运行将从新会话开始。");
+  } catch (err) {
+    addLog("error", "❌", `历史会话清理失败：${err.message}`);
+  }
+}
+
 async function pickLatestResumableSessionForContinue() {
   const entries = await getWorkflowCheckpointEntries();
   const currentSkillId = selectedSkill?.id || "";
@@ -1803,6 +1820,7 @@ function bindEvents() {
     panel.classList.toggle("hidden", !willShow);
     if (willShow) await renderSessionHistory();
   });
+  $("clearSessionHistoryBtn")?.addEventListener("click", clearAllSessionHistoryFromSidepanel);
 
   $("saveSettings").addEventListener("click", saveSettings);
   $("checkUpdatesBtn")?.addEventListener("click", checkForUpdates);

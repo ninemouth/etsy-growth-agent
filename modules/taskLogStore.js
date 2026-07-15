@@ -214,4 +214,31 @@ export async function pruneTaskLogs(policy = {}) {
   });
 }
 
+export async function clearTaskLogs() {
+  return enqueueWrite(async () => {
+    const memoryCount = memoryFallback.size;
+    memoryFallback.clear();
+    try {
+      const result = await withStore("readwrite", (store, finish) => {
+        const request = store.clear();
+        request.onsuccess = () => finish({ ok: true, cleared: true });
+      });
+      return {
+        ok: true,
+        cleared: true,
+        memoryCount,
+        indexedDbCleared: Boolean(result?.cleared),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        cleared: true,
+        memoryCount,
+        indexedDbCleared: false,
+        error: error.message,
+      };
+    }
+  });
+}
+
 export const __testInternals = { memoryFallback, sanitizeTaskLogValue, selectEntriesToPrune };

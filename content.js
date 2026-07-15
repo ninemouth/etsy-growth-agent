@@ -2568,6 +2568,31 @@
         backdrop-filter: blur(18px);
         -webkit-backdrop-filter: blur(18px);
       }
+      .chat-session-history-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 8px;
+        color: var(--text-secondary);
+        font-size: 10px;
+        font-weight: 850;
+      }
+      .chat-session-clear-btn {
+        flex: 0 0 auto;
+        border: 1px solid rgba(239,68,68,0.34);
+        background: rgba(239,68,68,0.08);
+        color: #dc2626;
+        border-radius: 8px;
+        padding: 4px 8px;
+        font-size: 10px;
+        font-weight: 900;
+        cursor: pointer;
+      }
+      .chat-session-clear-btn:hover {
+        border-color: rgba(220,38,38,0.68);
+        background: rgba(239,68,68,0.14);
+      }
       .chat-session-history-filters {
         display: flex;
         gap: 6px;
@@ -3306,6 +3331,10 @@
         </div>
       </div>
       <div class="chat-session-history-panel hidden" id="chat-session-history-panel">
+        <div class="chat-session-history-toolbar">
+          <span>可恢复历史</span>
+          <button type="button" class="chat-session-clear-btn" id="chat-session-clear-btn">清空历史</button>
+        </div>
         <div id="chat-session-history-list" class="chat-session-empty">暂无可恢复会话。</div>
       </div>
       <div class="chat-body" id="chat-messages-container">
@@ -3605,6 +3634,25 @@
           }
         });
       });
+    };
+
+    const clearAllOverlaySessionHistory = async () => {
+      const confirmed = window.confirm("确定清空所有任务历史会话和断点吗？已保存报告不会被删除；正在运行的任务需要先暂停或结束。");
+      if (!confirmed) return;
+      try {
+        const response = await chrome.runtime.sendMessage({ type: "CLEAR_SESSION_HISTORY", includeTaskLogs: true });
+        if (!response?.ok) {
+          showToast(response?.message || response?.error || "历史会话清理失败。");
+          return;
+        }
+        startOverlayNewSessionMode();
+        overlayPendingGrowthAction = null;
+        overlayLastGrowthAction = null;
+        await renderOverlaySessionHistory([]);
+        showToast("已清空所有历史会话和断点；下一次运行将从新会话开始。");
+      } catch (err) {
+        showToast(`历史会话清理失败：${err.message}`);
+      }
     };
 
     const getOverlayActiveResumeSessionKey = () => (
@@ -4388,6 +4436,7 @@
       panel.classList.toggle("hidden", !willShow);
       if (willShow) await renderOverlaySessionHistory();
     });
+    shadow.getElementById("chat-session-clear-btn")?.addEventListener("click", clearAllOverlaySessionHistory);
 
     // Update active shop tooltip and status badges on floating Pill Dock
     const updateActiveShopTooltip = () => {

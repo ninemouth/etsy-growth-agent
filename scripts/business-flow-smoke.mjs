@@ -261,6 +261,8 @@ assert.doesNotMatch(backgroundSource, /shouldResumeFromCheckpoint[\s\S]{0,220}Bo
 assert.match(sidepanelSource, /forceNewSession:\s*!shouldContinueSession/, "sidepanel should default to a fresh task unless the user explicitly continues");
 assert.doesNotMatch(sidepanelHtmlSource, /continueSessionCheckbox|延续上一轮的对话记忆/, "sidepanel should not hide resume behavior behind a checkbox");
 assert.match(sidepanelHtmlSource, /newSessionBtn[\s\S]*\+ 新会话[\s\S]*sessionHistoryBtn[\s\S]*历史会话 \/ 恢复断点/, "sidepanel should expose direct new-session and session-history controls");
+assert.match(sidepanelHtmlSource, /clearSessionHistoryBtn[\s\S]*清空历史/, "sidepanel session history should expose an explicit clear-all-history action");
+assert.match(sidepanelSource, /CLEAR_SESSION_HISTORY[\s\S]*startNewSessionMode[\s\S]*renderSessionHistory\(\[\]\)/, "sidepanel clear history should call background cleanup and reset to fresh-session mode");
 assert.match(sidepanelSource, /getActiveResumeSessionKey[\s\S]*createWorkflowSessionId/, "sidepanel should create fresh workflow sessions only when no selected or auto-picked resumable session exists");
 assert.ok(
   sidepanelHtmlSource.indexOf("session-control session-control-top") > sidepanelHtmlSource.indexOf("growth-command-card") &&
@@ -273,6 +275,7 @@ assert.match(
   /chat-session-control[\s\S]*chat-new-session-btn[\s\S]*aria-label="开启新会话"[\s\S]*chat-session-history-btn[\s\S]*aria-label="历史会话"[\s\S]*chat-session-history-panel/,
   "floating content overlay should expose left-floating icon controls for new session and history"
 );
+assert.match(contentSource, /chat-session-clear-btn[\s\S]*清空历史[\s\S]*CLEAR_SESSION_HISTORY/, "floating overlay history should expose an explicit clear-all-history action");
 assert.match(
   contentSource,
   /\.chat-session-control\s*\{[\s\S]*left:\s*-54px[\s\S]*flex-direction:\s*column[\s\S]*\.chat-session-history-panel\s*\{[\s\S]*position:\s*absolute[\s\S]*top:\s*68px/,
@@ -292,6 +295,8 @@ assert.match(contentSource, /chat-new-session-btn[\s\S]*overlayPendingGrowthActi
 assert.match(contentSource, /activeAgentPort[\s\S]*CANCEL_WORKFLOW[\s\S]*pauseActiveWorkflow/, "floating overlay pause button should request workflow cancellation through the active port");
 assert.match(contentSource, /sendBtn\.innerText = pausing \? "暂停中" : "暂停"/, "floating overlay send button should become a pause button while a workflow is running");
 assert.match(backgroundSource, /message\.type === "CANCEL_WORKFLOW"[\s\S]*requestWorkflowCancellation[\s\S]*lastStage:\s*"user_paused"/, "background should persist user-paused workflows as resumable checkpoints");
+assert.match(backgroundSource, /message\.type === "CLEAR_SESSION_HISTORY"[\s\S]*clearAllSessionHistory/, "background should expose a single cleanup endpoint for session history");
+assert.match(backgroundSource, /clearAllSessionHistory[\s\S]*activeWorkflowRuns > 0[\s\S]*clearAllWorkflowRuntime[\s\S]*clearTaskLogs/, "session history cleanup should avoid active workflows and clear runtime snapshots plus logs");
 assert.doesNotMatch(contentSource, /Привет|Здравствуйте|Спасибо|Пожалуйста/, "content overlay should not contain Russian copy in the Etsy plugin UI");
 assert.match(backgroundSource, /resumeState:\s*shouldResumeFromCheckpoint\s*\?/, "background should pass resumable workflow state into the agent loop");
 assert.match(backgroundSource, /onCheckpoint:\s*async/, "background should persist checkpoint updates emitted by the agent loop");

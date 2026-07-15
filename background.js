@@ -6,6 +6,7 @@ import { callLLM } from './modules/llmClient.js';
 import {
   acquireWorkflowLease,
   appendWorkflowEvent,
+  clearAllWorkflowRuntime,
   clearWorkflowCancellation,
   loadWorkflowSnapshot,
   releaseWorkflowLease,
@@ -19,6 +20,7 @@ import { buildEvidenceBundle } from './modules/evidenceBundle.js';
 import { summarizeEvidenceQuality } from './modules/evidenceQuality.js';
 import {
   appendTaskLog,
+  clearTaskLogs,
   listTaskLogs,
   pruneTaskLogs,
   TASK_LOG_RETENTION,
@@ -407,6 +409,8 @@ async function listSkills() {
 // ── Port Connection Handling (Streaming Progress) ──
 const activePorts = new Map();
 const WORKFLOW_CHECKPOINTS_KEY = "agentWorkflowCheckpoints";
+const LEGACY_AGENT_CHECKPOINT_PREFIX = "etsyAgentCheckpoint:";
+const LEGACY_AGENT_CHECKPOINT_LATEST_KEY = "etsyAgentCheckpointLatest";
 const COMPLIANCE_DECISIONS_KEY = "etsyComplianceDecisions";
 const COMPLIANCE_DECISION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
@@ -499,6 +503,49 @@ function buildWorkflowCheckpointKey({ tabId, matchedSkills = [], message = {} } 
 async function getWorkflowCheckpoints() {
   const data = await new Promise((resolve) => chrome.storage.local.get([WORKFLOW_CHECKPOINTS_KEY], resolve));
   return data[WORKFLOW_CHECKPOINTS_KEY] || {};
+}
+
+async function clearAllSessionHistory({ includeTaskLogs = true } = {}) {
+  if (activeWorkflowRuns > 0) {
+    return {
+      ok: false,
+      blocked: true,
+      reason: "workflow_running",
+      message: "当前仍有任务运行中。请先暂停或等待任务结束，再清除历史会话。",
+    };
+  }
+
+  const storageSnapshot = await new Promise((resolve) => chrome.storage.local.get(null, resolve));
+  const storageKeys = Object.keys(storageSnapshot || {});
+  const legacyCheckpointKeys = storageKeys.filter((key) => key.startsWith(LEGACY_AGENT_CHECKPOINT_PREFIX));
+  const removeKeys = [
+    WORKFLOW_CHECKPOINTS_KEY,
+    LEGACY_AGENT_CHECKPOINT_LATEST_KEY,
+    ...legacyCheckpointKeys,
+  ];
+  await new Promise((resolve) => chrome.storage.local.remove([...new Set(removeKeys)], resolve));
+
+  const runtimeResult = await clearAllWorkflowRuntime();
+  const taskLogResult = includeTaskLogs ? await clearTaskLogs() : { ok: true, skipped: true };
+  logTaskEvent({
+    category: "maintenance",
+    event: "session_history_cleared",
+    message: "All resumable workflow session history was cleared by user request.",
+    context: {
+      removedStorageKeys: removeKeys.length,
+      removedLegacyCheckpointKeys: legacyCheckpointKeys.length,
+      runtimeResult,
+      taskLogResult,
+    },
+  });
+
+  return {
+    ok: true,
+    removedStorageKeys: removeKeys.length,
+    removedLegacyCheckpointKeys: legacyCheckpointKeys.length,
+    runtime: runtimeResult,
+    taskLogs: taskLogResult,
+  };
 }
 
 async function getWorkflowCheckpoint(key) {
@@ -1109,6 +1156,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           logs: data,
         },
       }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "CLEAR_SESSION_HISTORY") {
+    clearAllSessionHistory({ includeTaskLogs: message.includeTaskLogs !== false })
+      .then((data) => sendResponse(data))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }

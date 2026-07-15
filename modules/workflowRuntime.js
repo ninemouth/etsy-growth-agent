@@ -196,6 +196,40 @@ export async function listWorkflowEvents(workflowId, { afterSequence = 0, limit 
   }
 }
 
+export async function clearAllWorkflowRuntime() {
+  return enqueueWrite(async () => {
+    const memoryWorkflowCount = memoryWorkflows.size;
+    const memoryEventWorkflowCount = memoryEvents.size;
+    memoryWorkflows.clear();
+    memoryEvents.clear();
+    const db = await openDb();
+    if (!db) {
+      return {
+        ok: true,
+        clearedRuntime: true,
+        memoryWorkflowCount,
+        memoryEventWorkflowCount,
+        indexedDbCleared: false,
+      };
+    }
+    try {
+      await withTransaction(db, [WORKFLOW_STORE, EVENT_STORE], "readwrite", (stores) => {
+        stores[WORKFLOW_STORE].clear();
+        stores[EVENT_STORE].clear();
+      });
+      return {
+        ok: true,
+        clearedRuntime: true,
+        memoryWorkflowCount,
+        memoryEventWorkflowCount,
+        indexedDbCleared: true,
+      };
+    } finally {
+      closeDb(db);
+    }
+  });
+}
+
 export async function acquireWorkflowLease(workflowId, ownerId, ttlMs = 45_000) {
   const current = (await readWorkflow(workflowId)) || defaultWorkflow(workflowId);
   const now = Date.now();

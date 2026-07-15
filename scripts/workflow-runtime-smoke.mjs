@@ -3,6 +3,7 @@ import {
   __testInternals,
   acquireWorkflowLease,
   appendWorkflowEvent,
+  clearAllWorkflowRuntime,
   clearWorkflowCancellation,
   isWorkflowCancellationRequested,
   isWorkflowGenerationCurrent,
@@ -41,6 +42,11 @@ assert.equal(leaseB.ok, true);
 assert.notEqual(leaseB.generation, leaseA.generation, "a resumed owner must receive a new workflow generation");
 assert.equal(await isWorkflowGenerationCurrent(workflowId, leaseA.generation), false, "late results from an old generation must be rejected");
 await releaseWorkflowLease(workflowId, ownerB, "completed");
+await saveWorkflowSnapshot(`${workflowId}-clear`, { status: "interrupted", snapshot: { step: 9 } });
+await appendWorkflowEvent(`${workflowId}-clear`, "checkpoint", { step: 9 });
+const clearResult = await clearAllWorkflowRuntime();
+assert.equal(clearResult.ok, true, "workflow runtime clear should succeed");
+assert.equal(await loadWorkflowSnapshot(`${workflowId}-clear`), null, "workflow runtime clear should remove stored snapshots");
 __testInternals.memoryWorkflows.delete(workflowId);
 __testInternals.memoryEvents.delete(workflowId);
 console.log("workflow runtime smoke passed");

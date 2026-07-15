@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   __testInternals,
   appendTaskLog,
+  clearTaskLogs,
   listTaskLogs,
   pruneTaskLogs,
   sanitizeTaskLogValue,
@@ -76,6 +77,10 @@ assert.ok(pruneResult.deleted >= 3, "per-workflow retention should prune old ent
 const retainedWorkflowLogs = await listTaskLogs({ workflowId, limit: 20 });
 assert.ok(retainedWorkflowLogs.length <= 3, "per-workflow retention must be enforced");
 assert.ok((await listTaskLogs({ workflowId: otherWorkflowId, limit: 20 })).length <= 1, "unrelated workflow should be retained independently");
+
+const clearResult = await clearTaskLogs();
+assert.equal(clearResult.cleared, true, "task log clear should report cleared state");
+assert.equal((await listTaskLogs({ limit: 20 })).length, 0, "task log clear should remove all logs");
 
 __testInternals.memoryFallback.clear();
 console.log("task log store smoke passed");
