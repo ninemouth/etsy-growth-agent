@@ -3365,6 +3365,7 @@
     let overlayHistoryCategory = "all";
     let activeAgentPort = null;
     let activePauseRequested = false;
+    let activeOverlayToolRunId = "";
     const WORKFLOW_CHECKPOINTS_KEY = "agentWorkflowCheckpoints";
     const OVERLAY_HISTORY_CATEGORIES = [
       { id: "all", label: "全部" },
@@ -4240,10 +4241,13 @@
             } else if (data.type === "checkpoint_restored") {
               log(`↩ ${data.message || "已恢复上次中断的 workflow"}`);
             } else if (data.type === "tool_call") {
+              activeOverlayToolRunId = data.toolRunId || "";
               log(`⚙️ ${data.message || `准备调用动作: ${data.actionLabel || data.toolName}`}`);
             } else if (data.type === "tool_stage") {
+              if (data.toolRunId && activeOverlayToolRunId && data.toolRunId !== activeOverlayToolRunId) return;
               log(`↪ ${data.message || `${data.actionLabel || data.toolName || "工具"} 正在执行`}`);
             } else if (data.type === "tool_heartbeat") {
+              if (data.toolRunId && activeOverlayToolRunId && data.toolRunId !== activeOverlayToolRunId) return;
               log(`⏱ ${data.message || `${data.toolName || "工具"} 仍在执行`}`);
             } else if (data.type === "llm_heartbeat" || data.type === "llm_started") {
               log(`⏱ ${data.message || "AI 正在规划下一步"}`);
@@ -4254,11 +4258,20 @@
             } else if (data.type === "workflow_timeout") {
               log(`⏸ ${data.message || "工作流已保存断点并暂停"}`);
             } else if (data.type === "tool_timeout") {
+              if (data.toolRunId && activeOverlayToolRunId && data.toolRunId !== activeOverlayToolRunId) return;
+              activeOverlayToolRunId = "";
               log(`⏸ ${data.message || `${data.actionLabel || data.toolName || "工具"} 超时，已回收临时标签页`}`);
             } else if (data.type === "stale_tool_result_discarded") {
+              if (data.toolRunId && activeOverlayToolRunId && data.toolRunId !== activeOverlayToolRunId) return;
+              activeOverlayToolRunId = "";
               log(`↩ ${data.message || "已丢弃旧 workflow 的迟到结果"}`);
             } else if (data.type === "tool_result") {
+              if (data.toolRunId && activeOverlayToolRunId && data.toolRunId !== activeOverlayToolRunId) return;
+              activeOverlayToolRunId = "";
               log(`📥 ${data.message || `${data.actionLabel || "动作"}执行完毕，获取到相关数据。`}`);
+            } else if (data.type === "tool_result_reused") {
+              activeOverlayToolRunId = "";
+              log(`↩ ${data.message || "已复用本轮已有工具证据，不再重复打开页面。"}`);
             } else if (data.type === "reflection" && data.message) {
               log(`⚠️ Critic 审计反思: ${data.message}`);
             }

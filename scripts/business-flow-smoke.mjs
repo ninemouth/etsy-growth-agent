@@ -57,12 +57,14 @@ const runtimeBundleSource = [html, js, sidepanelHtmlSource, sidepanelSource, css
 
 assert.match(agentLoopSource, /type:\s*"tool_heartbeat"/, "long-running tool calls should emit heartbeat progress");
 assert.match(agentLoopSource, /type:\s*"tool_stage"/, "browser tools should emit concrete stage progress after the tool has actually started");
+assert.match(agentLoopSource, /createToolRunId[\s\S]*toolRunId[\s\S]*type:\s*"tool_heartbeat"[\s\S]*type:\s*"tool_result"/, "tool progress events should carry a per-tool-run id so stale heartbeats cannot appear after a completed action");
 assert.match(agentLoopSource, /type:\s*"llm_heartbeat"/, "long-running LLM planning calls should emit heartbeat progress between tool calls");
 assert.match(agentLoopSource, /LLM_RECOVERY_RETRIES/, "transient LLM network failures should have a bounded recovery retry");
 assert.match(agentLoopSource, /type:\s*"llm_error"[\s\S]*type:\s*"interrupted"/, "final LLM network failures should preserve the checkpoint instead of becoming a fake report");
 assert.match(agentLoopSource, /QUALITY_RETRY_LIMIT\s*=\s*2/, "quality repair must have a bounded retry window");
 assert.match(agentLoopSource, /inFlightToolRuns[\s\S]*toolRunKey[\s\S]*timed out after/, "tool work must be deduplicated and bounded by a tool-level timeout");
 assert.match(agentLoopSource, /type:\s*"reuse_tool_result"[\s\S]*tool_result_reused/, "Etsy business evidence searches must reuse an existing engine/query result instead of reopening a tab");
+assert.match(agentLoopSource, /isReusableSearchEvidence[\s\S]*screenshotRef[\s\S]*hasValidGoogleSearchEvidence/, "search evidence reuse should accept screenshot/page evidence, not only strict ok:true results");
 assert.match(agentLoopSource, /toolName === "search_in_browser"[\s\S]*!isSourcingSkill\(skillId\)/, "duplicate search reuse should protect all non-sourcing Etsy business skills, not only trends");
 assert.match(agentLoopSource, /PLATFORM_TRENDS_ALLOWED_TOOLS[\s\S]*platform_trends_tool_whitelist_guard/, "trend workflows must reject unrelated tools before evidence collection drifts");
 assert.match(agentLoopSource, /validatePlatformTrendToolResult[\s\S]*step_quality_blocked/, "trend tool results must pass a per-step evidence gate before the next LLM turn");
@@ -117,7 +119,9 @@ assert.match(toolRegistrySource, /etsy_crawl_page_started[\s\S]*etsy_crawl_page_
 assert.match(toolRegistrySource, /etsy_screenshot_observation_started[\s\S]*etsy_screenshot_observation_completed/, "screenshot analysis should expose durable per-page stage events");
 assert.match(sidepanelSource, /msg\.type === "llm_started"/, "sidepanel should show LLM request payload telemetry");
 assert.match(sidepanelSource, /msg\.type === "tool_stage"/, "sidepanel should show concrete browser tool stages");
+assert.match(sidepanelSource, /activeToolRunId[\s\S]*msg\.type === "tool_heartbeat"[\s\S]*msg\.toolRunId !== activeToolRunId[\s\S]*return/, "sidepanel should ignore stale tool heartbeats from completed tool runs");
 assert.match(contentSource, /data\.type === "tool_stage"/, "floating overlay should show concrete browser tool stages");
+assert.match(contentSource, /activeOverlayToolRunId[\s\S]*data\.type === "tool_heartbeat"[\s\S]*data\.toolRunId !== activeOverlayToolRunId[\s\S]*return/, "floating overlay should ignore stale tool heartbeats from completed tool runs");
 assert.match(backgroundSource, /buildResearchScope[\s\S]*pageContext\.research_scope[\s\S]*shouldClarifyResearchScope/, "background should build research_scope before running Etsy workflows and block weak trend scope");
 assert.match(agentLoopSource, /当前研究范围与页面角色[\s\S]*source_page_role 是 competitor_reference[\s\S]*entry_page_type 是 etsy_home/, "agent loop prompt should make research_scope a first-class execution constraint");
 assert.match(contentSource, /CLARIFICATION_REQUIRED[\s\S]*需要先明确研究范围/, "floating overlay should render weak-context clarification instead of treating it as a generic failure");

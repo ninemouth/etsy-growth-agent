@@ -12,6 +12,7 @@ let sessionMode = "new";
 let selectedResumeSessionKey = "";
 let selectedResumeSessionMeta = null;
 let sessionHistoryCategory = "all";
+let activeToolRunId = "";
 
 const WORKFLOW_CHECKPOINTS_KEY = "agentWorkflowCheckpoints";
 const SESSION_HISTORY_CATEGORIES = [
@@ -718,12 +719,15 @@ async function runSkill() {
         const msg = message.data;
         if (msg) {
           if (msg.type === "tool_call") {
+            activeToolRunId = msg.toolRunId || "";
             addLog("info", "⚙️", msg.message || `准备调用动作: ${msg.actionLabel || msg.toolName}`);
           } else if (msg.type === "tool_stage") {
+            if (msg.toolRunId && activeToolRunId && msg.toolRunId !== activeToolRunId) return;
             addLog("info", "↪", msg.message || `${msg.actionLabel || msg.toolName || "工具"} 正在执行`);
           } else if (msg.type === "checkpoint_restored") {
             addLog("info", "↩", msg.message || "已恢复上次中断的 workflow");
           } else if (msg.type === "tool_heartbeat") {
+            if (msg.toolRunId && activeToolRunId && msg.toolRunId !== activeToolRunId) return;
             addLog("info", "⏱", msg.message || `${msg.toolName || "工具"} 仍在执行`);
           } else if (msg.type === "llm_heartbeat") {
             addLog("info", "⏱", msg.message || "AI 正在基于已采集证据规划下一步");
@@ -733,11 +737,22 @@ async function runSkill() {
             addLog("warning", "↻", msg.message || "AI 网络请求暂时失败，正在保留证据后重试");
           } else if (msg.type === "llm_error") {
             addLog("error", "!", msg.message || "AI 网络请求失败，已保存断点");
+          } else if (msg.type === "tool_result") {
+            if (msg.toolRunId && activeToolRunId && msg.toolRunId !== activeToolRunId) return;
+            activeToolRunId = "";
+            addLog("info", "📥", msg.message || `${msg.actionLabel || "动作"}执行完毕，获取到相关数据。`);
+          } else if (msg.type === "tool_result_reused") {
+            activeToolRunId = "";
+            addLog("info", "↩", msg.message || "已复用本轮已有工具证据，不再重复打开页面。");
           } else if (msg.type === "workflow_timeout") {
             addLog("warning", "⏸", msg.message || "工作流已保存断点并暂停");
           } else if (msg.type === "tool_timeout") {
+            if (msg.toolRunId && activeToolRunId && msg.toolRunId !== activeToolRunId) return;
+            activeToolRunId = "";
             addLog("warning", "⏸", msg.message || `${msg.actionLabel || msg.toolName || "工具"} 超时，已回收临时标签页`);
           } else if (msg.type === "stale_tool_result_discarded") {
+            if (msg.toolRunId && activeToolRunId && msg.toolRunId !== activeToolRunId) return;
+            activeToolRunId = "";
             addLog("warning", "↩", msg.message || "已丢弃旧 workflow 的迟到结果");
           } else if (msg.type === "auto_fix") {
             addLog("info", "✓", msg.message || "已完成自动修正");

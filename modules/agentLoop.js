@@ -836,6 +836,19 @@ function hasValidGoogleSearchEvidence(result = {}) {
   return text.trim().length >= 80 || Array.isArray(pageData.productLinks) && pageData.productLinks.length > 0;
 }
 
+function isReusableSearchEvidence(entry = {}) {
+  if (entry?.tool !== "search_in_browser") return false;
+  const result = entry.result || {};
+  if (result.error || result.isCaptcha || result.cancelled || result.stale) return false;
+  const engine = String(entry.arguments?.engine || "").toLowerCase();
+  if (engine === "etsy") return hasValidEtsySearchEvidence(result) || result.evidenceOk === true || Boolean(result.screenshotRef);
+  if (engine === "google_trends") return hasValidGoogleTrendsEvidence(result) || (result.evidenceOk === true && Boolean(result.screenshotRef || result.screenshotCaptured));
+  if (engine === "google" || engine === "google_us" || engine === "google_ru" || engine === "bing") {
+    return hasValidGoogleSearchEvidence(result) || result.evidenceOk === true || Boolean(result.screenshotRef || result.screenshotCaptured);
+  }
+  return result.ok !== false && (result.evidenceOk === true || Boolean(result.pageData || result.screenshotRef || result.screenshotCaptured));
+}
+
 function getPlatformTrendEvidenceState(toolHistory = []) {
   const uniqueSearchKeys = new Set();
   const validSearchKeys = new Set();
@@ -1098,7 +1111,7 @@ function getEtsyBrowserWorkflowGuardResult({ skillId = "", toolName = "", toolAr
   if (toolName === "search_in_browser" && !isSourcingSkill(skillId)) {
     const requestKey = searchEvidenceKey(toolArgs);
     const duplicate = toolHistory.find((entry) => {
-      if (entry?.tool !== "search_in_browser" || entry?.result?.ok === false || entry?.result?.error) return false;
+      if (!isReusableSearchEvidence(entry)) return false;
       return searchEvidenceKey(entry.arguments || {}) === requestKey;
     });
     if (duplicate) {
@@ -1249,6 +1262,10 @@ async function runToolWithTimeout(toolName, toolArgs) {
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
+}
+
+function createToolRunId(toolName = "") {
+  return `tool_run_${toolName || "tool"}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 async function snapshotTabIds() {
@@ -3863,10 +3880,12 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         progressToolArgs.imageUrl = "__UPLOADED_IMAGE_DATA__";
       }
       const plannedToolAction = describeToolAction(toolName, toolArgs);
+      let toolRunId = createToolRunId(toolName);
       sendProgress({
         type: "tool_call",
         step,
         toolName,
+        toolRunId,
         toolArgs: progressToolArgs,
         actionKind: plannedToolAction.actionKind,
         actionLabel: plannedToolAction.actionLabel,
@@ -3925,6 +3944,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
               type: "tool_stage",
               step,
               toolName,
+              toolRunId,
               actionKind: stage.actionKind || toolAction.actionKind,
               actionLabel: stage.actionLabel || toolAction.actionLabel,
               tabLifecycle: stage.tabLifecycle || toolAction.lifecycle,
@@ -3942,6 +3962,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
             type: "tool_heartbeat",
             step,
             toolName,
+            toolRunId,
             actionKind: toolAction.actionKind,
             actionLabel: toolAction.actionLabel,
             tabLifecycle: toolAction.lifecycle,
@@ -3978,6 +3999,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
             type: "tool_timeout",
             step,
             toolName,
+            toolRunId,
             actionKind: toolAction.actionKind,
             actionLabel: toolAction.actionLabel,
             tabLifecycle: toolAction.lifecycle,
@@ -3997,6 +4019,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
           type: "stale_tool_result_discarded",
           step,
           toolName,
+          toolRunId,
           message: "旧 workflow 的迟到工具结果已丢弃，未写入当前恢复任务。",
         });
         return {
@@ -4019,6 +4042,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         type: "tool_result",
         step,
         toolName,
+        toolRunId,
         actionKind: completedToolAction.actionKind,
         actionLabel: completedToolAction.actionLabel,
         tabLifecycle: completedToolAction.lifecycle,
