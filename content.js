@@ -2020,7 +2020,7 @@
 
     const getPageGrowthActions = () => {
       if (isSellerPage) {
-        return ["diagnose_store_growth", "diagnose_sku_funnel", "scan_competitor_changes", "explore_platform_trends"];
+        return ["diagnose_store_growth"];
       }
       if (isProductPage) {
         return ["diagnose_sku_funnel", "rewrite_listing", "filter_supplier_sources", "scan_competitor_changes"];
@@ -3068,16 +3068,6 @@
     };
     const pageActionButtons = getPageGrowthActions().map(createDockActionButton);
     
-    // Add Bind/Status button to Pill Dock if on seller page
-    let bindShopBtn = null;
-    if (isSellerPage) {
-      bindShopBtn = document.createElement("button");
-      bindShopBtn.className = "dock-btn settings-mini-btn";
-      bindShopBtn.innerHTML = `
-        <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-      `;
-    }
-
     const dashBtn = document.createElement("button");
     dashBtn.className = "dock-btn growth-btn";
     dashBtn.title = "打开增长后台";
@@ -3094,7 +3084,6 @@
     `;
 
     pageActionButtons.forEach((btn) => dock.appendChild(btn));
-    if (bindShopBtn) dock.appendChild(bindShopBtn);
     dock.appendChild(dashBtn);
     dock.appendChild(settingsBtn);
     shadow.appendChild(dock);
@@ -4553,76 +4542,6 @@
     shadow.getElementById("chat-session-clear-btn")?.addEventListener("click", clearAllOverlaySessionHistory);
     refreshOverlayRuntimeStatus().catch(() => {});
 
-    // Update active shop tooltip and status badges on floating Pill Dock
-    const updateActiveShopTooltip = () => {
-      chrome.storage.local.get(["etsyShops", "activeShopId"], (data) => {
-        const shops = data.etsyShops || [];
-        const currentUrl = window.location.href;
-        
-        const matchedShop = shops.find(s => {
-          if (!s.sellerUrl) return false;
-          try {
-            const u1 = new URL(s.sellerUrl);
-            const u2 = new URL(currentUrl);
-            const m1 = u1.pathname.match(/\/seller\/([^\/]+)/);
-            const m2 = u2.pathname.match(/\/seller\/([^\/]+)/);
-            return m1 && m2 && m1[1] === m2[1];
-          } catch (_) {
-            return false;
-          }
-        });
-
-        if (bindShopBtn) {
-          if (matchedShop) {
-            bindShopBtn.title = `🏢 已绑定店铺: ${matchedShop.name}`;
-            bindShopBtn.style.background = "#10b981"; // success green
-            bindShopBtn.innerHTML = `
-              <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            `;
-          } else {
-            bindShopBtn.title = "🔗 绑定此店铺到 AI 大盘";
-            bindShopBtn.style.background = "var(--btn-bg)";
-            bindShopBtn.innerHTML = `
-              <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-            `;
-          }
-        }
-      });
-    };
-    updateActiveShopTooltip();
-
-    // Bind Quick Shop Binding Button to open Settings drawer and auto-populate shop name
-    if (bindShopBtn) {
-      bindShopBtn.addEventListener("click", () => {
-        settingsDrawer.classList.remove("hidden");
-        chatOverlay.classList.add("hidden");
-        
-        const addShopFormContainer = shadow.getElementById("etsy-drawer-add-shop-form");
-        const toggleAddBtn = shadow.getElementById("etsy-drawer-toggle-add-btn");
-        if (addShopFormContainer && toggleAddBtn) {
-          addShopFormContainer.classList.remove("hidden");
-          toggleAddBtn.innerText = "❌ 取消绑定录入";
-        }
-
-        let scrapedSellerName = "";
-        const h1 = document.querySelector("h1");
-        if (h1) {
-          scrapedSellerName = h1.textContent.trim();
-        } else {
-          scrapedSellerName = document.title.split("-")[0].trim();
-        }
-        if (scrapedSellerName.length > 20) {
-          scrapedSellerName = scrapedSellerName.slice(0, 20);
-        }
-
-        const nameInput = shadow.getElementById("etsy-new-name");
-        if (nameInput) {
-          nameInput.value = scrapedSellerName || "自营店铺";
-          nameInput.focus();
-        }
-      });
-    }
-
     // Toggle Add Shop Form inside settings drawer
     const addShopFormContainer = shadow.getElementById("etsy-drawer-add-shop-form");
     const toggleAddBtn = shadow.getElementById("etsy-drawer-toggle-add-btn");
@@ -4732,7 +4651,6 @@
               }
             });
           });
-          updateActiveShopTooltip();
         });
       });
     }
@@ -4804,7 +4722,6 @@
                       `<option value="${s.id}" ${s.id === data.activeShopId ? 'selected' : ''}>🏢 ${s.name} (${s.shopId || s.clientId || s.id})</option>`
                     ).join('');
                   }
-                  updateActiveShopTooltip();
                 }
               });
             });
@@ -4883,7 +4800,6 @@
         container.className = `theme-${themeVal}`;
         showToast("✅ 参数配置保存成功！");
         settingsDrawer.classList.add("hidden");
-        updateActiveShopTooltip();
       });
     });
 

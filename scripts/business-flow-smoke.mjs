@@ -292,6 +292,8 @@ assert.match(contentSource, /workflowSessionId[\s\S]*continueSession[\s\S]*force
 assert.match(contentSource, /const startOverlayNewSessionMode[\s\S]*overlaySessionMode = "new"[\s\S]*updateOverlaySessionModeUI\(\)/, "floating overlay should reset state through an explicit fresh-session mode function");
 assert.match(contentSource, /chat-session-mode-text[\s\S]*新会话：不会沿用旧断点/, "floating overlay should make fresh-session mode visible instead of hidden behind implicit behavior");
 assert.ok(contentSource.includes("const isSellerPage = isEtsy && /\\/(shop|seller)\\//i.test(window.location.pathname);"), "floating overlay must recognize real Etsy /shop/... storefront URLs as seller pages");
+assert.match(contentSource, /if \(isSellerPage\) \{\s*return \["diagnose_store_growth"\];\s*\}/, "Etsy shop homepages should expose only the store diagnosis business shortcut");
+assert.doesNotMatch(contentSource, /bindShopBtn|updateActiveShopTooltip|绑定此店铺到 AI 大盘/, "floating dock should keep shop binding inside settings instead of adding another homepage button");
 assert.match(contentSource, /resumableEntries\.length > 0[\s\S]*已暂停自动运行[\s\S]*return;[\s\S]*runOverlayGrowthActionNow/, "floating overlay action clicks should pause for session choice when resumable checkpoints exist");
 assert.match(contentSource, /OVERLAY_PENDING_ACTION_KEY[\s\S]*saveOverlayPendingGrowthAction[\s\S]*chrome\.storage\.local\.set/, "floating overlay should persist the pending business action so + new session survives UI/script refreshes");
 assert.match(contentSource, /isSameOverlayPage[\s\S]*leftUrl\.origin[\s\S]*leftUrl\.pathname[\s\S]*leftUrl\.search/, "floating overlay pending actions should tolerate hash changes while preventing cross-page accidental starts");
