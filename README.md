@@ -116,6 +116,7 @@ The included GitHub Action packages the extension zip and uploads both the zip a
 
 ```bash
 npm run lint
+npm run test:scheduler
 npm run test:task-logs
 npm run test:security
 npm run test:business

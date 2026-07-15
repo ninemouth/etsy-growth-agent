@@ -27,6 +27,7 @@ const agentLoopSource = fs.readFileSync(path.join(root, "modules", "agentLoop.js
 const toolRegistrySource = fs.readFileSync(path.join(root, "modules", "toolRegistry.js"), "utf8");
 const browserSessionManagerSource = fs.readFileSync(path.join(root, "modules", "browserSessionManager.js"), "utf8");
 const artifactStoreSource = fs.readFileSync(path.join(root, "modules", "artifactStore.js"), "utf8");
+const workflowSchedulerSource = fs.readFileSync(path.join(root, "modules", "workflowScheduler.js"), "utf8");
 const shopOptimizerSkillSource = fs.readFileSync(path.join(root, "skills", "etsy_global_shop_optimizer.skill.md"), "utf8");
 const baseAuditorSkillSource = fs.readFileSync(path.join(root, "skills", "base_report_auditor.skill.md"), "utf8");
 const productOpportunitySkillSource = fs.readFileSync(path.join(root, "skills", "etsy_product_opportunity_explorer.skill.md"), "utf8");
@@ -297,6 +298,12 @@ assert.match(contentSource, /sendBtn\.innerText = pausing \? "暂停中" : "暂�
 assert.match(backgroundSource, /message\.type === "CANCEL_WORKFLOW"[\s\S]*requestWorkflowCancellation[\s\S]*lastStage:\s*"user_paused"/, "background should persist user-paused workflows as resumable checkpoints");
 assert.match(backgroundSource, /message\.type === "CLEAR_SESSION_HISTORY"[\s\S]*clearAllSessionHistory/, "background should expose a single cleanup endpoint for session history");
 assert.match(backgroundSource, /clearAllSessionHistory[\s\S]*activeWorkflowRuns > 0[\s\S]*clearAllWorkflowRuntime[\s\S]*clearTaskLogs/, "session history cleanup should avoid active workflows and clear runtime snapshots plus logs");
+assert.match(workflowSchedulerSource, /acquireWorkflowSlot[\s\S]*releaseWorkflowSlot[\s\S]*getWorkflowSchedulerState/, "runtime should have a global workflow scheduler instead of per-port-only state");
+assert.match(backgroundSource, /acquireWorkflowSlot[\s\S]*updateWorkflowSlot[\s\S]*releaseWorkflowSlot/, "background harness should acquire and release the global scheduler slot for every workflow");
+assert.match(backgroundSource, /GET_WORKFLOW_RUNTIME_STATUS[\s\S]*getWorkflowSchedulerState/, "UI should be able to query the real background workflow runtime state");
+assert.match(agentLoopSource, /__workflowContext[\s\S]*toolRunId[\s\S]*recordWorkflowExecutionEvent/, "tool execution should receive a unified workflow context and write execution ledger events");
+assert.match(agentLoopSource, /tool_planned[\s\S]*tool_started[\s\S]*tool_finished/, "tool execution ledger should record planned, started and finished events");
+assert.match(toolRegistrySource, /getWorkflowIdFromArgs[\s\S]*__workflowContext[\s\S]*isToolCancellationRequested/, "tool registry should understand the unified workflow context and cancellation checks");
 assert.doesNotMatch(contentSource, /Привет|Здравствуйте|Спасибо|Пожалуйста/, "content overlay should not contain Russian copy in the Etsy plugin UI");
 assert.match(backgroundSource, /resumeState:\s*shouldResumeFromCheckpoint\s*\?/, "background should pass resumable workflow state into the agent loop");
 assert.match(backgroundSource, /onCheckpoint:\s*async/, "background should persist checkpoint updates emitted by the agent loop");

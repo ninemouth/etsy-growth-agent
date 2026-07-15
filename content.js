@@ -3505,6 +3505,19 @@
       }
     };
 
+    const refreshOverlayRuntimeStatus = async () => {
+      try {
+        const response = await chrome.runtime.sendMessage({ type: "GET_WORKFLOW_RUNTIME_STATUS" });
+        const active = response?.data?.scheduler?.active;
+        if (!response?.ok || !active) return;
+        const modeText = shadow.getElementById("chat-session-mode-text");
+        if (modeText) {
+          modeText.innerText = `运行中：${active.growthActionId || active.skillId || "Etsy workflow"}`;
+          modeText.classList.add("resume");
+        }
+      } catch (_) {}
+    };
+
     const updateChatRunControls = ({ running = false, pausing = false } = {}) => {
       const sendBtn = shadow.getElementById("chat-send-btn");
       const inputEl = shadow.getElementById("chat-input-el");
@@ -4437,6 +4450,7 @@
       if (willShow) await renderOverlaySessionHistory();
     });
     shadow.getElementById("chat-session-clear-btn")?.addEventListener("click", clearAllOverlaySessionHistory);
+    refreshOverlayRuntimeStatus().catch(() => {});
 
     // Update active shop tooltip and status badges on floating Pill Dock
     const updateActiveShopTooltip = () => {

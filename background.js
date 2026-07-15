@@ -14,6 +14,14 @@ import {
   requestWorkflowCancellation,
   saveWorkflowSnapshot,
 } from './modules/workflowRuntime.js';
+import {
+  acquireWorkflowSlot,
+  clearWorkflowSchedulerState,
+  getWorkflowSchedulerState,
+  releaseWorkflowSlot,
+  renewWorkflowSlot,
+  updateWorkflowSlot,
+} from './modules/workflowScheduler.js';
 import { cleanupOwnedTabs, protectWorkflowTab } from './modules/browserSessionManager.js';
 import { getArtifactDataUrl } from './modules/artifactStore.js';
 import { buildEvidenceBundle } from './modules/evidenceBundle.js';
@@ -526,6 +534,7 @@ async function clearAllSessionHistory({ includeTaskLogs = true } = {}) {
   await new Promise((resolve) => chrome.storage.local.remove([...new Set(removeKeys)], resolve));
 
   const runtimeResult = await clearAllWorkflowRuntime();
+  const schedulerResult = await clearWorkflowSchedulerState();
   const taskLogResult = includeTaskLogs ? await clearTaskLogs() : { ok: true, skipped: true };
   logTaskEvent({
     category: "maintenance",
@@ -535,6 +544,7 @@ async function clearAllSessionHistory({ includeTaskLogs = true } = {}) {
       removedStorageKeys: removeKeys.length,
       removedLegacyCheckpointKeys: legacyCheckpointKeys.length,
       runtimeResult,
+      schedulerResult,
       taskLogResult,
     },
   });
@@ -544,6 +554,7 @@ async function clearAllSessionHistory({ includeTaskLogs = true } = {}) {
     removedStorageKeys: removeKeys.length,
     removedLegacyCheckpointKeys: legacyCheckpointKeys.length,
     runtime: runtimeResult,
+    scheduler: schedulerResult,
     taskLogs: taskLogResult,
   };
 }
@@ -618,10 +629,21 @@ chrome.runtime.onConnect.addListener((port) => {
     let activeCheckpointKey = "";
     let runInFlight = false;
     let leaseRenewTimer = null;
+    let schedulerSlotAcquired = false;
+    let schedulerRenewTimer = null;
+    let schedulerFinalStatus = "released";
 
     port.onDisconnect.addListener(() => {
       isCancelled = true;
       activePorts.delete(portId);
+      if (schedulerRenewTimer) {
+        clearInterval(schedulerRenewTimer);
+        schedulerRenewTimer = null;
+      }
+      if (schedulerSlotAcquired) {
+        releaseWorkflowSlot(portId, "port_disconnected").catch((err) => console.warn("Could not release workflow scheduler slot:", err.message));
+        schedulerSlotAcquired = false;
+      }
       if (activeCheckpointKey) {
         requestWorkflowCancellation(activeCheckpointKey, "port_disconnected").catch((err) => console.warn("Could not request workflow cancellation:", err.message));
         setWorkflowCheckpoint(activeCheckpointKey, {
@@ -690,6 +712,22 @@ chrome.runtime.onConnect.addListener((port) => {
         runInFlight = true;
         activeWorkflowRuns++;
         try {
+          const schedulerSlot = await acquireWorkflowSlot({
+            ownerId: portId,
+            workflowId: message.workflowSessionId || `pending:${portId}`,
+            skillId: normalizeSkillPath(message.skillPath) || "",
+            growthActionId: message.growthActionId || "",
+            source: "etsy-agent-loop",
+          });
+          if (!schedulerSlot.ok) {
+            throw new Error(schedulerSlot.message || "当前已有任务正在运行，请稍后再试。");
+          }
+          schedulerSlotAcquired = true;
+          schedulerFinalStatus = "released";
+          schedulerRenewTimer = setInterval(() => {
+            renewWorkflowSlot(portId).catch((err) => console.warn("Could not renew workflow scheduler slot:", err.message));
+          }, 20_000);
+
           const tab = await getCurrentTab();
           if (!tab) throw new Error("无法获取当前活动的标签页，请确保浏览器焦点在目标网页上。");
 
@@ -811,6 +849,16 @@ chrome.runtime.onConnect.addListener((port) => {
           }
           const checkpointKey = buildWorkflowCheckpointKey({ tabId: tab.id, matchedSkills, message });
           activeCheckpointKey = checkpointKey;
+          await updateWorkflowSlot(portId, {
+            workflowId: checkpointKey,
+            skillId: matchedSkills.join("+"),
+            growthActionId: message.growthActionId || "",
+            sourceTabId: tab.id,
+            pageUrl: tab.url || "",
+            pageTitle: tab.title || "",
+            status: isExplicitResumeRequest(message) ? "resuming" : "running",
+            ttlMs: 90_000,
+          });
           protectWorkflowTab(checkpointKey, tab.id);
           logTaskEvent({
             workflowId: checkpointKey,
@@ -936,6 +984,7 @@ chrome.runtime.onConnect.addListener((port) => {
           });
 
           if (!result?.ok && result?.type === "interrupted") {
+            schedulerFinalStatus = "interrupted";
             const qualityGateBlocked = result.qualityGateBlocked === true;
             await setWorkflowCheckpoint(checkpointKey, {
               status: qualityGateBlocked ? "quality_gate_blocked" : "interrupted",
@@ -1038,6 +1087,7 @@ chrome.runtime.onConnect.addListener((port) => {
               completedAt: new Date().toISOString(),
               lastStage: "success_delivered",
             });
+            schedulerFinalStatus = "completed";
             activeCheckpointKey = "";
             clearInterval(leaseRenewTimer);
             leaseRenewTimer = null;
@@ -1054,6 +1104,7 @@ chrome.runtime.onConnect.addListener((port) => {
             });
           }
         } catch (err) {
+          schedulerFinalStatus = "failed";
           logTaskEvent({
             workflowId: activeCheckpointKey,
             sessionId: message.workflowSessionId || "",
@@ -1086,6 +1137,14 @@ chrome.runtime.onConnect.addListener((port) => {
             });
           }
         } finally {
+          if (schedulerRenewTimer) {
+            clearInterval(schedulerRenewTimer);
+            schedulerRenewTimer = null;
+          }
+          if (schedulerSlotAcquired) {
+            await releaseWorkflowSlot(portId, schedulerFinalStatus).catch((err) => console.warn("Could not release workflow scheduler slot:", err.message));
+            schedulerSlotAcquired = false;
+          }
           runInFlight = false;
           activeWorkflowRuns = Math.max(0, activeWorkflowRuns - 1);
           applyPendingUpdateIfIdle("workflow_completed").catch((err) => console.warn("Failed to apply pending update after workflow:", err.message));
@@ -1142,6 +1201,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "GET_TASK_LOGS") {
     listTaskLogs(message.filters || {})
       .then((data) => sendResponse({ ok: true, data, retention: TASK_LOG_RETENTION }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "GET_WORKFLOW_RUNTIME_STATUS") {
+    Promise.all([getWorkflowSchedulerState(), getWorkflowCheckpoints()])
+      .then(([scheduler, checkpoints]) => sendResponse({
+        ok: true,
+        data: {
+          scheduler,
+          activeWorkflowRuns,
+          checkpointCount: Object.keys(checkpoints || {}).length,
+          activePorts: activePorts.size,
+        },
+      }))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }

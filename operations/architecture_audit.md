@@ -9,6 +9,8 @@ This audit is the current engineering baseline for the Etsy extension runtime. T
 - Task execution needed durable observability. Workflow progress appeared in the side panel, but historical debugging depended on transient UI logs. The runtime now writes privacy-safe task logs to IndexedDB with memory fallback, query/export message endpoints, and periodic retention cleanup.
 - The extension had one remaining market-data mock path in `query_market_data`. When a SellerSprite or Helium 10 key existed, the tool returned random metrics. This has been replaced with an explicit `not_implemented` result so fake volume, sales, and competition data cannot enter reports.
 - Scheduled monitor alarms were not captured in the same task trail as conversation workflows. Monitor start, read failure, completion, and errors are now written to task logs.
+- Foreground workflows now use a global scheduler slot. Side panel and page-overlay entrypoints can no longer independently start competing browser-automation runs without the background runtime accepting the workflow first.
+- Tool execution now writes a structured workflow ledger. Each tool run records planned, started, timeout, finished, and validation events with a stable `toolRunId` and compact evidence quality metadata.
 - Chrome extension browser automation is intentionally built on Chrome APIs instead of Playwright/Puppeteer. For an installed MV3 extension this is the correct runtime boundary; external browser-control libraries do not have access to the user's logged-in Chrome extension context.
 - Evidence collection remains the highest-risk area. Google Trends, Etsy Search, and competitor tabs depend on live page state, login/consent prompts, anti-bot behavior, and content-script readiness. The existing `wait/read/stable evidence` strategy is directionally correct and should keep moving toward reusable page readiness primitives.
 
@@ -39,6 +41,26 @@ Retention policy:
 - Maximum total entries: 15,000.
 - Maximum entries per workflow: 1,200.
 - Cleanup runs on startup/install and every 6 hours through `chrome.alarms`.
+
+## Workflow Execution Architecture
+
+The extension uses a global foreground workflow scheduler in `modules/workflowScheduler.js`. Every side panel or page-overlay workflow must acquire the scheduler slot before it can enter the AI/tool loop. This prevents different UI entrypoints from silently starting parallel browser-automation runs that compete for tabs, LLM calls, and checkpoints.
+
+Scheduler contract:
+
+- One active foreground workflow slot per browser profile.
+- Active slots carry owner, workflow id, skill id, growth action, source tab, page URL, status, and expiry.
+- The background harness renews the scheduler slot while a workflow is running and releases it on completion, failure, interruption, port disconnect, or cleanup.
+- UI surfaces can query `GET_WORKFLOW_RUNTIME_STATUS` to display the real background runtime state instead of relying only on local button state.
+
+Tool execution writes a structured workflow execution ledger through `appendWorkflowEvent`. Every tool run records planned, started, timeout, finished, and platform-trend validation events with `toolRunId`, action kind, action label, tab lifecycle, evidence quality, page health, screenshot status, and closed-tab ids where applicable.
+
+Tool execution context:
+
+- `agentLoop` injects `__workflowContext` into every tool call.
+- The context includes workflow id, generation, source tab id, tool run id, step, action kind, action label, and start time.
+- `toolRegistry` can read this context through a shared helper and use it for cancellation-aware polling.
+- Runtime-only context is stripped before tool arguments are stored in tool history.
 
 ## Third-Party Library Review
 
@@ -71,7 +93,8 @@ Custom code to keep under review:
 2. Etsy competitor shop/listing research is limited to public DOM, screenshots, and seller-visible pages. The personal Etsy API boundary does not allow private data from other shops.
 3. Long-running workflows can still become expensive if a quality gate repeatedly asks for missing evidence that is structurally impossible in the current browser state. Task logs should now make these loops visible by workflow, tool, and event.
 4. Developer Mode updates require manual extension reload and page refresh. Runtime update awareness can guide the user, but cannot silently replace unpacked source.
-5. The side-panel progress log is not a full observability console. The background message endpoints expose task logs for debugging/export, but a richer UI can be added later.
+5. Chrome extension APIs do not provide true hard-abort semantics for every in-flight tab or content-script operation. The runtime now propagates cancellation into polling tools, marks stale generation results, and reclaims tabs, but some low-level Chrome calls may still finish at a boundary before their result is discarded.
+6. The side-panel progress log is not a full observability console. The background message endpoints expose task logs, scheduler state, and execution events for debugging/export, but a richer UI can be added later.
 
 ## Engineering Rules Going Forward
 
@@ -87,6 +110,7 @@ Run these before release:
 
 ```bash
 npm run test:task-logs
+npm run test:scheduler
 npm run test:runtime
 npm run test:browser-capabilities
 npm run test:evidence-bundle

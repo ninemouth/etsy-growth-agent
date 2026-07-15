@@ -116,6 +116,15 @@ function delay(ms = 0) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function getWorkflowIdFromArgs(args = {}) {
+  return String(args.workflowId || args.__workflowContext?.workflowId || "default");
+}
+
+async function isToolCancellationRequested(args = {}) {
+  const workflowId = getWorkflowIdFromArgs(args);
+  return workflowId !== "default" && await isWorkflowCancellationRequested(workflowId);
+}
+
 function sameTabId(a, b) {
   return Number.isInteger(Number(a)) && Number.isInteger(Number(b)) && Number(a) === Number(b);
 }
@@ -2758,6 +2767,12 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
             if (readInFlight) return;
             readInFlight = true;
             attempts++;
+            if (await isToolCancellationRequested(args)) {
+              clearInterval(checkLoad);
+              readInFlight = false;
+              resolve({ ok: false, cancelled: true, tabId: targetTabId, pageData: {}, message: "Search input polling cancelled by workflow request." });
+              return;
+            }
             chrome.tabs.get(targetTabId, async (t) => {
               if (chrome.runtime.lastError || !t) {
                 clearInterval(checkLoad);

@@ -419,6 +419,20 @@ function getActiveResumeSessionKey() {
   return sessionMode === "resume" && selectedResumeSessionKey ? selectedResumeSessionKey : "";
 }
 
+async function refreshWorkflowRuntimeStatus() {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "GET_WORKFLOW_RUNTIME_STATUS" });
+    const active = response?.data?.scheduler?.active;
+    if (!response?.ok || !active) return;
+    const modeText = $("sessionModeText");
+    if (modeText) {
+      modeText.textContent = `运行中：${active.growthActionId || active.skillId || "Etsy workflow"}`;
+      modeText.classList.add("resume");
+    }
+    addLog("info", "⏱", "检测到后台已有任务运行中；请等待完成、暂停后恢复，或在历史会话中查看断点。");
+  } catch (_) {}
+}
+
 // ── Init ──
 document.addEventListener("DOMContentLoaded", async () => {
   showView("main");
@@ -428,6 +442,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await updatePageInfo();
   await loadSettings();
   updateSessionModeUI();
+  await refreshWorkflowRuntimeStatus();
   bindEvents();
 });
 

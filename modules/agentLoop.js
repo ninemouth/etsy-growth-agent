@@ -2,7 +2,7 @@
 
 import { callLLM, getSettings } from './llmClient.js';
 import { tools, hasValidEtsySearchEvidence, hasValidGoogleTrendsEvidence } from './toolRegistry.js';
-import { isWorkflowCancellationRequested, isWorkflowGenerationCurrent } from './workflowRuntime.js';
+import { appendWorkflowEvent, isWorkflowCancellationRequested, isWorkflowGenerationCurrent } from './workflowRuntime.js';
 import { putDataUrlArtifact } from './artifactStore.js';
 import { captureFullPageScreenshot } from './debuggerCapture.js';
 import { formatBrowserAutomationCapabilityPrompt } from './browserAutomationCapabilities.js';
@@ -35,6 +35,7 @@ function toolRunKey(toolName, toolArgs = {}) {
   delete dedupeArgs.workflowGeneration;
   delete dedupeArgs.__progress;
   delete dedupeArgs.__sourceTabId;
+  delete dedupeArgs.__workflowContext;
   return `${workflowId}:${toolName}:${JSON.stringify(stableToolValue(dedupeArgs))}`;
 }
 
@@ -1234,7 +1235,41 @@ function stripRuntimeToolArgs(toolArgs = {}) {
   const clean = { ...toolArgs };
   delete clean.__progress;
   delete clean.__sourceTabId;
+  delete clean.__workflowContext;
   return clean;
+}
+
+function compactToolResultForLedger(toolResult = {}) {
+  const pageData = toolResult?.pageData || {};
+  return {
+    ok: toolResult?.ok,
+    error: toolResult?.error || "",
+    timedOut: Boolean(toolResult?.timedOut),
+    cancelled: Boolean(toolResult?.cancelled),
+    stale: Boolean(toolResult?.stale),
+    actionKind: toolResult?.actionKind || "",
+    actionLabel: toolResult?.actionLabel || "",
+    tabId: toolResult?.tabId,
+    finalUrl: toolResult?.finalUrl || toolResult?.url || pageData.url || "",
+    evidenceOk: toolResult?.evidenceOk,
+    evidenceStatus: toolResult?.evidenceStatus || "",
+    evidenceQuality: toolResult?.evidence_quality || null,
+    pageHealth: pageData.pageHealth || null,
+    productCardCount: Array.isArray(pageData.productCards) ? pageData.productCards.length : undefined,
+    productLinkCount: Array.isArray(pageData.productLinks) ? pageData.productLinks.length : undefined,
+    screenshotCaptured: Boolean(toolResult?.screenshotCaptured),
+    screenshotCaptureMode: toolResult?.screenshotCaptureMode || "",
+    closedTabIds: Array.isArray(toolResult?.closedTabIds) ? toolResult.closedTabIds : undefined,
+  };
+}
+
+async function recordWorkflowExecutionEvent(workflowId = "", type = "", payload = {}) {
+  if (!workflowId || !type) return;
+  try {
+    await appendWorkflowEvent(workflowId, type, payload);
+  } catch (err) {
+    console.warn("Failed to append workflow execution event:", err.message);
+  }
 }
 
 async function runToolWithTimeout(toolName, toolArgs) {
@@ -3899,6 +3934,15 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         toolName,
         toolArgs: progressToolArgs,
       });
+      await recordWorkflowExecutionEvent(workflowId, "tool_planned", {
+        step,
+        toolName,
+        toolRunId,
+        actionKind: plannedToolAction.actionKind,
+        actionLabel: plannedToolAction.actionLabel,
+        tabLifecycle: plannedToolAction.lifecycle,
+        arguments: stripRuntimeToolArgs(progressToolArgs),
+      });
 
       if (!tools[toolName]) {
         const errMsg = `Unknown tool: ${toolName}. Available: ${availableTools}`;
@@ -3935,9 +3979,20 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       const toolAction = describeToolAction(toolName, toolArgs);
       const tabsBeforeTool = await snapshotTabIds();
       try {
+        const workflowContext = {
+          workflowId,
+          workflowGeneration,
+          sourceTabId: tabId,
+          toolRunId,
+          step,
+          actionKind: toolAction.actionKind,
+          actionLabel: toolAction.actionLabel,
+          startedAt: new Date(toolStartedAt).toISOString(),
+        };
         const executableToolArgs = {
           ...toolArgs,
           __sourceTabId: tabId,
+          __workflowContext: workflowContext,
           __progress: (stage = {}) => {
             const stageMessage = stage.message || `${toolAction.actionLabel} 正在执行`;
             sendProgress({
@@ -3956,6 +4011,14 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
             });
           },
         };
+        await recordWorkflowExecutionEvent(workflowId, "tool_started", {
+          step,
+          toolName,
+          toolRunId,
+          actionKind: toolAction.actionKind,
+          actionLabel: toolAction.actionLabel,
+          tabLifecycle: toolAction.lifecycle,
+        });
         toolHeartbeatTimer = setInterval(() => {
           const elapsedSeconds = Math.max(1, Math.round((Date.now() - toolStartedAt) / 1000));
           sendProgress({
@@ -4007,6 +4070,15 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
             elapsedSeconds: Math.round((Date.now() - toolStartedAt) / 1000),
             message: `${toolAction.actionLabel} 已超过本阶段等待时间；这表示该阶段未形成稳定返回，不等于页面没有数据。已回收本次工具新增的临时标签页 ${closedTabIds.length} 个，workflow 未被取消，可继续修复或重试该证据阶段。`,
           });
+          await recordWorkflowExecutionEvent(workflowId, "tool_timeout", {
+            step,
+            toolName,
+            toolRunId,
+            actionKind: toolAction.actionKind,
+            actionLabel: toolAction.actionLabel,
+            elapsedMs: toolResult.elapsedMs,
+            closedTabIds,
+          });
         }
       } finally {
         if (toolHeartbeatTimer) {
@@ -4036,6 +4108,14 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         toolResult.actionLabel = toolResult.actionLabel || completedToolAction.actionLabel;
         toolResult.tabLifecycle = toolResult.tabLifecycle || completedToolAction.lifecycle;
       }
+      await recordWorkflowExecutionEvent(workflowId, "tool_finished", {
+        step,
+        toolName,
+        toolRunId,
+        actionKind: completedToolAction.actionKind,
+        actionLabel: completedToolAction.actionLabel,
+        result: compactToolResultForLedger(toolResult),
+      });
       toolHistory.push({ tool: toolName, arguments: stripRuntimeToolArgs(toolArgs), result: toolResult });
 
       sendProgress({
@@ -4059,6 +4139,13 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       if (isPlatformTrendSkill(skillId)) {
         const toolQualityErrors = validatePlatformTrendToolResult(toolName, toolArgs, toolResult);
         if (toolQualityErrors.length > 0) {
+          await recordWorkflowExecutionEvent(workflowId, "tool_validation_failed", {
+            step,
+            toolName,
+            toolRunId,
+            errors: toolQualityErrors,
+            result: compactToolResultForLedger(toolResult),
+          });
           const requestKey = toolRunKey(toolName, toolArgs);
           const failedAttempts = toolHistory.filter((entry) =>
             entry?.tool === toolName && toolRunKey(entry.tool, entry.arguments || {}) === requestKey &&
@@ -4090,6 +4177,13 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
           await saveCheckpoint({ status: "tool_quality_retry", step, lastNode: "tool_quality_retry", toolName, toolQualityErrors });
           continue;
         }
+        await recordWorkflowExecutionEvent(workflowId, "tool_validated", {
+          step,
+          toolName,
+          toolRunId,
+          validator: "platform_trends_step_gate",
+          result: compactToolResultForLedger(toolResult),
+        });
       }
 
       if (toolResult && toolResult.isCaptcha) {
