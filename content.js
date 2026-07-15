@@ -1967,8 +1967,8 @@
 
     // Check if on a product detail page
     const isProductPage = isEtsy && (window.location.pathname.includes("/product/") || /\/\d{8,15}\/?/i.test(window.location.pathname));
-    const isSellerPage = isEtsy && window.location.pathname.includes("/seller/");
-    const isSearchOrCatalogPage = isEtsy && (/\/search|\/category|\/brand|\/seller\//i.test(window.location.pathname) || document.querySelectorAll('a[href*="/product/"]').length > 6);
+    const isSellerPage = isEtsy && /\/(shop|seller)\//i.test(window.location.pathname);
+    const isSearchOrCatalogPage = isEtsy && (/\/search|\/category|\/brand|\/seller\//i.test(window.location.pathname) || document.querySelectorAll('a[href*="/listing/"], a[href*="/product/"]').length > 6);
 
     const GROWTH_ACTIONS = {
       diagnose_store_growth: {
@@ -3396,6 +3396,8 @@
     let activePauseRequested = false;
     let activeOverlayToolRunId = "";
     const WORKFLOW_CHECKPOINTS_KEY = "agentWorkflowCheckpoints";
+    const OVERLAY_PENDING_ACTION_KEY = "etsyOverlayPendingGrowthAction";
+    const OVERLAY_PENDING_ACTION_TTL_MS = 2 * 60 * 60 * 1000;
     const OVERLAY_HISTORY_CATEGORIES = [
       { id: "all", label: "全部" },
       { id: "store", label: "店铺体检" },
@@ -3544,6 +3546,74 @@
       updateOverlaySessionModeUI();
     };
 
+    const isSameOverlayPage = (left = "", right = "") => {
+      try {
+        const leftUrl = new URL(left || window.location.href, window.location.href);
+        const rightUrl = new URL(right || window.location.href, window.location.href);
+        return leftUrl.origin === rightUrl.origin && leftUrl.pathname === rightUrl.pathname && leftUrl.search === rightUrl.search;
+      } catch (_) {
+        return String(left || "") === String(right || "");
+      }
+    };
+
+    const normalizeOverlayPendingAction = (action = {}) => {
+      const actionId = String(action.actionId || "");
+      if (!actionId || !GROWTH_ACTIONS[actionId]) return null;
+      const createdAt = action.createdAt || new Date().toISOString();
+      const createdMs = new Date(createdAt).getTime();
+      if (Number.isFinite(createdMs) && Date.now() - createdMs > OVERLAY_PENDING_ACTION_TTL_MS) return null;
+      const pageUrl = String(action.pageUrl || window.location.href);
+      if (pageUrl && !isSameOverlayPage(pageUrl, window.location.href)) return null;
+      return {
+        actionId,
+        instruction: String(action.instruction || GROWTH_ACTIONS[actionId].instruction || ""),
+        pageUrl,
+        pageTitle: String(action.pageTitle || document.title || ""),
+        createdAt,
+      };
+    };
+
+    const saveOverlayPendingGrowthAction = async (action = null) => {
+      const normalized = normalizeOverlayPendingAction(action || {});
+      overlayPendingGrowthAction = normalized;
+      if (normalized) overlayLastGrowthAction = normalized;
+      try {
+        await new Promise((resolve) => chrome.storage.local.set({ [OVERLAY_PENDING_ACTION_KEY]: normalized || null }, resolve));
+      } catch (_) {}
+      return normalized;
+    };
+
+    const clearOverlayPendingGrowthAction = async () => {
+      overlayPendingGrowthAction = null;
+      try {
+        await new Promise((resolve) => chrome.storage.local.remove([OVERLAY_PENDING_ACTION_KEY], resolve));
+      } catch (_) {}
+    };
+
+    const loadOverlayPendingGrowthAction = async () => {
+      try {
+        const data = await new Promise((resolve) => chrome.storage.local.get([OVERLAY_PENDING_ACTION_KEY], resolve));
+        const normalized = normalizeOverlayPendingAction(data?.[OVERLAY_PENDING_ACTION_KEY] || {});
+        if (!normalized) {
+          await clearOverlayPendingGrowthAction();
+          return null;
+        }
+        overlayPendingGrowthAction = normalized;
+        overlayLastGrowthAction = normalized;
+        return normalized;
+      } catch (_) {
+        return null;
+      }
+    };
+
+    const resolveOverlayActionToRun = async () => {
+      const pending = normalizeOverlayPendingAction(overlayPendingGrowthAction || {});
+      if (pending) return pending;
+      const storedPending = await loadOverlayPendingGrowthAction();
+      if (storedPending) return storedPending;
+      return normalizeOverlayPendingAction(overlayLastGrowthAction || {});
+    };
+
     const getOverlayCheckpointEntries = async () => {
       const data = await new Promise((resolve) => chrome.storage.local.get([WORKFLOW_CHECKPOINTS_KEY], resolve));
       return Object.entries(data[WORKFLOW_CHECKPOINTS_KEY] || {})
@@ -3560,13 +3630,20 @@
     };
 
     const runOverlayGrowthActionNow = async ({ actionId, instruction, resume = false } = {}) => {
-      if (!actionId || activeGrowthRun) return;
+      if (!actionId) {
+        showToast("请先选择一个增长动作，或在输入框输入明确指令。");
+        return false;
+      }
+      if (activeGrowthRun) {
+        showToast(`当前「${activeGrowthRun.title || "Etsy 任务"}」仍在运行，请先暂停或等待完成。`);
+        return false;
+      }
       const action = GROWTH_ACTIONS[actionId] || GROWTH_ACTIONS.diagnose_store_growth;
       const runInstruction = resume ? "继续" : instruction;
       addMessage("user", resume ? `恢复「${action.label}」` : `运行「${action.label}」`);
       const run = await persistGrowthActionRun(actionId, runInstruction || instruction || action.instruction);
       await setActiveGrowthRun(run);
-      overlayPendingGrowthAction = null;
+      await clearOverlayPendingGrowthAction();
       overlayNewSessionConfirmed = false;
       if (!resume && actionId === "scan_competitor_changes") {
         try {
@@ -3576,6 +3653,7 @@
         }
       }
       await runSelectedSkill(runInstruction || instruction, actionId);
+      return true;
     };
 
     const renderOverlaySessionHistory = async (entriesOverride = null, selectedCategory = overlayHistoryCategory) => {
@@ -3628,7 +3706,7 @@
         });
       });
       list.querySelectorAll(".chat-session-resume-btn").forEach((btn) => {
-        btn.addEventListener("click", () => {
+        btn.addEventListener("click", async () => {
           const key = btn.dataset.sessionKey || "";
           const match = entries.find((entry) => entry.key === key);
           if (!match) return;
@@ -3638,10 +3716,11 @@
           updateOverlaySessionModeUI();
           shadow.getElementById("chat-session-history-panel")?.classList.add("hidden");
           showToast(`已选择历史会话：${getOverlaySessionTitle(match.checkpoint)}`);
-          if (overlayPendingGrowthAction) {
+          const actionToRun = await resolveOverlayActionToRun();
+          if (actionToRun) {
             runOverlayGrowthActionNow({
-              actionId: overlayPendingGrowthAction.actionId,
-              instruction: overlayPendingGrowthAction.instruction,
+              actionId: actionToRun.actionId,
+              instruction: actionToRun.instruction,
               resume: true,
             }).catch((err) => showToast(`恢复会话失败：${err.message}`));
           }
@@ -3659,7 +3738,7 @@
           return;
         }
         startOverlayNewSessionMode();
-        overlayPendingGrowthAction = null;
+        await clearOverlayPendingGrowthAction();
         overlayLastGrowthAction = null;
         await renderOverlaySessionHistory([]);
         showToast("已清空所有历史会话和断点；下一次运行将从新会话开始。");
@@ -3807,8 +3886,13 @@
       const instruction = `${contextPrefix}\n\n${action.instruction}`;
       chatOverlay.classList.remove("hidden");
       settingsDrawer.classList.add("hidden");
-      overlayPendingGrowthAction = { actionId, instruction };
-      overlayLastGrowthAction = { actionId, instruction };
+      await saveOverlayPendingGrowthAction({
+        actionId,
+        instruction,
+        pageUrl: window.location.href,
+        pageTitle: document.title,
+        createdAt: new Date().toISOString(),
+      });
 
       const selectedResumeSessionKey = getOverlayActiveResumeSessionKey();
       const resumableEntries = selectedResumeSessionKey ? [] : await getOverlayCheckpointEntriesForAction(actionId);
@@ -4428,18 +4512,35 @@
       chrome.runtime.sendMessage({ type: "OPEN_DASHBOARD" });
     });
 
-    shadow.getElementById("chat-new-session-btn")?.addEventListener("click", () => {
+    shadow.getElementById("chat-new-session-btn")?.addEventListener("click", async () => {
+      if (activeGrowthRun) {
+        showToast(`当前「${activeGrowthRun.title || "Etsy 任务"}」仍在运行，请先暂停或等待完成。`);
+        return;
+      }
       startOverlayNewSessionMode();
       shadow.getElementById("chat-session-history-panel")?.classList.add("hidden");
-      showToast("已切换为新会话，下一次运行不会沿用旧断点。");
-      const actionToRun = overlayPendingGrowthAction || overlayLastGrowthAction;
-      if (actionToRun && !activeGrowthRun) {
-        runOverlayGrowthActionNow({
+      const actionToRun = await resolveOverlayActionToRun();
+      if (actionToRun) {
+        showToast("已开启新会话，正在启动当前增长任务。");
+        const started = await runOverlayGrowthActionNow({
           actionId: actionToRun.actionId,
           instruction: actionToRun.instruction,
           resume: false,
-        }).catch((err) => showToast(`启动新会话失败：${err.message}`));
+        }).catch((err) => {
+          showToast(`启动新会话失败：${err.message}`);
+          return false;
+        });
+        if (!started) await saveOverlayPendingGrowthAction(actionToRun);
+        return;
       }
+      const inputEl = shadow.getElementById("chat-input-el");
+      const typedInstruction = inputEl?.value?.trim() || "";
+      if (typedInstruction) {
+        showToast("已开启新会话，正在发送当前指令。");
+        sendMessage();
+        return;
+      }
+      showToast("已切换为新会话。请选择右侧增长动作，或输入指令后发送。");
     });
 
     shadow.getElementById("chat-session-history-btn")?.addEventListener("click", async () => {
