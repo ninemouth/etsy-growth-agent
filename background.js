@@ -14,6 +14,9 @@ import {
   saveWorkflowSnapshot,
 } from './modules/workflowRuntime.js';
 import { cleanupOwnedTabs, protectWorkflowTab } from './modules/browserSessionManager.js';
+import { getArtifactDataUrl } from './modules/artifactStore.js';
+import { buildEvidenceBundle } from './modules/evidenceBundle.js';
+import { summarizeEvidenceQuality } from './modules/evidenceQuality.js';
 import {
   applyPendingRuntimeUpdate,
   checkForUpdates,
@@ -268,6 +271,40 @@ async function exportResults() {
     chrome.storage.local.get(["savedResults"], resolve)
   );
   return existing.savedResults || [];
+}
+
+async function exportEvidenceBundle(reportId) {
+  const existing = await new Promise((resolve) =>
+    chrome.storage.local.get(["savedResults"], resolve)
+  );
+  const report = (existing.savedResults || []).find((entry) => String(entry.id) === String(reportId));
+  if (!report) throw new Error("Report not found");
+  const bundle = report.evidence_bundle || {
+    reportId: report.id,
+    skillId: report.skillId || "",
+    skillName: report.skillName || "",
+    page: { url: report.pageUrl || "", title: report.pageTitle || "" },
+    research_scope: report.research_scope || {},
+    evidence_quality: report.evidence_quality || {},
+    screenshotRefs: [],
+    toolTimeline: [],
+  };
+  const refs = Array.isArray(bundle.screenshotRefs) ? bundle.screenshotRefs : [];
+  const artifactManifest = [];
+  for (const ref of refs) {
+    let available = false;
+    try {
+      available = Boolean(await getArtifactDataUrl(ref));
+    } catch (_) {
+      available = false;
+    }
+    artifactManifest.push({ ref, available });
+  }
+  return {
+    ...bundle,
+    exportedAt: new Date().toISOString(),
+    artifact_manifest: artifactManifest,
+  };
 }
 
 async function listSkills() {
@@ -834,6 +871,13 @@ chrome.runtime.onConnect.addListener((port) => {
               const existing = await new Promise((r) => chrome.storage.local.get(["savedResults"], r));
               const savedResults = existing.savedResults || [];
               
+              const reportOutput = result.result && typeof result.result === "object" ? result.result : {};
+              const researchScope = reportOutput.research_scope || pageContext.research_scope || {};
+              const evidenceQuality = summarizeEvidenceQuality({
+                output: reportOutput,
+                pageContext,
+                researchScope,
+              });
               const newEntry = {
                 id: Date.now(),
                 createdAt: new Date().toISOString(),
@@ -844,8 +888,19 @@ chrome.runtime.onConnect.addListener((port) => {
                 growthActionId: message.growthActionId || "",
                 growthRunId: message.growthRunId || "",
                 growthCaseId: message.growthCaseId || "",
+                research_scope: researchScope,
+                evidence_quality: evidenceQuality,
                 result: result.result // The parsed final output object containing overview, analysis, and data items
               };
+              newEntry.evidence_bundle = buildEvidenceBundle({
+                savedEntry: newEntry,
+                output: reportOutput,
+                pageContext,
+                researchScope,
+                evidenceQuality,
+                toolHistory: Array.isArray(result.toolHistory) ? result.toolHistory : [],
+                workflowId: checkpointKey,
+              });
               
               savedResults.unshift(newEntry);
               await new Promise((r) => chrome.storage.local.set({ savedResults: savedResults.slice(0, 100) }, r));
@@ -940,6 +995,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "EXPORT_RESULTS") {
     exportResults()
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "EXPORT_EVIDENCE_BUNDLE") {
+    exportEvidenceBundle(message.id || message.reportId)
       .then((data) => sendResponse({ ok: true, data }))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;

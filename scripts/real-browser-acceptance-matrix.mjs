@@ -1,0 +1,161 @@
+import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
+const root = process.cwd();
+const outDir = path.join(root, "operations", "acceptance");
+const now = new Date().toISOString();
+
+const acceptanceMatrix = [
+  {
+    id: "RB-01",
+    area: "Etsy 店铺体检",
+    startPage: "Etsy shop home page",
+    trigger: "右侧悬浮栏：店铺体检",
+    requiredEvidence: [
+      "店铺定位、调性/格调、商品结构与政策读取",
+      "Etsy 搜索公开证据",
+      "2-3 个同类高排名店铺/商品截图与 DOM 证据",
+      "diagnostic_depth_matrix 与 competitor_benchmarks",
+      "savedResults.evidence_bundle.screenshotRefs 非空",
+    ],
+    passCriteria: [
+      "不会只凭当前截图输出结论",
+      "不关闭 source Etsy shop tab",
+      "报告中心可阅读报告、下载 PDF、下载证据包",
+      "PDF 尾页包含证据包摘要",
+    ],
+  },
+  {
+    id: "RB-02",
+    area: "平台趋势 / Google Trends",
+    startPage: "Etsy shop, listing, category/search page, or explicit user keyword",
+    trigger: "右侧悬浮栏：平台趋势",
+    requiredEvidence: [
+      "research_scope 标记店铺页/平台页/搜索页/竞品页语境",
+      "Google Trends US 页面稳定等待后截图/DOM 证据",
+      "Google Search/Etsy Search/Google Trends 证据分工清晰",
+      "临时站外 tab 完成后可关闭，source Etsy tab 保留",
+    ],
+    passCriteria: [
+      "关闭当前 Etsy 主 tab 时任务可中断并保留 checkpoint",
+      "打开新会话不会恢复旧 checkpoint",
+      "历史会话恢复只恢复用户选择的 checkpoint",
+      "报告不得把加载失败的 Google Trends 当作趋势结论",
+    ],
+  },
+  {
+    id: "RB-03",
+    area: "Etsy Listing / 评论分析",
+    startPage: "Etsy listing detail page",
+    trigger: "右侧悬浮栏：Listing 改版 / 评论缺陷",
+    requiredEvidence: [
+      "商品标题、价格、属性、图片、配送、退换货和评论 DOM 证据",
+      "公开评论或 review count 证据",
+      "评论区受阻时 blockingGaps 明确",
+      "review_dom 或 page_dom evidence ledger",
+    ],
+    passCriteria: [
+      "不能仅凭商品首屏截图推导买家痛点",
+      "评论读取失败必须降级为待验证，不伪造评价结论",
+    ],
+  },
+  {
+    id: "RB-04",
+    area: "竞品研究 / 店铺分页",
+    startPage: "Etsy shop or Etsy search results page",
+    trigger: "右侧悬浮栏：竞品扫描 / 店铺体检中的竞品阶段",
+    requiredEvidence: [
+      "竞品店铺首页 DOM 与截图",
+      "店铺商品分页采集记录",
+      "排序口径，例如默认排序/最新上架/热卖可见口径",
+      "商品价格、类别、SKU 可见数量、促销、评论等公开字段样本",
+    ],
+    passCriteria: [
+      "不能只打开竞品首页不翻页就声称全店商品结构",
+      "不能把公开可见样本写成竞品后台完整 SKU 或销量",
+    ],
+  },
+  {
+    id: "RB-05",
+    area: "供应商货源 / 1688 图搜",
+    startPage: "Etsy listing page with target image",
+    trigger: "右侧悬浮栏：货源筛选",
+    requiredEvidence: [
+      "以图搜图进入 1688 结果页",
+      "结果页 productCards 包含候选主图、价格、链接",
+      "打开 2 个以上供应商详情页比较",
+      "货源报告 data 至少 2 个供应商候选或明确阻断缺口",
+    ],
+    passCriteria: [
+      "拿到图搜结果后不循环切换关键词搜索",
+      "文本搜索只在图片搜索明确阻断或用户允许时使用",
+      "详情页 tab 生命周期受 workflow 管理",
+    ],
+  },
+  {
+    id: "RB-06",
+    area: "报告中心 / 证据归档",
+    startPage: "dashboard.html reports tab",
+    trigger: "打开报告中心",
+    requiredEvidence: [
+      "报告正文 Markdown/JSON 正常格式化",
+      "复制按钮复制业务报告正文",
+      "PDF 中文不乱码",
+      "PDF 含证据包摘要尾页",
+      "证据包 JSON 含 artifact_manifest",
+    ],
+    passCriteria: [
+      "删除只删除目标报告",
+      "证据包 missing artifact 明确显示，不静默失败",
+    ],
+  },
+];
+
+function renderMarkdown() {
+  const lines = [
+    "# Etsy Growth Agent 真实浏览器业务流验收矩阵",
+    "",
+    `生成时间：${now}`,
+    "",
+    "说明：该矩阵用于真实 Chrome/Etsy/1688/Google Trends 环境验收。脚本本身不访问外网，也不把静态检查伪装成真机通过。",
+    "",
+    "## 验收项",
+    "",
+  ];
+  acceptanceMatrix.forEach((item) => {
+    lines.push(`### ${item.id} ${item.area}`);
+    lines.push(`- 起始页面：${item.startPage}`);
+    lines.push(`- 触发入口：${item.trigger}`);
+    lines.push("- 必须留存证据：");
+    item.requiredEvidence.forEach((entry) => lines.push(`  - [ ] ${entry}`));
+    lines.push("- 通过标准：");
+    item.passCriteria.forEach((entry) => lines.push(`  - [ ] ${entry}`));
+    lines.push("- 结论：未执行 / 通过 / 阻断");
+    lines.push("- 阻断说明：");
+    lines.push("");
+  });
+  return lines.join("\n");
+}
+
+function renderJson() {
+  return JSON.stringify({
+    generatedAt: now,
+    status: "not_run",
+    note: "真实浏览器验收矩阵；需要人工或 Chrome 实机执行后填写 results。",
+    matrix: acceptanceMatrix.map((item) => ({ ...item, result: "not_run", blocker: "" })),
+  }, null, 2);
+}
+
+mkdirSync(outDir, { recursive: true });
+const mdPath = path.join(outDir, "real_browser_acceptance_matrix.md");
+const jsonPath = path.join(outDir, "real_browser_acceptance_matrix.json");
+writeFileSync(mdPath, renderMarkdown(), "utf8");
+writeFileSync(jsonPath, renderJson(), "utf8");
+
+assert.equal(acceptanceMatrix.length, 6);
+assert.ok(acceptanceMatrix.every((item) => item.requiredEvidence.length >= 4), "each real-browser item must require concrete evidence");
+assert.ok(acceptanceMatrix.some((item) => item.requiredEvidence.join(" ").includes("artifact_manifest")), "report archive acceptance must cover artifact manifest");
+assert.ok(acceptanceMatrix.some((item) => item.requiredEvidence.join(" ").includes("分页采集")), "Etsy shop acceptance must cover pagination collection");
+
+console.log(JSON.stringify({ ok: true, mdPath, jsonPath, items: acceptanceMatrix.length }, null, 2));

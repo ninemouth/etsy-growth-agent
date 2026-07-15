@@ -5,6 +5,7 @@ import { tools, hasValidEtsySearchEvidence, hasValidGoogleTrendsEvidence } from 
 import { isWorkflowCancellationRequested, isWorkflowGenerationCurrent } from './workflowRuntime.js';
 import { putDataUrlArtifact } from './artifactStore.js';
 import { captureFullPageScreenshot } from './debuggerCapture.js';
+import { formatBrowserAutomationCapabilityPrompt } from './browserAutomationCapabilities.js';
 
 const globalSessionCache = {};
 const CHECKPOINT_PREFIX = "etsyAgentCheckpoint:";
@@ -3198,6 +3199,14 @@ export async function runAgentLoop({ tabId, skillId, skillMarkdown, userInstruct
 ## 可用工具
 ${availableTools}
 
+## 浏览器自动化能力契约
+${formatBrowserAutomationCapabilityPrompt()}
+
+页面动态加载时必须相信工具返回的 loadState、evidenceOk、pageEvidence、evidence_quality、blockingGaps 和 screenshotCaptureMode：
+- evidenceOk=false、Google Trends 壳页、验证码、登录墙或 blockingGaps 不得被写成已验证增长结论。
+- 工具能力契约说明可以做什么，也说明不能做什么；尤其 Etsy 个人卖家 API 不能读取竞品后台、竞品订单、竞品转化率或平台大盘。
+- 需要翻页、排序、筛选、截图或详情页时，优先使用上方能力契约对应工具；不能用模型想象替代工具证据。
+
 ## 工具调用格式
 当需要调用工具时，输出：
 \`\`\`json
@@ -3549,6 +3558,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         type: "text",
         result: assistantContent,
         steps: step,
+        toolHistory,
       };
     }
 
@@ -3623,6 +3633,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         type: "final",
         result: parsed.output,
         steps: step,
+        toolHistory,
       };
     }
 
@@ -4198,6 +4209,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       type: "json",
       result: parsed,
       steps: step,
+      toolHistory,
     };
   }
 

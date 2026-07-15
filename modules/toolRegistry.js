@@ -6,6 +6,7 @@ import { getArtifactDataUrl, pruneArtifacts, putDataUrlArtifact } from './artifa
 import { closeOwnedTab, createOwnedTab, createOwnedTabCallback } from './browserSessionManager.js';
 import { appendWorkflowEvent, isWorkflowCancellationRequested } from './workflowRuntime.js';
 import { captureFullPageScreenshot } from './debuggerCapture.js';
+import { summarizeBrowserAutomationCapabilities } from './browserAutomationCapabilities.js';
 
 const preparedImageCache = new Map();
 const ETSY_SHOP_CRAWL_SCREENSHOT_NAMESPACE = "etsy-shop-crawl-screenshot";
@@ -1391,6 +1392,12 @@ async function visualClickImageSearchSubmit(tabId) {
 }
 
 export const tools = {
+  get_browser_capabilities: async () => ({
+    ok: true,
+    capabilities: summarizeBrowserAutomationCapabilities(),
+    apiBoundary: "Etsy personal seller API only covers the authorized seller account; competitor and platform conclusions require public page/search evidence.",
+  }),
+
   read_current_page: async (args = {}) => {
     const tab = await getSourceOrCurrentTab(args.__sourceTabId);
     if (!tab) throw new Error("No active tab found");

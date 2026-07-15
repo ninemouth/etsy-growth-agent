@@ -1901,6 +1901,16 @@ function buildReportPrintHtml(rep, bodyHtml, dateStr) {
   const safeTitle = escapeHtml(rep?.title || "Etsy Growth Report");
   const safeTag = escapeHtml(rep?.tag || "AI 决策报告");
   const safeDate = escapeHtml(rep?.date || dateStr);
+  const quality = rep?.evidenceQuality || rep?.raw?.evidence_quality || {};
+  const evidenceSummaryHtml = quality.summary ? `
+    <div class="section-divider">
+      <h2>证据包摘要</h2>
+      <p><strong>证据等级：</strong>${escapeHtml(quality.grade || "未知")}</p>
+      <p>${escapeHtml(quality.summary || "")}</p>
+      <p><strong>API 边界：</strong>${escapeHtml(quality.personal_api_boundary || "Etsy 个人卖家 API 仅覆盖授权自营账号；竞品和平台趋势必须来自公开页面与搜索证据。")}</p>
+      <p><strong>来源类型：</strong>${escapeHtml(Array.isArray(quality.source_types) ? quality.source_types.join(", ") : "")}</p>
+    </div>
+  ` : "";
   return `<!DOCTYPE html>
 <html lang="zh-CN" dir="ltr">
 <head>
@@ -1983,6 +1993,7 @@ function buildReportPrintHtml(rep, bodyHtml, dateStr) {
     <h1>${safeTitle}</h1>
     <p style="color:#64748b;font-size:12px;margin-bottom:20px;">${safeTag} · ${safeDate}</p>
     ${bodyHtml}
+    ${evidenceSummaryHtml}
   </div>
 </body>
 </html>`;
@@ -3458,7 +3469,17 @@ function renderReportsList(monitorReports = [], savedResults = []) {
       text = typeof r.result === "string" ? r.result : JSON.stringify(r.result, null, 2);
     }
     
-    list.push({ id: r.id || `res_${Math.random()}`, source: "saved", title: name, date: new Date(r.timestamp || Date.now()).toLocaleDateString(), content: text, tag: "AI决策" });
+    list.push({
+      id: r.id || `res_${Math.random()}`,
+      source: "saved",
+      title: name,
+      date: new Date(r.createdAt || r.timestamp || Date.now()).toLocaleDateString(),
+      content: text,
+      tag: "AI决策",
+      raw: r,
+      evidenceQuality: r.evidence_quality || r.evidenceQuality || null,
+      hasEvidenceBundle: Boolean(r.evidence_bundle || r.evidenceBundle),
+    });
   });
 
   if (list.length === 0) {
@@ -3479,6 +3500,7 @@ function renderReportsList(monitorReports = [], savedResults = []) {
       <div class="report-item-actions">
         <button class="btn btn-outline btn-xs report-copy-btn" data-report-index="${index}">复制</button>
         <button class="btn btn-outline btn-xs report-pdf-btn" data-report-index="${index}">PDF</button>
+        ${rep.hasEvidenceBundle ? `<button class="btn btn-outline btn-xs report-evidence-btn" data-report-index="${index}">证据包</button>` : ""}
         <button class="btn btn-danger btn-xs report-delete-btn" data-report-index="${index}">删除</button>
       </div>
     </div>
@@ -3496,15 +3518,23 @@ function renderReportsList(monitorReports = [], savedResults = []) {
         <div class="report-item-actions">
           <button class="btn btn-outline btn-xs report-copy-current">复制</button>
           <button class="btn btn-outline btn-xs report-pdf-current">下载 PDF</button>
+          ${rep.hasEvidenceBundle ? `<button class="btn btn-outline btn-xs report-evidence-current">下载证据包</button>` : ""}
           <button class="btn btn-danger btn-xs report-delete-current">删除</button>
         </div>
       </div>
+      ${rep.evidenceQuality ? `
+        <div class="report-evidence-summary">
+          证据等级：${escapeHtml(rep.evidenceQuality.grade || "未知")} ·
+          ${escapeHtml(rep.evidenceQuality.summary || "")}
+        </div>
+      ` : ""}
       <div class="md-report">
         ${renderSafeMarkdown(rep.content)}
       </div>
     `;
     viewer.querySelector(".report-copy-current")?.addEventListener("click", () => copyReportContent(rep));
     viewer.querySelector(".report-pdf-current")?.addEventListener("click", () => downloadReportPdf(rep));
+    viewer.querySelector(".report-evidence-current")?.addEventListener("click", () => downloadEvidenceBundle(rep));
     viewer.querySelector(".report-delete-current")?.addEventListener("click", () => deleteReportEntry(rep));
   };
 
@@ -3521,6 +3551,12 @@ function renderReportsList(monitorReports = [], savedResults = []) {
     btn.addEventListener("click", (event) => {
       event.stopPropagation();
       downloadReportPdf(list[Number(btn.dataset.reportIndex)]);
+    });
+  });
+  container.querySelectorAll(".report-evidence-btn").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      downloadEvidenceBundle(list[Number(btn.dataset.reportIndex)]);
     });
   });
   container.querySelectorAll(".report-delete-btn").forEach((btn) => {
@@ -3571,6 +3607,25 @@ async function deleteReportEntry(rep) {
   }
   await refreshAllData();
   document.querySelector('.nav-menu button[data-tab="reports"]')?.click();
+}
+
+async function downloadEvidenceBundle(rep) {
+  if (!rep || rep.source === "monitor") return;
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "EXPORT_EVIDENCE_BUNDLE", id: rep.id });
+    if (!response?.ok) throw new Error(response?.error || "导出证据包失败");
+    const blob = new Blob([JSON.stringify(response.data, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `etsy-evidence-bundle-${rep.id || Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (err) {
+    alert(`证据包导出失败：${err.message}`);
+  }
 }
 
 function downloadReportPdf(rep) {
