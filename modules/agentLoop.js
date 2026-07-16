@@ -2002,7 +2002,9 @@ export function sanitizeFinalReportForDelivery(parsed) {
   };
 }
 
-const ETSY_API_ASSUMPTION_RE = /API|Seller API|etsy_api|Sessions?|session|流量|会话|访问量|订单|交易|扣费|履约成本|第三方海外仓|Etsy 自发货|conversion|traffic|orders?|fulfillment/i;
+const ETSY_API_ASSUMPTION_RE = /API|Seller API|etsy_api|Sessions?|session|流量|会话|访问量|订单|交易|扣费|履约|履约成本|物流|Shipping Profile|shipping|fulfillment|第三方海外仓|Etsy 自发货|conversion|traffic|orders?/i;
+const SHOP_OPTIMIZER_API_CLAIM_RE = /API|Seller API|etsy_api|Sessions?|session|流量|会话|访问量|订单|交易|扣费|履约|履约成本|物流|Shipping Profile|shipping|fulfillment|第三方海外仓|Etsy 自发货|conversion|traffic|orders?/i;
+const SHOP_OPTIMIZER_API_ASSUMPTION_TOPIC_RE = /API|Seller|流量|会话|订单|交易|履约|物流|Shipping|fulfillment|第三方海外仓|Etsy 自发货|未配置|未取得|未获得|待验证|复核/i;
 const USER_REQUESTS_API_ASSUMPTION_DOWNGRADE_RE = /忽略\s*(?:api|API)|跳过\s*(?:api|API)|未配置\s*(?:api|API)|没有\s*(?:api|API)|无\s*(?:api|API)|不用\s*(?:api|API)|按\s*(?:assumption|假设).{0,12}(?:处理|降级)|(?:api|API).{0,12}(?:assumption|假设|降级|跳过|忽略|未配置|没有|无)/i;
 
 function cloneReport(parsed) {
@@ -2025,6 +2027,13 @@ function buildAssumptionLedgerEntry({ sourceRef, observedValue, usedFor, limitat
     confidence: "low",
     limitation,
   };
+}
+
+function getReportItemClaimText(item = {}) {
+  if (!item || typeof item !== "object") return "";
+  const clone = { ...item };
+  delete clone.evidence_ledger;
+  return JSON.stringify(clone);
 }
 
 function buildPageDomLedgerEntry({ sourceRef, observedValue }) {
@@ -2405,8 +2414,17 @@ export function autoRepairFinalReportForDelivery(parsed, {
       itemChanged = true;
     });
 
-    const itemText = JSON.stringify(item);
-    if (isEtsyBusinessSkill(skillId) && ETSY_API_ASSUMPTION_RE.test(itemText) && !hasEtsyApiEvidence && !hasAssumptionFallback(ledger, ETSY_API_ASSUMPTION_RE)) {
+    const itemClaimText = getReportItemClaimText(item);
+    const shopOptimizerUsesApiBoundary = isShopOptimizerOnly(skillId) && SHOP_OPTIMIZER_API_CLAIM_RE.test(itemClaimText);
+    if (shopOptimizerUsesApiBoundary && !hasEtsyApiEvidence && !hasAssumptionFallback(ledger, SHOP_OPTIMIZER_API_ASSUMPTION_TOPIC_RE)) {
+      ledger.push(buildAssumptionLedgerEntry({
+        sourceRef: "Etsy personal API not configured in this run",
+        observedValue: "本轮未配置或未取得 Etsy 个人访问 API，无法验证真实流量、Sessions、订单、转化、履约成本、物流配置、Etsy 自发货或第三方海外仓数据。",
+        usedFor: "将店铺优化方案中的 API/流量/订单/履约/物流相关判断降级为待验证假设，只作为后续授权 Etsy 个人 API 后复核的检查项。",
+        limitation: "未配置/未取得 Etsy 个人 API；不能作为已验证后台数据、真实订单、真实流量或履约成本结论，需店主授权 API 或后台截图后复核。",
+      }));
+      itemChanged = true;
+    } else if (isEtsyBusinessSkill(skillId) && ETSY_API_ASSUMPTION_RE.test(itemClaimText) && !hasEtsyApiEvidence && !hasAssumptionFallback(ledger, ETSY_API_ASSUMPTION_RE)) {
       ledger.push(buildAssumptionLedgerEntry({
         sourceRef: "Etsy personal API access not available in this run",
         observedValue: "本轮未取得 Etsy 个人访问 API 的真实 Sessions、订单、转化或履约成本数据。",
@@ -2971,13 +2989,14 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
       });
 
       const itemText = JSON.stringify(item);
+      const itemClaimText = getReportItemClaimText(item);
       if (!item.stage_fit) {
         errors.push(`店铺优化方案第 ${idx + 1} 项 (${title}) 缺少 stage_fit，必须说明该方案为什么适合当前店铺阶段（新店冷启动/成长店/成熟店/问题修复）。`);
       }
       if (!item.buyer_scenario) {
         errors.push(`店铺优化方案第 ${idx + 1} 项 (${title}) 缺少 buyer_scenario，必须说明对应的欧美买家场景或购买人群。`);
       }
-      if (/API|Seller API|etsy_api|Sessions|session|订单|扣费|交易|履约成本|第三方海外仓|Etsy 自发货/i.test(itemText) && !hasLedgerType(ledgerEntries, "etsy_api") && !hasAssumptionFallback(ledgerEntries, /API|Seller|流量|订单|履约|第三方海外仓|Etsy 自发货/i)) {
+      if (SHOP_OPTIMIZER_API_CLAIM_RE.test(itemClaimText) && !hasLedgerType(ledgerEntries, "etsy_api") && !hasAssumptionFallback(ledgerEntries, SHOP_OPTIMIZER_API_ASSUMPTION_TOPIC_RE)) {
         errors.push(`店铺优化方案第 ${idx + 1} 项 (${title}) 使用了 API/流量/订单/履约类结论，但 evidence_ledger 没有 etsy_api 证据或 assumption 降级说明。`);
       }
       if (/Google|google/i.test(itemText) && !hasLedgerType(ledgerEntries, "google_search") && !hasAssumptionFallback(ledgerEntries, /Google/i)) {

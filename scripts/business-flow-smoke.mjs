@@ -1438,6 +1438,42 @@ assert.deepEqual(
   [],
   "auto-repaired shop optimizer API assumptions should pass validation without critic redo"
 );
+const shopOptimizerReportWithPrivateMetricPlan = globalThis.structuredClone(shopOptimizerReportWithEtsyEvidence);
+shopOptimizerReportWithPrivateMetricPlan.output.data[0].title = "清退低相关 SKU，重建垂直婚礼场景专营店";
+shopOptimizerReportWithPrivateMetricPlan.output.data[0].direction = "先清退低相关 SKU，并在后续接入 Etsy API 后复核流量、订单、履约、Shipping Profile 和第三方海外仓成本。";
+shopOptimizerReportWithPrivateMetricPlan.output.data[0].evidence = "当前只读取了公开店铺页、截图、Etsy Search、Google Search 与 Google Trends；API/订单/履约数据未配置。";
+shopOptimizerReportWithPrivateMetricPlan.output.data[0].first_actions = [
+  "按公开店铺页和竞品样本筛出低相关 SKU",
+  "将 API/流量/订单/履约指标列为待店主授权后复核",
+  "先完善 Shipping Profile 的公开说明，避免承诺未验证的物流时效",
+];
+shopOptimizerReportWithPrivateMetricPlan.output.data[0].evidence_ledger = shopOptimizerReportWithPrivateMetricPlan.output.data[0].evidence_ledger
+  .filter((entry) => entry.source_type !== "etsy_api" && entry.source_type !== "assumption");
+assert.notDeepEqual(
+  validateReport(shopOptimizerReportWithPrivateMetricPlan, "", "skills/etsy_global_shop_optimizer.skill.md", validShopEvidenceHistory, meaningfulPageContext),
+  [],
+  "shop optimizer private API/traffic/order/fulfillment plans should fail before explicit assumption downgrade when API is not configured"
+);
+const repairedShopOptimizerPrivateMetricPlan = autoRepairFinalReportForDelivery(shopOptimizerReportWithPrivateMetricPlan, {
+  skillId: "skills/etsy_global_shop_optimizer.skill.md",
+  toolHistory: validShopEvidenceHistory,
+  pageContext: meaningfulPageContext,
+});
+assert.equal(repairedShopOptimizerPrivateMetricPlan.changed, true, "shop optimizer private API/traffic/order/fulfillment plans should be downgraded when Etsy API is absent");
+assert.ok(
+  repairedShopOptimizerPrivateMetricPlan.parsed.output.data[0].evidence_ledger.some((entry) =>
+    entry.source_type === "assumption"
+    && /API/.test(`${entry.source_ref || ""} ${entry.observed_value || ""} ${entry.used_for || ""} ${entry.limitation || ""}`)
+    && /流量|订单|履约/.test(`${entry.observed_value || ""} ${entry.used_for || ""} ${entry.limitation || ""}`)
+    && /未配置|未取得|待验证/.test(`${entry.observed_value || ""} ${entry.used_for || ""} ${entry.limitation || ""}`)
+  ),
+  "auto-repair should add a validator-compatible assumption ledger for missing Etsy personal API evidence"
+);
+assert.deepEqual(
+  validateReport(repairedShopOptimizerPrivateMetricPlan.parsed, "", "skills/etsy_global_shop_optimizer.skill.md", validShopEvidenceHistory, meaningfulPageContext),
+  [],
+  "missing Etsy personal API should not block shop optimizer delivery after explicit assumption downgrade"
+);
 const shopOptimizerReportWithSourceTypeAliases = JSON.parse(JSON.stringify(shopOptimizerReportWithEtsyEvidence));
 shopOptimizerReportWithSourceTypeAliases.output.data[0].evidence_ledger[0].source_type = "current_page_dom";
 shopOptimizerReportWithSourceTypeAliases.output.data[0].evidence_ledger[1].source_type = "current_page_screenshot";
