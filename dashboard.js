@@ -25,6 +25,22 @@ let workflowPanY = 0;
 let workflowCanvasEventsBound = false;
 let workflowPipPosition = null;
 
+const CURRENCY_RATES_STORAGE_KEY = "currencyRates";
+const DEFAULT_CURRENCY_RATES = Object.freeze({
+  usdToCny: 7.25,
+  eurToUsd: 1.09,
+  shippingPerKgUsd: 5.5,
+  parcelFeeUsd: 2,
+  handlingFeeCny: 2,
+  platformFeeRate: 0.12,
+  customsThresholdUsd: 220,
+  customsDutyRate: 0.15,
+  fxLossRate: 0.02,
+  source: "default_assumption",
+  updated_at: "",
+});
+const MANUAL_FUNNEL_STORAGE_KEY = "manualFunnelSnapshot";
+
 let growthRuntimeState = {
   shops: [],
   activeShop: null,
@@ -34,6 +50,7 @@ let growthRuntimeState = {
   monitorTasks: [],
   experiments: [],
   skuAnalyticsSnapshot: null,
+  manualFunnelSnapshot: null,
   storeSnapshotCache: null,
   workflowTaskState: {},
   workflowTasks: [],
@@ -43,6 +60,97 @@ let growthRuntimeState = {
   skuRows: [],
   opportunities: [],
 };
+
+function finiteNumber(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function normalizeCurrencyRates(raw = {}) {
+  const rates = { ...DEFAULT_CURRENCY_RATES, ...(raw || {}) };
+  return {
+    ...rates,
+    usdToCny: Math.max(0.01, finiteNumber(rates.usdToCny, DEFAULT_CURRENCY_RATES.usdToCny)),
+    eurToUsd: Math.max(0.01, finiteNumber(rates.eurToUsd, DEFAULT_CURRENCY_RATES.eurToUsd)),
+    shippingPerKgUsd: Math.max(0, finiteNumber(rates.shippingPerKgUsd, DEFAULT_CURRENCY_RATES.shippingPerKgUsd)),
+    parcelFeeUsd: Math.max(0, finiteNumber(rates.parcelFeeUsd, DEFAULT_CURRENCY_RATES.parcelFeeUsd)),
+    handlingFeeCny: Math.max(0, finiteNumber(rates.handlingFeeCny, DEFAULT_CURRENCY_RATES.handlingFeeCny)),
+    platformFeeRate: Math.max(0, finiteNumber(rates.platformFeeRate, DEFAULT_CURRENCY_RATES.platformFeeRate)),
+    customsThresholdUsd: Math.max(0, finiteNumber(rates.customsThresholdUsd, DEFAULT_CURRENCY_RATES.customsThresholdUsd)),
+    customsDutyRate: Math.max(0, finiteNumber(rates.customsDutyRate, DEFAULT_CURRENCY_RATES.customsDutyRate)),
+    fxLossRate: Math.max(0, finiteNumber(rates.fxLossRate, DEFAULT_CURRENCY_RATES.fxLossRate)),
+  };
+}
+
+async function loadCurrencyRates() {
+  const data = await new Promise((resolve) => chrome.storage.local.get([CURRENCY_RATES_STORAGE_KEY], resolve));
+  return normalizeCurrencyRates(data?.[CURRENCY_RATES_STORAGE_KEY]);
+}
+
+async function saveCurrencyRates(rates) {
+  const normalized = normalizeCurrencyRates({
+    ...(await loadCurrencyRates()),
+    ...rates,
+    source: rates.source || "manual",
+    updated_at: rates.updated_at || new Date().toISOString(),
+  });
+  await new Promise((resolve) => chrome.storage.local.set({ [CURRENCY_RATES_STORAGE_KEY]: normalized }, resolve));
+  return normalized;
+}
+
+async function refreshCurrencyRatesFromPublicApi() {
+  const current = await loadCurrencyRates();
+  const response = await fetch("https://open.er-api.com/v6/latest/USD");
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const payload = await response.json();
+  const usdToCny = Number(payload?.rates?.CNY);
+  const usdToEur = Number(payload?.rates?.EUR);
+  if (!Number.isFinite(usdToCny) || usdToCny <= 0) throw new Error("USD/CNY 汇率无效");
+  return await saveCurrencyRates({
+    ...current,
+    usdToCny,
+    eurToUsd: Number.isFinite(usdToEur) && usdToEur > 0 ? 1 / usdToEur : current.eurToUsd,
+    source: "open.er-api.com",
+    updated_at: new Date().toISOString(),
+  });
+}
+
+function calculateQuickArbitrage({ costCny = 0, weightKg = 0, priceUsd = 0, rates = {} } = {}) {
+  const normalized = normalizeCurrencyRates(rates);
+  const safeCostCny = Math.max(0, finiteNumber(costCny, 0));
+  const safeWeightKg = Math.max(0, finiteNumber(weightKg, 0));
+  const safePriceUsd = Math.max(0, finiteNumber(priceUsd, 0));
+  const costUsd = (safeCostCny / normalized.usdToCny) * (1 + normalized.fxLossRate);
+  const handlingUsd = (normalized.handlingFeeCny / normalized.usdToCny) * (1 + normalized.fxLossRate);
+  const shippingUsd = (safeWeightKg * normalized.shippingPerKgUsd) + normalized.parcelFeeUsd + handlingUsd;
+  const commissionUsd = safePriceUsd * normalized.platformFeeRate;
+  const customsUsd = safePriceUsd > normalized.customsThresholdUsd
+    ? (safePriceUsd - normalized.customsThresholdUsd) * normalized.customsDutyRate
+    : 0;
+  const netProfitUsd = safePriceUsd - costUsd - shippingUsd - commissionUsd - customsUsd;
+  const marginRate = safePriceUsd > 0 ? (netProfitUsd / safePriceUsd) * 100 : 0;
+  return {
+    rates: normalized,
+    costCny: safeCostCny,
+    weightKg: safeWeightKg,
+    priceUsd: safePriceUsd,
+    costUsd,
+    handlingUsd,
+    shippingUsd,
+    commissionUsd,
+    customsUsd,
+    netProfitUsd,
+    marginRate,
+  };
+}
+
+function formatUsd(value) {
+  return `$${Number(value || 0).toFixed(2)}`;
+}
+
+function formatLocalTime(value) {
+  return value ? new Date(value).toLocaleString() : "未同步";
+}
 
 function isStoreApiSurfaceActive() {
   return Boolean(
@@ -229,6 +337,7 @@ function initTabs() {
       if (tabId === "workflow") {
         renderSmartWorkflow();
       } else if (tabId === "sku") {
+        renderManualFunnelForm();
         renderSkuWorkbench();
       } else if (tabId === "opportunities") {
         renderOpportunityCenter();
@@ -265,6 +374,24 @@ function bindEvents() {
   const syncSkuApiBtn = document.getElementById("sync-sku-api-btn");
   if (syncSkuApiBtn) {
     syncSkuApiBtn.addEventListener("click", syncSkuAnalyticsFromApi);
+  }
+
+  const manualFunnelToggleBtn = document.getElementById("manual-funnel-toggle-btn");
+  if (manualFunnelToggleBtn) {
+    manualFunnelToggleBtn.addEventListener("click", () => {
+      document.getElementById("manual-funnel-card")?.classList.toggle("hidden");
+      renderManualFunnelForm();
+    });
+  }
+
+  const manualFunnelSaveBtn = document.getElementById("manual-funnel-save-btn");
+  if (manualFunnelSaveBtn) {
+    manualFunnelSaveBtn.addEventListener("click", saveManualFunnelSnapshotFromForm);
+  }
+
+  const manualFunnelClearBtn = document.getElementById("manual-funnel-clear-btn");
+  if (manualFunnelClearBtn) {
+    manualFunnelClearBtn.addEventListener("click", clearManualFunnelSnapshot);
   }
 
   const goToSkuBtn = document.getElementById("go-to-sku-workbench");
@@ -311,38 +438,33 @@ function bindEvents() {
   });
 
   // Quick Arbitrage Calculator Logic
-  document.getElementById("quick-calc-btn").addEventListener("click", () => {
+  document.getElementById("quick-calc-btn").addEventListener("click", async () => {
     const costCny = parseFloat(document.getElementById("calc-cost").value) || 0;
     const weight = parseFloat(document.getElementById("calc-weight").value) || 0;
-    const priceRub = parseFloat(document.getElementById("calc-price").value) || 0;
-
-    const exchangeRate = 12.5; 
-    const costRub = costCny * exchangeRate;
-    const logisticsRub = (weight * 5.5 * 90) + (2.0 * 90) + (2 / 12.5 * 90);
-    const commissionRub = priceRub * 0.12;
-
-    let customsRub = 0;
-    if (priceRub > 20000) {
-      customsRub = (priceRub - 20000) * 0.15;
-    }
-
-    const netProfitRub = priceRub - costRub - logisticsRub - commissionRub - customsRub;
-    const marginRate = (netProfitRub / priceRub) * 100;
+    const priceUsd = parseFloat(document.getElementById("calc-price").value) || 0;
+    const result = calculateQuickArbitrage({
+      costCny,
+      weightKg: weight,
+      priceUsd,
+      rates: await loadCurrencyRates(),
+    });
+    const rateLabel = `USD/CNY ${result.rates.usdToCny.toFixed(4)}${result.rates.fxLossRate ? `，损耗 ${(result.rates.fxLossRate * 100).toFixed(1)}%` : ""}`;
 
     const resultEl = document.getElementById("calc-result");
     resultEl.innerHTML = `
       <div style="background:var(--bg3); border-radius:6px; padding:10px; border:1px solid var(--border)">
-        <div style="display:flex; justify-content:space-between"><span>货源汇率换算:</span><span>¥${costCny} ➔ ${costRub.toFixed(0)} $</span></div>
-        <div style="display:flex; justify-content:space-between"><span>预估Etsy 自发货运费:</span><span>${logisticsRub.toFixed(0)} $</span></div>
-        <div style="display:flex; justify-content:space-between"><span>Etsy 类目佣金 (12%):</span><span>${commissionRub.toFixed(0)} $</span></div>
-        ${customsRub > 0 ? `<div style="display:flex; justify-content:space-between; color:var(--danger)"><span>超出额关税 (15%):</span><span>${customsRub.toFixed(0)} $</span></div>` : ''}
+        <div style="display:flex; justify-content:space-between; gap:8px"><span>汇率参数:</span><span>${escapeHtml(rateLabel)}</span></div>
+        <div style="display:flex; justify-content:space-between; gap:8px"><span>采购成本:</span><span>¥${result.costCny.toFixed(2)} ➔ ${formatUsd(result.costUsd)}</span></div>
+        <div style="display:flex; justify-content:space-between; gap:8px"><span>预估 Etsy 自发货运费:</span><span>${formatUsd(result.shippingUsd)}</span></div>
+        <div style="display:flex; justify-content:space-between; gap:8px"><span>Etsy 平台扣款 (${(result.rates.platformFeeRate * 100).toFixed(1)}%):</span><span>${formatUsd(result.commissionUsd)}</span></div>
+        ${result.customsUsd > 0 ? `<div style="display:flex; justify-content:space-between; gap:8px; color:var(--danger)"><span>超出额关税 (${(result.rates.customsDutyRate * 100).toFixed(1)}%):</span><span>${formatUsd(result.customsUsd)}</span></div>` : ''}
         <div style="border-top:1px solid var(--border); margin-top:8px; padding-top:6px; display:flex; justify-content:space-between; font-weight:700">
           <span>预估纯利润:</span>
-          <span style="color:${netProfitRub > 0 ? '#10b981' : '#ef4444'}">${netProfitRub.toFixed(0)} $</span>
+          <span style="color:${result.netProfitUsd > 0 ? '#10b981' : '#ef4444'}">${formatUsd(result.netProfitUsd)}</span>
         </div>
         <div style="display:flex; justify-content:space-between; font-weight:700">
           <span>预估利润率:</span>
-          <span style="color:${marginRate > 20 ? '#10b981' : '#ef4444'}">${marginRate.toFixed(1)}%</span>
+          <span style="color:${result.marginRate > 20 ? '#10b981' : '#ef4444'}">${result.marginRate.toFixed(1)}%</span>
         </div>
       </div>
     `;
@@ -451,6 +573,21 @@ function bindEvents() {
   document.getElementById("settings-drawer-close")?.addEventListener("click", () => {
     document.getElementById("settings-drawer")?.classList.add("hidden");
   });
+  document.getElementById("settings-save-currency")?.addEventListener("click", async () => {
+    const rates = await saveCurrencyRates(readCurrencySettingsInputs());
+    renderCurrencySettings(rates, "已保存汇率与套利参数。");
+  });
+  document.getElementById("settings-refresh-currency")?.addEventListener("click", async () => {
+    const statusEl = document.getElementById("settings-currency-status");
+    if (statusEl) statusEl.textContent = "正在同步公开 USD/CNY 汇率...";
+    try {
+      const rates = await refreshCurrencyRatesFromPublicApi();
+      renderCurrencySettings(rates, "已同步公开汇率，并保留你的运费/损耗参数。");
+    } catch (err) {
+      const rates = await loadCurrencyRates();
+      renderCurrencySettings(rates, `同步失败，继续使用本地参数：${err.message}`);
+    }
+  });
 }
 
 // ── Refresh / Load Storage Data ──
@@ -467,6 +604,7 @@ async function refreshAllData() {
       "growthCases",
       "growthActionRuns",
       "etsySkuAnalyticsSnapshot",
+      MANUAL_FUNNEL_STORAGE_KEY,
       "etsyStoreSnapshotCache",
       "etsyClientId",
       "etsyApiKey",
@@ -596,7 +734,10 @@ async function refreshAllData() {
   const filteredReports = filterByActiveShop(data.monitorReports || []);
   const filteredExperiments = filterByActiveShop(data.growthExperiments || []);
   const activeShop = shops.find(s => s.id === activeId) || null;
-  const skuRows = buildSkuRows(filteredTracked, filteredSavedResults, filteredEvents, activeShop, data.etsySkuAnalyticsSnapshot || null);
+  const manualFunnelSnapshot = isSnapshotForActiveShop(data[MANUAL_FUNNEL_STORAGE_KEY], activeId)
+    ? data[MANUAL_FUNNEL_STORAGE_KEY]
+    : null;
+  const skuRows = buildSkuRows(filteredTracked, filteredSavedResults, filteredEvents, activeShop, data.etsySkuAnalyticsSnapshot || null, manualFunnelSnapshot);
   const opportunities = buildOpportunityCards(skuRows, filteredEvents, filteredSavedResults);
   const workflowTasks = buildWorkflowTasks({
     skuRows,
@@ -607,6 +748,7 @@ async function refreshAllData() {
     taskState: data.growthWorkflowTaskState || {},
     activeShop,
     skuAnalyticsSnapshot: data.etsySkuAnalyticsSnapshot || null,
+    manualFunnelSnapshot,
   });
 
   growthRuntimeState = {
@@ -618,6 +760,7 @@ async function refreshAllData() {
     monitorTasks: filteredTasks,
     experiments: filteredExperiments,
     skuAnalyticsSnapshot: data.etsySkuAnalyticsSnapshot || null,
+    manualFunnelSnapshot,
     storeSnapshotCache: data.etsyStoreSnapshotCache || null,
     workflowTaskState: data.growthWorkflowTaskState || {},
     workflowTasks,
@@ -630,6 +773,7 @@ async function refreshAllData() {
       skuRows,
       activeShop,
       skuAnalyticsSnapshot: data.etsySkuAnalyticsSnapshot || null,
+      manualFunnelSnapshot,
       storeSnapshotCache: data.etsyStoreSnapshotCache || null,
     }),
     growthCases: mergeGrowthCasesWithRoots((data.growthCases || []).map(normalizeGrowthCaseRecord), workflowTasks, filteredSavedResults, activeShop, filteredEvents),
@@ -671,10 +815,138 @@ function getRiskBadgeClass(kind) {
   return "danger";
 }
 
+function parseCsvRows(text = "") {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let inQuotes = false;
+  const input = String(text || "").replace(/^\uFEFF/, "");
+  for (let i = 0; i < input.length; i++) {
+    const char = input[i];
+    const next = input[i + 1];
+    if (char === '"' && inQuotes && next === '"') {
+      cell += '"';
+      i++;
+    } else if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === "," && !inQuotes) {
+      row.push(cell.trim());
+      cell = "";
+    } else if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && next === "\n") i++;
+      row.push(cell.trim());
+      if (row.some(Boolean)) rows.push(row);
+      row = [];
+      cell = "";
+    } else {
+      cell += char;
+    }
+  }
+  row.push(cell.trim());
+  if (row.some(Boolean)) rows.push(row);
+  return rows;
+}
+
+function normalizeCsvHeader(value = "") {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_\-()/%]+/g, "");
+}
+
+function findCsvColumn(headers = [], patterns = []) {
+  return headers.findIndex((header) => patterns.some((pattern) => pattern.test(header)));
+}
+
+function parsePercentOrNumber(value) {
+  const number = Number(String(value ?? "").replace(/[,%]/g, "").trim());
+  return Number.isFinite(number) ? number : 0;
+}
+
+function parseSearchAnalyticsCsv(text = "") {
+  const rows = parseCsvRows(text);
+  if (rows.length < 2) return [];
+  const headers = rows[0].map(normalizeCsvHeader);
+  const skuIdx = findCsvColumn(headers, [/^sku$/, /listingid/, /listing/, /itemid/, /商品/, /title/, /name/]);
+  const titleIdx = findCsvColumn(headers, [/title/, /listingtitle/, /商品/, /name/]);
+  const viewsIdx = findCsvColumn(headers, [/views?/, /hits?/, /浏览/, /viewcount/]);
+  const sessionsIdx = findCsvColumn(headers, [/sessions?/, /visits?/, /访问/, /访客/, /会话/]);
+  const ordersIdx = findCsvColumn(headers, [/orders?/, /orderedunits?/, /sales?/, /订单/, /销量/]);
+  const cartRateIdx = findCsvColumn(headers, [/cartrate/, /addtocart/, /conv.*cart/, /加购/]);
+  const revenueIdx = findCsvColumn(headers, [/revenue/, /salesamount/, /销售额/, /收入/]);
+
+  return rows.slice(1).map((row, index) => {
+    const title = String(row[titleIdx] || row[skuIdx] || `Search Analytics 行 ${index + 1}`).trim();
+    const sku = String(row[skuIdx] || title || `manual-${index + 1}`).trim();
+    const views = parsePercentOrNumber(row[viewsIdx]);
+    const sessions = parsePercentOrNumber(row[sessionsIdx]);
+    const orderedUnits = parsePercentOrNumber(row[ordersIdx]);
+    const cartRate = parsePercentOrNumber(row[cartRateIdx]);
+    const revenue = parsePercentOrNumber(row[revenueIdx]);
+    return {
+      dimensions: [{ id: sku, name: title }],
+      metrics: [views, sessions, orderedUnits, cartRate],
+      revenue,
+      manual_source_row: index + 2,
+    };
+  }).filter((row) => row.dimensions[0].id || row.metrics.some((value) => Number(value) > 0));
+}
+
+function buildManualFunnelSnapshot({ totals = {}, csvRows = [], activeShopId = "", dateRange = {} } = {}) {
+  const metrics = ["hits_view", "session_view", "ordered_units", "conv_tocart"];
+  const normalizedRows = csvRows.map((row, index) => ({
+    dimensions: row.dimensions || [{ id: row.sku || `manual-${index + 1}`, name: row.title || row.sku || `手动 SKU ${index + 1}` }],
+    metrics: Array.isArray(row.metrics)
+      ? row.metrics.map((value) => Number(value) || 0)
+      : [
+        Number(row.views || 0),
+        Number(row.sessions || 0),
+        Number(row.orderedUnits || 0),
+        Number(row.cartRate || 0),
+      ],
+    revenue: Number(row.revenue || 0),
+    manual_source_row: row.manual_source_row || index + 1,
+  }));
+  const totalViews = Number(totals.views || 0) || normalizedRows.reduce((sum, row) => sum + Number(row.metrics[0] || 0), 0);
+  const totalSessions = Number(totals.sessions || 0) || normalizedRows.reduce((sum, row) => sum + Number(row.metrics[1] || 0), 0);
+  const totalOrders = normalizedRows.reduce((sum, row) => sum + Number(row.metrics[2] || 0), 0);
+  const cartRate = Number(totals.cartRate || 0) || averageMetric(normalizedRows, metrics, "conv_tocart");
+  const orderRate = Number(totals.orderRate || 0) || (totalSessions > 0 ? (totalOrders / totalSessions) * 100 : 0);
+  return {
+    shopId: activeShopId || "",
+    dateFrom: dateRange.dateFrom || "",
+    dateTo: dateRange.dateTo || "",
+    source: "manual_search_analytics",
+    sourceLabel: "手动补录 Etsy 后台 Search Analytics",
+    supported: true,
+    syncedAt: new Date().toISOString(),
+    totals: {
+      views: totalViews,
+      sessions: totalSessions,
+      orderedUnits: totalOrders,
+      cartRate: Number(cartRate.toFixed(1)),
+      orderRate: Number(orderRate.toFixed(1)),
+    },
+    result: {
+      supported: true,
+      source: "manual_search_analytics",
+      metrics,
+      data: normalizedRows,
+    },
+  };
+}
+
+function isSnapshotForActiveShop(snapshot = null, activeShopId = "") {
+  if (!snapshot) return false;
+  if (!activeShopId || !snapshot.shopId) return true;
+  return snapshot.shopId === activeShopId;
+}
+
 function extractSkuAnalyticsRows(snapshot = null) {
   if (snapshot && snapshot?.result?.supported !== true && snapshot?.supported !== true) return [];
   const rows = snapshot?.result?.data || snapshot?.data || [];
   const metrics = snapshot?.result?.metrics || snapshot?.metrics || ["hits_view", "session_view", "ordered_units", "conv_tocart"];
+  const source = snapshot?.result?.source || snapshot?.source || "seller_api";
   if (!Array.isArray(rows)) return [];
   return rows.map((row, index) => {
     const dimensions = row.dimensions || row.dimension || [];
@@ -701,14 +973,19 @@ function extractSkuAnalyticsRows(snapshot = null) {
       orderedUnits,
       cartRate: Number((cartRate || (sessions > 0 ? (orderedUnits / sessions) * 100 : 0)).toFixed(1)),
       orderRate: Number((sessions > 0 ? (orderedUnits / sessions) * 100 : 0).toFixed(1)),
-      source: "seller_api",
+      revenue: Number(row.revenue || 0) || null,
+      source,
     };
   }).filter(row => row.sku);
 }
 
-function buildSkuRows(tracked = [], savedResults = [], events = [], _activeShop = null, skuAnalyticsSnapshot = null) {
+function buildSkuRows(tracked = [], savedResults = [], events = [], activeShop = null, skuAnalyticsSnapshot = null, manualFunnelSnapshot = null) {
   const rows = [];
-  const apiRows = extractSkuAnalyticsRows(skuAnalyticsSnapshot);
+  const activeShopId = activeShop?.id || "";
+  const sourceSnapshot = extractSkuAnalyticsRows(skuAnalyticsSnapshot).length
+    ? skuAnalyticsSnapshot
+    : (isSnapshotForActiveShop(manualFunnelSnapshot, activeShopId) ? manualFunnelSnapshot : null);
+  const apiRows = extractSkuAnalyticsRows(sourceSnapshot);
   if (apiRows.length) {
     return apiRows.map((apiRow, index) => {
       const margin = 18 + ((apiRow.sku.length + index) % 22);
@@ -738,7 +1015,7 @@ function buildSkuRows(tracked = [], savedResults = [], events = [], _activeShop 
       }[issue];
       return {
         ...apiRow,
-        revenue: (apiRow.orderedUnits * 900).toFixed(0),
+        revenue: apiRow.revenue === null || apiRow.revenue === undefined ? (apiRow.orderedUnits * 900).toFixed(0) : apiRow.revenue,
         margin,
         stockDays,
         rating: 0,
@@ -747,7 +1024,7 @@ function buildSkuRows(tracked = [], savedResults = [], events = [], _activeShop 
         nextAction,
         savedEvidence: savedResults.length,
         eventCount: events.length,
-        dataSource: "Etsy 个人访问 API",
+        dataSource: sourceSnapshot?.source === "manual_search_analytics" ? "手动补录 Search Analytics" : "Etsy 个人访问 API",
       };
     });
   }
@@ -1225,10 +1502,11 @@ function mergeGrowthCasesWithRoots(storedCases = [], tasks = [], reports = [], a
   return Array.from(byId.values()).sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
 }
 
-function buildRootEvidenceStatus(root, { reports = [], events = [], experiments = [], skuRows = [], skuAnalyticsSnapshot = null, storeSnapshotCache = null }) {
+function buildRootEvidenceStatus(root, { reports = [], events = [], experiments = [], skuRows = [], skuAnalyticsSnapshot = null, manualFunnelSnapshot = null, storeSnapshotCache = null }) {
   const hasSkuApi = Boolean(skuAnalyticsSnapshot?.result?.data?.length || skuAnalyticsSnapshot?.data?.length);
+  const hasManualFunnel = Boolean(manualFunnelSnapshot?.result?.data?.length || manualFunnelSnapshot?.totals);
   const hasStoreApi = Boolean(storeSnapshotCache?.result || storeSnapshotCache?.data);
-  const hasAnyApi = hasSkuApi || hasStoreApi;
+  const hasAnyFunnelEvidence = hasSkuApi || hasManualFunnel || hasStoreApi;
   const reportCount = root.report ? 1 : reports.filter((report) => {
     if (!report) return false;
     if (root.id === "platform_trends") return report.growthActionId === "explore_platform_trends" || /trend|opportunity/i.test(report.skillId || "");
@@ -1239,13 +1517,15 @@ function buildRootEvidenceStatus(root, { reports = [], events = [], experiments 
   const status = [];
   status.push({
     key: "api",
-    label: hasAnyApi ? "API 已同步" : "API 待同步",
-    tone: hasAnyApi ? "ok" : "warn",
+    label: hasSkuApi ? "API 已同步" : hasManualFunnel ? "后台漏斗已补录" : hasStoreApi ? "店铺快照已同步" : "漏斗数据待补齐",
+    tone: hasAnyFunnelEvidence ? "ok" : "warn",
     detail: hasSkuApi
       ? `SKU Analytics 已同步，${skuRows.length} 个 SKU 可参与判断。`
+      : hasManualFunnel
+        ? `已使用用户补录的 Etsy 后台漏斗数据，${skuRows.length} 个 SKU/Listing 可参与判断；来源不是个人 API。`
       : hasStoreApi
         ? "店铺快照已同步，可作为店铺级判断依据。"
-        : "未发现 Etsy 个人访问 API 本地快照，运行时只能依赖前台页面、历史报告或待验证假设。",
+        : "未发现 Etsy 个人访问 API 或人工补录漏斗，运行时只能依赖前台页面、历史报告或待验证假设。",
   });
   status.push({
     key: "reports",
@@ -1289,7 +1569,7 @@ function buildRootEvidenceStatus(root, { reports = [], events = [], experiments 
   return status;
 }
 
-function buildWorkflowRoots({ tasks = [], reports = [], events = [], experiments = [], opportunities = [], skuRows = [], activeShop = null, skuAnalyticsSnapshot = null, storeSnapshotCache = null }) {
+function buildWorkflowRoots({ tasks = [], reports = [], events = [], experiments = [], opportunities = [], skuRows = [], activeShop = null, skuAnalyticsSnapshot = null, manualFunnelSnapshot = null, storeSnapshotCache = null }) {
   const foundation = assessStoreFoundation({ skuRows, reports, opportunities, activeShop });
   const rootConfigs = [
     {
@@ -1387,6 +1667,7 @@ function buildWorkflowRoots({ tasks = [], reports = [], events = [], experiments
         experiments,
         skuRows,
         skuAnalyticsSnapshot,
+        manualFunnelSnapshot,
         storeSnapshotCache,
       }),
     };
@@ -2227,12 +2508,13 @@ function renderSourceLedger() {
   const hasHistory = growthRuntimeState.savedResults.length > 0 || growthRuntimeState.monitorEvents.length > 0;
   const hasExperiments = growthRuntimeState.experiments.length > 0;
   const hasSkuApi = !!growthRuntimeState.skuAnalyticsSnapshot?.result?.data?.length;
+  const hasManualFunnel = !!growthRuntimeState.manualFunnelSnapshot?.result?.data?.length || !!growthRuntimeState.manualFunnelSnapshot?.totals;
   const hasStoreApi = !!growthRuntimeState.storeSnapshotCache?.result;
   const formatSyncTime = (value) => value ? new Date(value).toLocaleString() : "未同步";
   ledger.innerHTML = `
     <div class="source-ledger-item">
-      <strong><span class="source-dot ${hasSkuApi ? "live" : "local"}"></span>${hasSkuApi ? "Etsy 个人访问 API SKU Analytics" : "本地跟踪 SKU"}</strong>
-      <p>${hasSkuApi ? `SKU 作战台已接入 ${growthRuntimeState.skuAnalyticsSnapshot.result.data.length} 行真实 SKU 维度 analytics；本地缓存更新时间：${formatSyncTime(growthRuntimeState.skuAnalyticsSnapshot.syncedAt)}。` : "SKU 作战台仅显示本地跟踪商品；曝光、加购、订单等指标需同步 Etsy 个人访问 API 后显示。"}</p>
+      <strong><span class="source-dot ${hasSkuApi ? "live" : hasManualFunnel ? "local" : "local"}"></span>${hasSkuApi ? "Etsy 个人访问 API SKU Analytics" : hasManualFunnel ? "手动补录后台漏斗" : "本地跟踪 SKU"}</strong>
+      <p>${hasSkuApi ? `SKU 作战台已接入 ${growthRuntimeState.skuAnalyticsSnapshot.result.data.length} 行真实 SKU 维度 analytics；本地缓存更新时间：${formatSyncTime(growthRuntimeState.skuAnalyticsSnapshot.syncedAt)}。` : hasManualFunnel ? `SKU 作战台正在使用手动补录的 Etsy 后台 Search Analytics；最近补录：${formatSyncTime(growthRuntimeState.manualFunnelSnapshot.syncedAt)}。` : "SKU 作战台仅显示本地跟踪商品；曝光、加购、订单等指标需同步 Etsy 个人访问 API 或手动补录后台漏斗后显示。"}</p>
     </div>
     <div class="source-ledger-item">
       <strong><span class="source-dot local"></span>${hasHistory ? "本地历史可用" : "暂无历史证据"}</strong>
@@ -2261,7 +2543,7 @@ function getEndpointAuditSummary() {
       name: "Etsy 个人访问 API 自营商品与订单数据",
       status: "真实端点",
       evidence: "当前个人卖家 API 可读取自营 listings、商品详情和 receipts/发货资料；不提供 Sessions、页面浏览、点击率或加购率 analytics。",
-      action: "流量与转化方向改由公开 Etsy 页面、搜索和截图证据提供，不把 unsupported analytics 填成 0。",
+      action: "流量与转化方向可由公开 Etsy 页面、搜索截图证据或手动补录 Search Analytics CSV 提供；不把 unsupported analytics 填成 0。",
     },
     {
       name: "AI 业务技能运行",
@@ -2296,19 +2578,50 @@ function getEndpointAuditSummary() {
   ];
 }
 
-function renderSettingsTab() {
+function readCurrencySettingsInputs() {
+  return {
+    usdToCny: Number(document.getElementById("settings-usd-cny")?.value || DEFAULT_CURRENCY_RATES.usdToCny),
+    fxLossRate: Number(document.getElementById("settings-fx-loss")?.value || 0) / 100,
+    shippingPerKgUsd: Number(document.getElementById("settings-shipping-kg")?.value || DEFAULT_CURRENCY_RATES.shippingPerKgUsd),
+    parcelFeeUsd: Number(document.getElementById("settings-parcel-fee")?.value || DEFAULT_CURRENCY_RATES.parcelFeeUsd),
+  };
+}
+
+function renderCurrencySettings(ratesInput = null, statusText = "") {
+  const rates = normalizeCurrencyRates(ratesInput || DEFAULT_CURRENCY_RATES);
+  const usdCny = document.getElementById("settings-usd-cny");
+  const fxLoss = document.getElementById("settings-fx-loss");
+  const shippingKg = document.getElementById("settings-shipping-kg");
+  const parcelFee = document.getElementById("settings-parcel-fee");
+  if (usdCny) usdCny.value = rates.usdToCny.toFixed(4);
+  if (fxLoss) fxLoss.value = (rates.fxLossRate * 100).toFixed(1);
+  if (shippingKg) shippingKg.value = rates.shippingPerKgUsd.toFixed(2);
+  if (parcelFee) parcelFee.value = rates.parcelFeeUsd.toFixed(2);
+  const statusEl = document.getElementById("settings-currency-status");
+  if (statusEl) {
+    const updatedAt = rates.updated_at ? formatLocalTime(rates.updated_at) : "未同步";
+    statusEl.innerHTML = `
+      <div>当前用于 Dashboard 快速测算和 AI 寻源财务账本：USD/CNY ${rates.usdToCny.toFixed(4)}，更新：${escapeHtml(updatedAt)}。</div>
+      <div>${escapeHtml(statusText || `来源：${rates.source || "default_assumption"}。所有 CNY 成本会先换算为 USD 后参与利润计算。`)}</div>
+    `;
+  }
+}
+
+async function renderSettingsTab() {
   const container = document.getElementById("endpoint-audit-summary");
-  if (!container) return;
-  container.innerHTML = getEndpointAuditSummary().map((item) => `
-    <article class="endpoint-audit-item">
-      <div>
-        <strong>${escapeHtml(item.name)}</strong>
-        <span>${escapeHtml(item.status)}</span>
-      </div>
-      <p>${escapeHtml(item.evidence)}</p>
-      <small>${escapeHtml(item.action)}</small>
-    </article>
-  `).join("");
+  if (container) {
+    container.innerHTML = getEndpointAuditSummary().map((item) => `
+      <article class="endpoint-audit-item">
+        <div>
+          <strong>${escapeHtml(item.name)}</strong>
+          <span>${escapeHtml(item.status)}</span>
+        </div>
+        <p>${escapeHtml(item.evidence)}</p>
+        <small>${escapeHtml(item.action)}</small>
+      </article>
+    `).join("");
+  }
+  renderCurrencySettings(await loadCurrencyRates());
 }
 
 function renderSkuWorkbench() {
@@ -2540,6 +2853,22 @@ function startDashboardGrowthRun(run) {
     }
     const port = chrome.runtime.connect({ name: "etsy-agent-loop" });
     let settled = false;
+    let pingIntervalId = setInterval(() => {
+      chrome.runtime.sendMessage({ type: "PING" }, () => {
+        if (chrome.runtime.lastError) {
+          // The disconnect handler will mark the run interrupted if the worker is gone.
+        }
+      });
+    }, 8000);
+    const cleanupRunConnection = () => {
+      if (pingIntervalId) {
+        clearInterval(pingIntervalId);
+        pingIntervalId = null;
+      }
+      try {
+        port.disconnect?.();
+      } catch (_) {}
+    };
     port.onMessage.addListener(async (message) => {
       try {
         if (message.type === "PROGRESS") {
@@ -2559,7 +2888,7 @@ function startDashboardGrowthRun(run) {
             status: "completed",
             reportIds: savedEntry?.id ? [String(savedEntry.id)] : undefined,
           });
-          port.disconnect?.();
+          cleanupRunConnection();
           resolve(message.result);
         }
         if (message.type === "ERROR") {
@@ -2569,7 +2898,7 @@ function startDashboardGrowthRun(run) {
             error: message.error || "运行失败",
             failedAt: new Date().toISOString(),
           }, { status: "failed" });
-          port.disconnect?.();
+          cleanupRunConnection();
           reject(new Error(message.error || "运行失败"));
         }
         if (message.type === "INTERRUPTED") {
@@ -2579,16 +2908,17 @@ function startDashboardGrowthRun(run) {
             error: message.result?.result || message.resumeHint || "工作流已保存断点",
             interruptedAt: new Date().toISOString(),
           }, { status: "interrupted" });
-          port.disconnect?.();
+          cleanupRunConnection();
           reject(new Error(message.result?.result || message.resumeHint || "工作流已保存断点"));
         }
       } catch (err) {
         settled = true;
-        port.disconnect?.();
+        cleanupRunConnection();
         reject(err);
       }
     });
     port.onDisconnect?.addListener(async () => {
+      cleanupRunConnection();
       if (settled) return;
       await persistGrowthRunUpdate(run.caseId, run.id, {
         status: "interrupted",
@@ -2615,6 +2945,14 @@ async function createGrowthCaseRun(actionId, sku = "") {
   const action = GROWTH_ACTIONS[actionId] || GROWTH_ACTIONS.diagnose_store_growth;
   const stored = await new Promise((r) => chrome.storage.local.get(["growthActionRuns", "growthCases", "activeShopId"], r));
   const shopId = stored.activeShopId || growthRuntimeState.activeShop?.id || "";
+  const manualRow = sku && growthRuntimeState.manualFunnelSnapshot?.result?.data?.length
+    ? extractSkuAnalyticsRows(growthRuntimeState.manualFunnelSnapshot).find((row) => row.sku === sku || row.title === sku)
+    : null;
+  const manualContext = manualRow
+    ? `\n\n【用户补录 Etsy 后台漏斗数据】来源为手动上传/粘贴的 Search Analytics，不是 Etsy 个人 API。目标 SKU/Listing: ${manualRow.sku}；Views=${manualRow.views}；Sessions=${manualRow.sessions}；加购率=${manualRow.cartRate}%；付款率=${manualRow.orderRate}%。诊断时可作为用户提供的后台证据使用，但必须在报告中标注来源。`
+    : growthRuntimeState.manualFunnelSnapshot?.totals
+      ? `\n\n【用户补录 Etsy 后台店铺漏斗】来源为手动录入，不是 Etsy 个人 API。Sessions=${growthRuntimeState.manualFunnelSnapshot.totals.sessions || 0}；Views=${growthRuntimeState.manualFunnelSnapshot.totals.views || 0}；加购率=${growthRuntimeState.manualFunnelSnapshot.totals.cartRate || 0}%；付款率=${growthRuntimeState.manualFunnelSnapshot.totals.orderRate || 0}%。`
+      : "";
   const caseType = GROWTH_ACTION_CASE_TYPE[actionId] || "store_health";
   const caseId = growthCaseIdFor(actionId, shopId, sku);
   const now = new Date().toISOString();
@@ -2628,7 +2966,7 @@ async function createGrowthCaseRun(actionId, sku = "") {
     actionId,
     title: action.title,
     sku,
-    instruction: sku ? `${action.instruction}\n目标 SKU: ${sku}` : action.instruction,
+    instruction: `${sku ? `${action.instruction}\n目标 SKU: ${sku}` : action.instruction}${manualContext}`,
     skillPath: action.skillPath,
     status: "queued",
     evidence: {},
@@ -2695,6 +3033,79 @@ async function handleGrowthAction(actionId, sku = "") {
     openWorkflowPip({ rootId: GROWTH_ACTION_CASE_TYPE[actionId] || "store_health" });
     alert(`已创建「${run.title}」增长案件，但当前无法在 dashboard 内直接完成运行。\n\n原因：${err.message}\n\n请打开对应 Etsy 页面，右侧浮窗会继续承接该动作。`);
   }
+}
+
+function renderManualFunnelForm() {
+  const snapshot = growthRuntimeState.manualFunnelSnapshot || null;
+  const totals = snapshot?.totals || {};
+  const setValue = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.value = value === null || value === undefined || value === "" ? "" : String(value);
+  };
+  setValue("manual-total-sessions", totals.sessions || "");
+  setValue("manual-total-views", totals.views || "");
+  setValue("manual-cart-rate", totals.cartRate || "");
+  setValue("manual-order-rate", totals.orderRate || "");
+  const status = document.getElementById("manual-funnel-status");
+  if (status) {
+    const rowCount = snapshot?.result?.data?.length || 0;
+    status.textContent = snapshot
+      ? `当前补录：${rowCount ? `${rowCount} 行 SKU/Listing，` : ""}${snapshot.syncedAt ? new Date(snapshot.syncedAt).toLocaleString() : "已保存"}`
+      : "暂无补录数据。";
+  }
+}
+
+async function readManualFunnelCsvText() {
+  const pasted = document.getElementById("manual-search-analytics-text")?.value || "";
+  if (pasted.trim()) return pasted;
+  const file = document.getElementById("manual-search-analytics-file")?.files?.[0];
+  if (!file) return "";
+  return await file.text();
+}
+
+async function saveManualFunnelSnapshotFromForm() {
+  const status = document.getElementById("manual-funnel-status");
+  if (status) status.textContent = "正在解析并保存后台漏斗数据...";
+  try {
+    const csvText = await readManualFunnelCsvText();
+    const csvRows = csvText.trim() ? parseSearchAnalyticsCsv(csvText) : [];
+    const totals = {
+      sessions: Number(document.getElementById("manual-total-sessions")?.value || 0),
+      views: Number(document.getElementById("manual-total-views")?.value || 0),
+      cartRate: Number(document.getElementById("manual-cart-rate")?.value || 0),
+      orderRate: Number(document.getElementById("manual-order-rate")?.value || 0),
+    };
+    if (!csvRows.length && !totals.sessions && !totals.views && !totals.cartRate && !totals.orderRate) {
+      throw new Error("请至少填写一个店铺漏斗指标，或上传/粘贴 Search Analytics CSV。");
+    }
+    const snapshot = buildManualFunnelSnapshot({
+      totals,
+      csvRows,
+      activeShopId: document.getElementById("global-shop-selector")?.value || growthRuntimeState.activeShop?.id || "",
+      dateRange: readStoreDateRange(),
+    });
+    await new Promise((resolve) => chrome.storage.local.set({ [MANUAL_FUNNEL_STORAGE_KEY]: snapshot }, resolve));
+    await refreshAllData();
+    renderSkuWorkbench();
+    if (isStoreApiSurfaceActive()) renderStoreTab();
+    renderManualFunnelForm();
+    if (status) status.textContent = `已保存后台漏斗补录：${snapshot.result.data.length} 行 SKU/Listing。`;
+  } catch (err) {
+    if (status) status.textContent = `保存失败：${err.message}`;
+    alert(`补录失败：${err.message}`);
+  }
+}
+
+async function clearManualFunnelSnapshot() {
+  await new Promise((resolve) => chrome.storage.local.remove([MANUAL_FUNNEL_STORAGE_KEY], resolve));
+  const text = document.getElementById("manual-search-analytics-text");
+  const file = document.getElementById("manual-search-analytics-file");
+  if (text) text.value = "";
+  if (file) file.value = "";
+  await refreshAllData();
+  renderSkuWorkbench();
+  if (isStoreApiSurfaceActive()) renderStoreTab();
+  renderManualFunnelForm();
 }
 
 async function syncSkuAnalyticsFromApi() {
@@ -3075,7 +3486,9 @@ function drawTrackerCharts() {
     });
   };
 
-  const rows = Array.isArray(growthRuntimeState.skuRows) ? growthRuntimeState.skuRows.filter((row) => row.source === "seller_api") : [];
+  const rows = Array.isArray(growthRuntimeState.skuRows)
+    ? growthRuntimeState.skuRows.filter((row) => row.source === "seller_api" || row.source === "manual_search_analytics")
+    : [];
   const salesData = rows.map((row) => Number(row.orderedUnits || 0)).filter((value) => Number.isFinite(value) && value > 0).slice(0, 6);
   const conversionData = rows.map((row) => Number(row.cartRate || 0)).filter((value) => Number.isFinite(value) && value > 0).slice(0, 6);
   const labels = rows.map((row) => String(row.sku || row.title || "").slice(0, 8)).slice(0, 6);
@@ -3225,6 +3638,21 @@ function mapSnapshotToStoreMetrics(snapshot = {}) {
   };
 }
 
+function mapManualFunnelToStoreMetrics(snapshot = null) {
+  if (!snapshot) return null;
+  const totals = snapshot.totals || {};
+  return {
+    analyticsSupported: true,
+    manualFunnel: true,
+    sessions: Number(totals.sessions || 0),
+    views: Number(totals.views || 0),
+    cartRate: totals.cartRate === null || totals.cartRate === undefined ? null : Number(totals.cartRate).toFixed(1),
+    orderRate: totals.orderRate === null || totals.orderRate === undefined ? null : Number(totals.orderRate).toFixed(1),
+    orders: [],
+    failures: [],
+  };
+}
+
 function renderStoreMetrics(storeData, sourceKind) {
   const analyticsSupported = storeData.analyticsSupported !== false;
   document.getElementById("api-sessions").innerText = analyticsSupported && storeData.sessions !== null ? Number(storeData.sessions || 0).toLocaleString() : "--";
@@ -3238,7 +3666,7 @@ function renderStoreMetrics(storeData, sourceKind) {
     tableBody.innerHTML = `
       <tr>
         <td colspan="7" class="empty-cell">
-          <div class="empty-state">${sourceKind === "live" ? "Etsy 个人访问 API 暂未返回交易订单。" : "暂无真实订单数据。"}</div>
+          <div class="empty-state">${sourceKind === "manual" ? "手动补录仅覆盖流量漏斗，不包含订单明细。" : sourceKind === "live" ? "Etsy 个人访问 API 暂未返回交易订单。" : "暂无真实订单数据。"}</div>
         </td>
       </tr>
     `;
@@ -3292,13 +3720,27 @@ function renderEmptyStoreData(reason = "") {
 }
 
 async function renderStoreTab() {
-  chrome.storage.local.get(['etsyShops', 'activeShopId'], async (data) => {
+  chrome.storage.local.get(['etsyShops', 'activeShopId', MANUAL_FUNNEL_STORAGE_KEY], async (data) => {
     setDefaultStoreDateRange();
     const range = readStoreDateRange();
     const tableBody = document.getElementById("store-orders-table");
     const shops = data.etsyShops || [];
     const activeId = data.activeShopId;
     const activeShop = shops.find(s => s.id === activeId);
+    const manualSnapshot = isSnapshotForActiveShop(data[MANUAL_FUNNEL_STORAGE_KEY], activeId)
+      ? data[MANUAL_FUNNEL_STORAGE_KEY]
+      : null;
+    const renderManualFallback = (reason = "") => {
+      const manualMetrics = mapManualFunnelToStoreMetrics(manualSnapshot);
+      if (!manualMetrics) {
+        renderEmptyStoreData(reason);
+        return false;
+      }
+      renderStoreMetrics(manualMetrics, "manual");
+      renderStoreCostBreakdown({}, "empty");
+      setStoreApiStatus("partial", `已使用手动补录 Etsy 后台漏斗数据；${reason || "个人 API 不提供 Sessions/Views/加购率"}`);
+      return true;
+    };
 
     if (!activeShop) {
       tableBody.innerHTML = `
@@ -3355,15 +3797,22 @@ async function renderStoreTab() {
       }
       const snapshot = response?.data?.result;
       if (!snapshot) {
-        renderEmptyStoreData(response?.error || response?.data?.error || "未收到 API 快照");
+        renderManualFallback(response?.error || response?.data?.error || "未收到 API 快照");
         return;
       }
 
       const storeMetrics = mapSnapshotToStoreMetrics(snapshot);
+      if (manualSnapshot && storeMetrics.analyticsSupported === false) {
+        const manualMetrics = mapManualFunnelToStoreMetrics(manualSnapshot);
+        renderStoreMetrics({ ...manualMetrics, orders: snapshot.orders || [] }, (snapshot.orders || []).length ? "partial" : "manual");
+        renderStoreCostBreakdown({}, "empty");
+        setStoreApiStatus("partial", `订单/Listings 使用 Etsy 个人 API；流量漏斗使用手动补录数据。${snapshot.dateFrom} 至 ${snapshot.dateTo}`);
+        return;
+      }
       const hasLivePayload = (snapshot.analytics?.data || []).length > 0 || (snapshot.orders || []).length > 0 || (snapshot.products?.items || []).length > 0;
       if (!hasLivePayload) {
         const reason = (storeMetrics.failures || []).map(formatStoreApiFailure).join("；") || "API 返回空数据";
-        renderEmptyStoreData(reason);
+        renderManualFallback(reason);
         return;
       }
 
@@ -3377,7 +3826,7 @@ async function renderStoreTab() {
         setStoreApiStatus("partial", `Etsy 个人访问 API 部分成功：${reason || "部分接口无数据"}`);
       }
     } catch (err) {
-      renderEmptyStoreData(err.message);
+      renderManualFallback(err.message);
     } finally {
       storeApiRequestInFlight = false;
       if (queryBtn) queryBtn.disabled = false;

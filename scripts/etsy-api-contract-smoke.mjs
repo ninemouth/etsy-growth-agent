@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { etsyGetAnalyticsData, getEtsyApiCapabilities } from "../modules/etsyApi.js";
+import { etsyGetAnalyticsData, etsyGetProductList, etsyGetReceipts, getEtsyApiCapabilities } from "../modules/etsyApi.js";
 
 const capabilities = getEtsyApiCapabilities();
 assert.equal(capabilities.accessModel, "personal_seller_api");
@@ -14,6 +14,34 @@ const analytics = await etsyGetAnalyticsData("2026-07-01", "2026-07-07", ["sku"]
 assert.equal(analytics.supported, false, "unsupported Etsy personal API analytics must be explicit");
 assert.deepEqual(analytics.data, [], "unsupported analytics must not synthesize zero-filled rows from receipts");
 assert.match(analytics.limitation, /个人卖家 API.*不提供/);
+
+globalThis.chrome = {
+  storage: {
+    local: {
+      get(keys, callback) {
+        const emptySettings = {
+          etsyShops: [],
+          activeShopId: "",
+          etsyApiKey: "",
+          etsyOAuthToken: "",
+          etsyRefreshToken: "",
+          etsyShopId: "",
+          etsyWarehouseType: "",
+        };
+        callback(emptySettings);
+      },
+    },
+  },
+};
+
+const listingsWithoutApi = await etsyGetProductList();
+assert.equal(listingsWithoutApi.skipped, true, "missing Etsy API settings should be a structured skip, not a thrown blocker");
+assert.equal(listingsWithoutApi.reason, "etsy_personal_api_not_configured");
+assert.deepEqual(listingsWithoutApi.items, []);
+
+const receiptsWithoutApi = await etsyGetReceipts("2026-07-01", "2026-07-07");
+assert.equal(receiptsWithoutApi.skipped, true, "missing OAuth/shop settings should allow workflow downgrade");
+assert.deepEqual(receiptsWithoutApi.orders, []);
 
 const source = fs.readFileSync("modules/etsyApi.js", "utf8");
 assert.doesNotMatch(source, /rows are synthesized from authorized receipts/i, "receipt data must not masquerade as funnel analytics");

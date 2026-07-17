@@ -729,11 +729,12 @@ async function runSkill() {
 
   try {
     // Check API key first
-    const settings = await new Promise((r) => chrome.storage.local.get(["apiKey", "llmModel"], r));
-    if (!settings.apiKey) {
+    const settings = await new Promise((r) => chrome.storage.local.get(["apiKey", "llmModel", "llmProfiles"], r));
+    const hasConfiguredProfile = Array.isArray(settings.llmProfiles) && settings.llmProfiles.some((profile) => profile?.enabled !== false && profile?.apiKey && profile?.model);
+    if (!settings.apiKey && !hasConfiguredProfile) {
       throw new Error("未配置 API Key，请先前往设置页面填写。");
     }
-    if (!settings.llmModel) {
+    if (!settings.llmModel && !hasConfiguredProfile) {
       throw new Error("未配置 LLM 模型，请先前往设置页面填写。");
     }
 
@@ -1589,11 +1590,12 @@ async function loadLibrary() {
 // ── Settings ──
 async function loadSettings() {
   const s = await new Promise((r) =>
-    chrome.storage.local.get(["apiKey", "llmProvider", "llmModel", "imageGenerationModel", "llmBaseUrl", "temperature", "helium10ApiKey", "sellerSpriteApiKey", "fastmossApiKey"], r)
+    chrome.storage.local.get(["apiKey", "llmProvider", "llmModel", "llmFallbackModels", "imageGenerationModel", "llmBaseUrl", "temperature", "helium10ApiKey", "sellerSpriteApiKey", "fastmossApiKey"], r)
   );
 
   if (s.llmProvider) $("llmProvider").value = s.llmProvider;
   if (s.llmModel) $("llmModel").value = s.llmModel;
+  if (s.llmFallbackModels) $("llmFallbackModels").value = Array.isArray(s.llmFallbackModels) ? s.llmFallbackModels.join("\n") : s.llmFallbackModels;
   if (s.imageGenerationModel) $("imageGenerationModel").value = s.imageGenerationModel;
   if (s.apiKey) $("apiKey").value = s.apiKey;
   if (s.llmBaseUrl) $("llmBaseUrl").value = s.llmBaseUrl;
@@ -1757,6 +1759,7 @@ async function saveSettings() {
   const apiKey = $("apiKey").value.trim();
   const llmProvider = $("llmProvider").value;
   const llmModel = $("llmModel").value.trim();
+  const llmFallbackModels = $("llmFallbackModels").value.trim();
   const imageGenerationModel = $("imageGenerationModel").value.trim();
   const llmBaseUrl = $("llmBaseUrl").value.trim();
   const temperature = $("temperature").value;
@@ -1778,6 +1781,7 @@ async function saveSettings() {
       apiKey, 
       llmProvider, 
       llmModel, 
+      llmFallbackModels,
       imageGenerationModel,
       llmBaseUrl, 
       temperature,
@@ -2427,11 +2431,20 @@ function showCaptchaAlertBanner() {
   banner.innerHTML = `
     <div style="display:flex; align-items:center; gap:8px;">
       <span style="font-size:16px;">⚠️</span>
-      <span><b>采购平台风控滑块！</b>请立刻前往新打开的浏览器页面完成验证或登录，完成后 Agent 将自动恢复运行。</span>
+      <span><b>采购平台风控滑块！</b>请在已切换的页面完成验证或登录，完成后点击“我已完成验证”继续工作流。</span>
     </div>
-    <span class="close-banner" style="cursor:pointer; font-size:14px; font-weight:bold; margin-left:8px; opacity:0.8;">&times;</span>
+    <div style="display:flex; align-items:center; gap:8px; margin-left:8px;">
+      <button type="button" id="captcha-resume-btn" style="border:1px solid rgba(255,255,255,0.75); background:#fff; color:#b91c1c; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:700; cursor:pointer;">我已完成验证</button>
+      <span class="close-banner" style="cursor:pointer; font-size:14px; font-weight:bold; opacity:0.8;">&times;</span>
+    </div>
   `;
   
+  banner.querySelector("#captcha-resume-btn")?.addEventListener("click", () => {
+    const instruction = document.getElementById("instruction");
+    if (instruction) instruction.value = "继续";
+    banner.remove();
+    document.getElementById("runBtn")?.click();
+  });
   banner.querySelector(".close-banner").addEventListener("click", () => {
     banner.remove();
   });

@@ -7,6 +7,7 @@ const agentLoopSource = fs.readFileSync(new URL("../modules/agentLoop.js", impor
 
 assert.match(sourcingSkillMarkdown, /至少 2 个可比供应商候选/, "Etsy sourcing skill should require at least two comparable suppliers");
 assert.match(sourcingSkillMarkdown, /不足以形成供应商比价/, "Etsy sourcing skill should require shortage explanation when fewer than two suppliers pass");
+assert.match(sourcingSkillMarkdown, /currency_rates[\s\S]*不得凭经验猜汇率[\s\S]*不得把 CNY、RUB 或 EUR 数值直接与 USD 售价相减/, "Etsy sourcing skill should require injected exchange rates and forbid mixed-currency ledgers");
 assert.match(agentLoopSource, /默认必须返回至少 2 个可比供应商候选/, "agent loop critic should enforce two-supplier sourcing reports");
 
 const completedImageSearchHistory = [

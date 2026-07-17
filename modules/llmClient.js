@@ -3,7 +3,7 @@
 export async function getSettings() {
   return new Promise((resolve) => {
     chrome.storage.local.get(
-      ["apiKey", "llmProvider", "llmModel", "imageGenerationModel", "llmBaseUrl", "temperature", "helium10ApiKey", "sellerSpriteApiKey", "fastmossApiKey"],
+      ["apiKey", "llmProvider", "llmModel", "llmFallbackModels", "llmProfiles", "imageGenerationModel", "llmBaseUrl", "temperature", "helium10ApiKey", "sellerSpriteApiKey", "fastmossApiKey"],
       resolve
     );
   });
@@ -12,6 +12,15 @@ export async function getSettings() {
 const LLM_ATTEMPT_TIMEOUT_MS = 60_000;
 const LLM_MAX_RETRIES = 2;
 const LLM_BODY_READ_TIMEOUT_MS = 90_000;
+const PROVIDER_ENDPOINTS = {
+  openai: "https://api.openai.com/v1",
+  anthropic: "https://api.anthropic.com/v1/messages",
+  qwen: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  openrouter: "https://openrouter.ai/api/v1",
+  thinktv: "https://www.thinktv.ai/v1",
+  siliconflow: "https://api.siliconflow.cn/v1",
+  groq: "https://api.groq.com/openai/v1",
+};
 
 async function readJsonWithTimeout(response) {
   let timeoutId;
@@ -169,185 +178,276 @@ export async function prepareCleanProductImage(imageUrl, promptOverride = "") {
   };
 }
 
-export async function callLLM(messages, streamCallback, isHighRandomness = false) {
-  const settings = await getSettings();
-  const { apiKey, llmProvider, llmModel, llmBaseUrl, temperature } = settings;
+function parseFallbackModels(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item || "").trim()).filter(Boolean);
+  return String(value || "")
+    .split(/[\n,，]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
 
-  if (!apiKey) throw new Error("未配置 API Key，请在设置页面填写。");
-  if (!llmModel) throw new Error("未配置 LLM 模型，请在设置页面填写。");
+function shouldAddDefaultQwenFallback(provider, model, fallbackModels) {
+  if (provider !== "qwen" || fallbackModels.length) return false;
+  return /qwen3\.(?:6|7)|qwen-max/i.test(String(model || ""));
+}
 
-  const endpoints = {
-    openai: "https://api.openai.com/v1",
-    anthropic: "https://api.anthropic.com/v1/messages",
-    qwen: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    openrouter: "https://openrouter.ai/api/v1",
-    thinktv: "https://www.thinktv.ai/v1",
+function normalizeProfile(raw = {}, settings = {}, index = 0) {
+  const provider = raw.provider || settings.llmProvider || "openai";
+  const model = String(raw.model || raw.llmModel || "").trim();
+  const apiKey = String(raw.apiKey || settings.apiKey || "").trim();
+  return {
+    id: raw.id || `${provider}-${model || index}`,
+    label: raw.label || `${provider}/${model}`,
+    provider,
+    model,
+    apiKey,
+    baseUrl: String(raw.baseUrl || raw.llmBaseUrl || settings.llmBaseUrl || "").trim(),
+    protocol: raw.protocol || "",
+    enableThinking: raw.enableThinking,
+    enableSearch: raw.enableSearch,
+    temperature: raw.temperature ?? settings.temperature,
+    priority: Number.isFinite(Number(raw.priority)) ? Number(raw.priority) : index + 1,
+    enabled: raw.enabled !== false,
+  };
+}
+
+export function resolveLLMProfiles(settings = {}) {
+  const configuredProfiles = Array.isArray(settings.llmProfiles)
+    ? settings.llmProfiles.map((profile, index) => normalizeProfile(profile, settings, index))
+    : [];
+
+  if (configuredProfiles.length) {
+    return configuredProfiles
+      .filter((profile) => profile.enabled && profile.model && profile.apiKey)
+      .sort((a, b) => a.priority - b.priority);
+  }
+
+  const provider = settings.llmProvider || "qwen";
+  const model = String(settings.llmModel || "").trim();
+  const fallbackModels = parseFallbackModels(settings.llmFallbackModels);
+  if (shouldAddDefaultQwenFallback(provider, model, fallbackModels)) {
+    fallbackModels.push("qwen3.5-plus");
+  }
+  const models = [model, ...fallbackModels].filter(Boolean);
+  return models
+    .map((item, index) => normalizeProfile({
+      id: index === 0 ? "primary" : `fallback-${index}`,
+      label: index === 0 ? "主模型" : `备用模型 ${index}`,
+      provider,
+      model: item,
+      priority: index + 1,
+    }, settings, index))
+    .filter((profile) => profile.enabled && profile.model && profile.apiKey);
+}
+
+function resolveProtocol(profile) {
+  if (profile.protocol === "responses" || profile.protocol === "chat") return profile.protocol;
+  const model = String(profile.model || "");
+  if (profile.provider === "qwen") return "chat";
+  if (profile.provider === "openai" && (model.includes("gpt-5") || model.includes("gpt-6"))) return "responses";
+  return "chat";
+}
+
+function resolveTextEndpoint(profile, protocol) {
+  if (profile.provider === "custom") {
+    if (!profile.baseUrl) throw new Error("未配置自定义 API 地址，请在设置页面填写完整的 API 端点 URL。");
+    const raw = profile.baseUrl.replace(/\/+$/, "");
+    if (raw.endsWith("/chat/completions") || raw.endsWith("/responses") || raw.endsWith("/completions") || raw.endsWith("/messages")) {
+      return raw;
+    }
+    if (raw.endsWith("/v1") || raw.endsWith("/compatible-mode/v1")) {
+      return raw + (protocol === "responses" ? "/responses" : "/chat/completions");
+    }
+    return raw + (protocol === "responses" ? "/v1/responses" : "/v1/chat/completions");
+  }
+  const base = PROVIDER_ENDPOINTS[profile.provider] || PROVIDER_ENDPOINTS.openai;
+  if (profile.provider === "anthropic") return base;
+  return base + (protocol === "responses" ? "/responses" : "/chat/completions");
+}
+
+function mapMessagesForResponses(messages = []) {
+  return messages.map((message) => {
+    if (!Array.isArray(message.content)) return message;
+    return {
+      ...message,
+      content: message.content.map((part) => {
+        if (part.type === "text") return { type: "input_text", text: part.text };
+        if (part.type === "image_url") return { type: "input_image", image_url: part.image_url?.url || part.image_url };
+        return part;
+      }),
+    };
+  });
+}
+
+function isQwenLike(profile) {
+  return profile.provider === "qwen" || profile.model.toLowerCase().includes("qwen") || profile.baseUrl.includes("dashscope");
+}
+
+function buildChatBody(profile, messages, finalTemperature, isStreaming) {
+  const body = {
+    model: profile.model,
+    messages,
+    temperature: finalTemperature,
+    max_tokens: 8192,
+    stream: isStreaming,
   };
 
-  const provider = llmProvider || "openai";
-  
-  let protocol = "chat";
-  if (provider === "qwen" && (llmModel.includes("qwen3.") || llmModel.includes("reason"))) {
-    protocol = "responses";
-  } else if (provider === "openai" && (llmModel.includes("gpt-5") || llmModel.includes("gpt-6") || /^o\d/.test(llmModel))) {
-    protocol = "responses";
+  const model = profile.model.toLowerCase();
+  const isGeminiModel = model.includes("gemini") || profile.baseUrl.includes("google");
+  const isGlmModel = model.includes("glm") || profile.provider === "zhipu" || profile.baseUrl.includes("zhipu");
+  const isBaichuan = model.includes("baichuan") || profile.provider === "baichuan";
+  const isDoubaoModel = model.includes("doubao") || profile.baseUrl.includes("volcengine");
+  const isMinimaxModel = model.includes("minimax");
+  const isHunyuanModel = model.includes("hunyuan") || model.includes("tencent");
+
+  if (isQwenLike(profile)) {
+    if (profile.enableThinking !== false && /qwen3|reason/i.test(profile.model)) body.enable_thinking = true;
+    if (profile.enableSearch !== false) {
+      body.enable_search = true;
+      body.tools = [{ type: "web_search" }];
+    }
+  } else if (isGeminiModel) {
+    body.tools = [{ googleSearch: {} }];
+  } else if (isGlmModel) {
+    body.tools = [{ type: "web_search", web_search: { enable: true } }];
+  } else if (isBaichuan || isDoubaoModel || isMinimaxModel || isHunyuanModel) {
+    body.tools = [{ type: "web_search" }];
   }
 
-  let baseUrl;
-  if (provider === "custom") {
-    if (!llmBaseUrl) throw new Error("未配置自定义 API 地址，请在设置页面填写完整的 API 端点 URL。");
-    const raw = llmBaseUrl.replace(/\/+$/, "");
-    if (raw.endsWith("/chat/completions") || raw.endsWith("/responses") || raw.endsWith("/completions")) {
-      baseUrl = raw;
-    } else if (raw.endsWith("/v1")) {
-      baseUrl = raw + (protocol === "responses" ? "/responses" : "/chat/completions");
-    } else {
-      baseUrl = raw + (protocol === "responses" ? "/v1/responses" : "/v1/chat/completions");
-    }
-  } else {
-    let base = endpoints[provider] || endpoints.openai;
-    if (provider === "anthropic") {
-      baseUrl = base;
-    } else {
-      baseUrl = base + (protocol === "responses" ? "/responses" : "/chat/completions");
-    }
-  }
+  return body;
+}
 
-  if (!baseUrl) throw new Error("未能解析 API 地址，请检查设置。");
-
-  const isStreaming = typeof streamCallback === "function";
-  const finalTemperature = isHighRandomness ? 0.95 : (parseFloat(temperature) || 0.2);
-
-  if (provider === "anthropic") {
+function buildRequestBody(profile, messages, protocol, finalTemperature, isStreaming) {
+  if (profile.provider === "anthropic") {
     const systemMsg = messages.find((m) => m.role === "system")?.content || "";
     const userMessages = messages.filter((m) => m.role !== "system");
-
-    const body = {
-      model: llmModel,
+    return {
+      model: profile.model,
       system: systemMsg,
       messages: userMessages,
       max_tokens: 8192,
       temperature: finalTemperature,
       stream: isStreaming,
     };
-
-    let response;
-    try {
-      response = await fetchWithRetry(baseUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify(body),
-      });
-    } catch (err) {
-      throw new Error(`网络请求彻底失败 (Network Error)。\n请求地址: ${baseUrl}\n可能原因：\n1. 你的网络环境 (VPN/代理) 无法连通此地址。\n2. API 服务器宕机。\n3. Chrome 插件跨域拦截。\n原始错误: ${err.message}`);
-    }
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Anthropic API 错误 (${response.status}) [${baseUrl}]: ${text}`);
-    }
-
-    if (isStreaming) {
-      return await readSSEStream(response, streamCallback, "anthropic");
-    }
-
-    const data = await readJsonWithTimeout(response);
-    return data.content?.[0]?.text || "";
   }
-
-  let body = {};
   if (protocol === "responses") {
-    const mappedMessages = messages.map(m => {
-      if (Array.isArray(m.content)) {
-        return {
-          ...m,
-          content: m.content.map(c => {
-            if (c.type === "text") return { type: "input_text", text: c.text };
-            if (c.type === "image_url") {
-              return { type: "input_image", image_url: c.image_url.url };
-            }
-            return c;
-          })
-        };
-      }
-      return m;
-    });
-
-    body = {
-      model: llmModel,
-      input: mappedMessages,
+    return {
+      model: profile.model,
+      input: mapMessagesForResponses(messages),
       temperature: finalTemperature,
       stream: isStreaming,
-      enable_thinking: true,
     };
-  } else {
-    body = {
-      model: llmModel,
-      messages,
-      temperature: finalTemperature,
-      max_tokens: 8192,
-      stream: isStreaming,
-    };
-
-    const isQwenModel = provider === "qwen" || llmModel.toLowerCase().includes("qwen") || (llmBaseUrl && llmBaseUrl.includes("dashscope"));
-    const isGeminiModel = llmModel.toLowerCase().includes("gemini") || (llmBaseUrl && llmBaseUrl.includes("google"));
-    const isGlmModel = llmModel.toLowerCase().includes("glm") || provider === "zhipu" || (llmBaseUrl && llmBaseUrl.includes("zhipu"));
-    const isBaichuan = llmModel.toLowerCase().includes("baichuan") || provider === "baichuan";
-    const isDoubaoModel = llmModel.toLowerCase().includes("doubao") || (llmBaseUrl && llmBaseUrl.includes("volcengine"));
-    const isMinimaxModel = llmModel.toLowerCase().includes("minimax");
-    const isHunyuanModel = llmModel.toLowerCase().includes("hunyuan") || llmModel.toLowerCase().includes("tencent");
-
-    if (isQwenModel) {
-      body.enable_search = true;
-      body.tools = [{ type: "web_search" }];
-    } else if (isGeminiModel) {
-      body.tools = [{ googleSearch: {} }];
-    } else if (isGlmModel) {
-      body.tools = [{ type: "web_search", web_search: { enable: true } }];
-    } else if (isBaichuan || isDoubaoModel || isMinimaxModel || isHunyuanModel) {
-      body.tools = [{ type: "web_search" }];
-    }
   }
+  return buildChatBody(profile, messages, finalTemperature, isStreaming);
+}
+
+function buildHeaders(profile) {
+  if (profile.provider === "anthropic") {
+    return {
+      "Content-Type": "application/json",
+      "x-api-key": profile.apiKey,
+      "anthropic-version": "2023-06-01",
+    };
+  }
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${profile.apiKey}`,
+  };
+}
+
+function extractResponsesText(data = {}) {
+  if (typeof data.output_text === "string") return data.output_text;
+  if (typeof data.output?.text === "string") return data.output.text;
+  if (!Array.isArray(data.output)) return "";
+  return data.output
+    .flatMap((item) => Array.isArray(item.content) ? item.content : [])
+    .map((part) => part.text || part.output_text || "")
+    .filter(Boolean)
+    .join("");
+}
+
+function extractTextFromJson(data = {}, protocol = "chat", provider = "") {
+  if (provider === "anthropic") return data.content?.[0]?.text || "";
+  if (protocol === "responses") return extractResponsesText(data);
+  return data.choices?.[0]?.message?.content || data.output?.text || extractResponsesText(data) || "";
+}
+
+function createLLMError(message, profile, endpoint, status = 0) {
+  const err = new Error(message);
+  err.status = status;
+  err.provider = profile.provider;
+  err.model = profile.model;
+  err.endpoint = endpoint;
+  return err;
+}
+
+function shouldFallback(error) {
+  if (error?.status === 429 || error?.status >= 500) return true;
+  return /超时|timeout|network|网络|Failed to fetch|AbortError/i.test(error?.message || "");
+}
+
+async function callLLMWithProfile(profile, messages, streamCallback, isHighRandomness = false) {
+  const protocol = resolveProtocol(profile);
+  const endpoint = resolveTextEndpoint(profile, protocol);
+  const isStreaming = typeof streamCallback === "function";
+  const finalTemperature = isHighRandomness ? 0.95 : (parseFloat(profile.temperature) || 0.2);
+  const body = buildRequestBody(profile, messages, protocol, finalTemperature, isStreaming);
 
   let response;
   try {
-    response = await fetchWithRetry(baseUrl, {
+    response = await fetchWithRetry(endpoint, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
+      headers: buildHeaders(profile),
       body: JSON.stringify(body),
     });
   } catch (err) {
-    throw new Error(`网络请求彻底失败 (Network Error)。\n请求地址: ${baseUrl}\n可能原因：\n1. 你的网络环境 (VPN/代理) 无法连通此地址。\n2. 你在使用本地大模型或自定义 API 时，未开启跨域 (CORS) 支持。\n3. Ollama 必须设置 OLLAMA_ORIGINS="*" 环境变量。\n原始错误: ${err.message}`);
+    throw createLLMError(`网络请求彻底失败 (${profile.provider}/${profile.model})。\n请求地址: ${endpoint}\n原始错误: ${err.message}`, profile, endpoint);
   }
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`LLM API 错误 (${response.status}) [${baseUrl}]: ${text}`);
+    const label = profile.provider === "anthropic" ? "Anthropic API" : "LLM API";
+    throw createLLMError(`${label} 错误 (${response.status}) [${profile.provider}/${profile.model}] [${endpoint}]: ${text}`, profile, endpoint, response.status);
   }
 
   if (isStreaming) {
     const contentType = response.headers.get("content-type") || "";
     if (contentType.includes("application/json")) {
       const data = await readJsonWithTimeout(response);
-      let chunk = "";
-      if (data.output && data.output.text) chunk = data.output.text;
-      else if (data.choices && data.choices[0] && data.choices[0].message) chunk = data.choices[0].message.content;
-      else chunk = JSON.stringify(data);
+      const chunk = extractTextFromJson(data, protocol, profile.provider) || JSON.stringify(data);
       streamCallback({ chunk, fullText: chunk });
       return chunk;
     }
-    return await readSSEStream(response, streamCallback, "openai");
+    return await readSSEStream(response, streamCallback, profile.provider === "anthropic" ? "anthropic" : "openai");
   }
 
   const data = await readJsonWithTimeout(response);
-  return data.choices?.[0]?.message?.content || "";
+  return extractTextFromJson(data, protocol, profile.provider);
+}
+
+export async function callLLM(messages, streamCallback, isHighRandomness = false) {
+  const settings = await getSettings();
+  const profiles = resolveLLMProfiles(settings);
+  if (!profiles.length) {
+    throw new Error("未配置可用 LLM Profile。请至少填写 API Key 和模型名称，或配置 llmProfiles。");
+  }
+
+  let lastError = null;
+  for (let index = 0; index < profiles.length; index++) {
+    const profile = profiles[index];
+    try {
+      if (index > 0) {
+        console.warn(`LLM fallback activated: ${profile.provider}/${profile.model}`);
+      }
+      return await callLLMWithProfile(profile, messages, streamCallback, isHighRandomness);
+    } catch (err) {
+      lastError = err;
+      const canTryNext = index < profiles.length - 1 && shouldFallback(err);
+      if (!canTryNext) throw err;
+      console.warn(`LLM profile failed, trying fallback: ${profile.provider}/${profile.model}: ${err.message}`);
+    }
+  }
+  throw lastError || new Error("LLM 调用失败，且没有可用备用模型。");
 }
 
 async function readSSEStream(response, callback, format) {

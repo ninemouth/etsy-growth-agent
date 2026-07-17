@@ -6,6 +6,7 @@ import { appendWorkflowEvent, isWorkflowCancellationRequested, isWorkflowGenerat
 import { putDataUrlArtifact } from './artifactStore.js';
 import { captureFullPageScreenshot } from './debuggerCapture.js';
 import { formatBrowserAutomationCapabilityPrompt } from './browserAutomationCapabilities.js';
+import { getCurrencyRateContextForPrompt } from './currencyRates.js';
 
 const globalSessionCache = {};
 const CHECKPOINT_PREFIX = "etsyAgentCheckpoint:";
@@ -2524,11 +2525,11 @@ function validateOperationsReport(out, toolHistory = [], pageContext = {}) {
     if (!Array.isArray(item?.confounders) && !item?.confounders) errors.push(`${label} 缺少 confounders，必须声明价格、广告、库存、促销、季节性、评价和履约等干扰因素。`);
     if (!item?.attribution_confidence) errors.push(`${label} 缺少 attribution_confidence，不能把相关性写成因果性。`);
     if (!item?.next_observation_window || !item?.success_threshold) errors.push(`${label} 缺少 next_observation_window 或 success_threshold，下一轮必须有观察时间和成功标准。`);
-    if (/提升|下降|增长|改善|成功|increase|decrease|improv|success/i.test(text) && !hasEvidenceSource(toolHistory, pageContext, "etsy_api") && !hasAssumptionFallback(item?.evidence_ledger || [], /API|基线|数据|指标|待验证/i)) {
-      errors.push(`${label} 输出了指标变化或成功判断，但没有 Etsy 个人访问 API 证据或明确待验证假设。`);
+    if (/提升|下降|增长|改善|成功|increase|decrease|improv|success/i.test(text) && !hasEvidenceSource(toolHistory, pageContext, "etsy_api") && !hasAssumptionFallback(item?.evidence_ledger || [], /API|基线|数据|指标|待验证|手动补录|用户提供|Search Analytics|后台漏斗|manual/i)) {
+      errors.push(`${label} 输出了指标变化或成功判断，但没有 Etsy 个人访问 API 证据、用户补录后台数据或明确待验证假设。`);
     }
-    if (/Sessions?|session_view|hits_view|页面浏览|曝光|点击率|加购率|conv_tocart|traffic/i.test(text) && !hasSupportedEtsyAnalytics(toolHistory) && !hasAssumptionFallback(item?.evidence_ledger || [], /个人 API 不支持|未提供|待验证|不可用|无法取得|unsupported/i)) {
-      errors.push(`${label} 使用了 Sessions、曝光、点击率或加购率等指标，但当前 Etsy 个人卖家 API 不提供这些 analytics；必须改为待验证假设或使用公开页面证据，不能填 0 冒充真实数据。`);
+    if (/Sessions?|session_view|hits_view|页面浏览|曝光|点击率|加购率|conv_tocart|traffic/i.test(text) && !hasSupportedEtsyAnalytics(toolHistory) && !hasAssumptionFallback(item?.evidence_ledger || [], /个人 API 不支持|未提供|待验证|不可用|无法取得|unsupported|手动补录|用户提供|Search Analytics|后台漏斗|manual/i)) {
+      errors.push(`${label} 使用了 Sessions、曝光、点击率或加购率等指标，但当前 Etsy 个人卖家 API 不提供这些 analytics；必须改为待验证假设，或明确标注为用户补录 Search Analytics/后台漏斗数据，不能填 0 冒充真实数据。`);
     }
   });
   return errors;
@@ -3331,6 +3332,7 @@ export async function runAgentLoop({ tabId, skillId, skillMarkdown, userInstruct
 
   const actualTargetImageUrl = pageContext?.targetImageUrl || "";
   const ctxForPrompt = buildPromptContext(pageContext);
+  ctxForPrompt.currency_rates = await getCurrencyRateContextForPrompt();
   const screenshotData = ctxForPrompt.screenshot;
   delete ctxForPrompt.screenshot;
 
@@ -3370,6 +3372,11 @@ ${formatBrowserAutomationCapabilityPrompt()}
 
 ## 当前页面上下文
 ${JSON.stringify(ctxForPrompt, null, 2)}
+
+## 当前汇率与套利参数
+${JSON.stringify(ctxForPrompt.currency_rates, null, 2)}
+
+财务账本硬约束：Etsy 售价、采购成本、包装成本、物流、平台扣款和关税必须统一换算为 USD 后再计算净利润；不得把 CNY、RUB 或 EUR 数值直接与 USD 售价相减。
 
 ## 当前研究范围与页面角色
 ${ctxForPrompt.research_scope ? JSON.stringify(ctxForPrompt.research_scope, null, 2) : "未识别到 research_scope。请先通过 read_current_page 确认页面角色。"}
@@ -3496,6 +3503,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     }
 
     const newCtx = buildPromptContext(pageContext);
+    newCtx.currency_rates = await getCurrencyRateContextForPrompt();
     delete newCtx.screenshot;
     const ctxString = JSON.stringify(newCtx, null, 2);
 

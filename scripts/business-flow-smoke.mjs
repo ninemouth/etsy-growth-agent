@@ -13,6 +13,7 @@ import {
 } from "../modules/agentLoop.js";
 import { hasValidEtsySearchEvidence, hasValidGoogleTrendsEvidence } from "../modules/toolRegistry.js";
 import { buildResearchScope, shouldClarifyResearchScope } from "../modules/researchScope.js";
+import { calculateQuickArbitrage, normalizeCurrencyRates } from "../modules/currencyRates.js";
 
 const wait = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 const root = process.cwd();
@@ -136,9 +137,31 @@ assert.match(contentSource, /data\.type === "tool_stage"/, "floating overlay sho
 assert.match(contentSource, /activeOverlayToolRunId[\s\S]*data\.type === "tool_heartbeat"[\s\S]*data\.toolRunId !== activeOverlayToolRunId[\s\S]*return/, "floating overlay should ignore stale tool heartbeats from completed tool runs");
 assert.match(backgroundSource, /buildResearchScope[\s\S]*pageContext\.research_scope[\s\S]*shouldClarifyResearchScope/, "background should build research_scope before running Etsy workflows and block weak trend scope");
 assert.match(agentLoopSource, /当前研究范围与页面角色[\s\S]*source_page_role 是 competitor_reference[\s\S]*entry_page_type 是 etsy_home/, "agent loop prompt should make research_scope a first-class execution constraint");
+assert.match(agentLoopSource, /currency_rates[\s\S]*财务账本硬约束[\s\S]*统一换算为 USD/, "agent loop prompt should inject currency rates and forbid mixed-currency profit math");
+assert.match(backgroundSource, /GET_CURRENCY_RATES[\s\S]*REFRESH_CURRENCY_RATES[\s\S]*SAVE_CURRENCY_RATES/, "background should expose shared currency-rate management endpoints");
+assert.match(toolRegistrySource, /code:\s*"VERIFICATION_REQUIRED"[\s\S]*notifyVerificationRequired/, "1688/Taobao verification walls should return an explicit resumable verification code");
+assert.match(sidepanelSource, /captcha-resume-btn[\s\S]*我已完成验证[\s\S]*instruction\.value = "继续"/, "sidepanel verification banner should provide a resume action after manual verification");
+assert.match(html, /manual-funnel-card[\s\S]*Search Analytics CSV[\s\S]*manual-funnel-save-btn/, "dashboard should expose manual Search Analytics funnel completion controls");
+assert.match(js, /MANUAL_FUNNEL_STORAGE_KEY[\s\S]*parseSearchAnalyticsCsv[\s\S]*buildManualFunnelSnapshot/, "dashboard should parse and persist manual Etsy backend funnel data");
+assert.match(agentLoopSource, /手动补录\|用户提供\|Search Analytics\|后台漏斗\|manual/, "operations quality gate should allow explicitly sourced user-provided backend funnel metrics");
 assert.match(contentSource, /CLARIFICATION_REQUIRED[\s\S]*需要先明确研究范围/, "floating overlay should render weak-context clarification instead of treating it as a generic failure");
 assert.match(sidepanelSource, /CLARIFICATION_REQUIRED[\s\S]*需要先明确研究范围/, "sidepanel should render weak-context clarification instead of treating it as a generic failure");
 assert.match(baseAuditorSkillSource, /研究范围与页面角色[\s\S]*competitor_reference[\s\S]*个人 API 边界[\s\S]*证据质量/, "base auditor should make research scope, API/public evidence boundaries, and evidence quality mandatory across skills");
+
+const normalizedRates = normalizeCurrencyRates({
+  usdToCny: 7.25,
+  shippingPerKgUsd: 5.5,
+  parcelFeeUsd: 2,
+  handlingFeeCny: 2,
+  platformFeeRate: 0.12,
+  fxLossRate: 0,
+  customsThresholdUsd: 220,
+});
+const quickCalc = calculateQuickArbitrage({ costCny: 10, weightKg: 0.5, priceUsd: 25, rates: normalizedRates });
+assert.ok(quickCalc.costUsd > 1 && quickCalc.costUsd < 2, "10 CNY should convert to roughly 1-2 USD, not a RUB-denominated dollar amount");
+assert.ok(quickCalc.shippingUsd > 4 && quickCalc.shippingUsd < 6, "0.5 kg shipping should remain in single-digit USD under default assumptions");
+assert.ok(quickCalc.netProfitUsd > 14 && quickCalc.netProfitUsd < 20, "quick arbitrage calculator should produce a plausible USD net profit for 25 USD price");
+assert.ok(quickCalc.marginRate > 55 && quickCalc.marginRate < 80, "quick arbitrage margin should be plausible after USD normalization");
 
 const ownShopScope = buildResearchScope({
   pageContext: {

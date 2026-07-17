@@ -4367,6 +4367,23 @@
       try {
         const port = chrome.runtime.connect({ name: "etsy-agent-loop" });
         activeAgentPort = port;
+        let settled = false;
+        let pingIntervalId = setInterval(() => {
+          chrome.runtime.sendMessage({ type: "PING" }, () => {
+            if (chrome.runtime.lastError) {
+              // The disconnect handler will surface the interruption to the user.
+            }
+          });
+        }, 8000);
+        const cleanupAgentConnection = () => {
+          if (pingIntervalId) {
+            clearInterval(pingIntervalId);
+            pingIntervalId = null;
+          }
+          try {
+            port.disconnect?.();
+          } catch (_) {}
+        };
         
         port.onMessage.addListener((message) => {
           if (message.type === "PROGRESS") {
@@ -4416,6 +4433,7 @@
               log(`⚠️ Critic 审计反思: ${data.message}`);
             }
           } else if (message.type === "SUCCESS") {
+            settled = true;
             statusDot.className = "status-dot";
             activeAgentPort = null;
             updateChatRunControls({ running: false });
@@ -4427,8 +4445,10 @@
             const finalOutput = renderFinalOutputMarkdown(normalizedResult, skillId);
             const extraData = shouldRenderSourcingData(skillId, normalizedResult?.data) ? normalizedResult.data : null;
             addMessage("assistant", finalOutput || "执行成功，但报告结构为空。", true, extraData, skillId);
+            cleanupAgentConnection();
             finishGrowthRun("completed").catch((err) => console.warn("Failed to finish growth run:", err.message));
           } else if (message.type === "ERROR") {
+            settled = true;
             statusDot.className = "status-dot";
             activeAgentPort = null;
             updateChatRunControls({ running: false });
@@ -4436,8 +4456,10 @@
             if (message.resumable && message.resumeHint) {
               log(`↩ ${message.resumeHint}`);
             }
+            cleanupAgentConnection();
             finishGrowthRun("failed", message.error || "unknown error").catch((err) => console.warn("Failed to finish growth run:", err.message));
           } else if (message.type === "CLARIFICATION_REQUIRED") {
+            settled = true;
             statusDot.className = "status-dot";
             activeAgentPort = null;
             updateChatRunControls({ running: false });
@@ -4452,16 +4474,30 @@
                 ? payload.options.map((item, idx) => `${idx + 1}. ${item}`).join("\n")
                 : "",
             ].filter(Boolean).join("\n"), true, null, message.skillId || "");
+            cleanupAgentConnection();
             finishGrowthRun("interrupted", payload.result || "clarification_required").catch((err) => console.warn("Failed to save clarification-required growth run:", err.message));
           } else if (message.type === "INTERRUPTED") {
+            settled = true;
             statusDot.className = "status-dot";
             activeAgentPort = null;
             updateChatRunControls({ running: false });
             const reason = message.result?.result || message.resumeHint || "工作流已保存断点，可发送“继续”恢复。";
             log(`⏸ ${reason}`);
             log(`↩ ${message.resumeHint || "发送“继续”从当前节点恢复。"}`);
+            cleanupAgentConnection();
             finishGrowthRun("interrupted", reason).catch((err) => console.warn("Failed to save interrupted growth run:", err.message));
           }
+        });
+        port.onDisconnect?.addListener(() => {
+          cleanupAgentConnection();
+          if (settled) return;
+          settled = true;
+          statusDot.className = "status-dot";
+          activeAgentPort = null;
+          updateChatRunControls({ running: false });
+          const reason = "后台连接中断，已保存断点，可发送“继续”恢复。";
+          log(`⏸ ${reason}`);
+          finishGrowthRun("interrupted", reason).catch((err) => console.warn("Failed to save disconnected growth run:", err.message));
         });
 
         // Trigger Run

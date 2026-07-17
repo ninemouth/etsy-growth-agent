@@ -270,6 +270,12 @@
         </div>
 
         <div class="form-group">
+          <label class="form-label">备用模型 <span class="optional">(同 Provider / API Key，逗号或换行分隔)</span></label>
+          <textarea id="llmFallbackModels" class="form-input" rows="2" placeholder="qwen3.5-plus"></textarea>
+          <div class="form-help">主模型 429、5xx、网络超时或连接失败时自动降级。Qwen 高阶模型默认会备用 qwen3.5-plus。</div>
+        </div>
+
+        <div class="form-group">
           <label class="form-label">生图模型 <span class="optional">(同 Provider / API Key)</span></label>
           <div class="input-with-hint">
             <input type="text" id="imageGenerationModel" class="form-input" placeholder="如 gpt-image-1，可留空禁用" />

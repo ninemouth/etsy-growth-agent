@@ -47,6 +47,7 @@ import {
   buildResearchScopeClarification,
   shouldClarifyResearchScope,
 } from './modules/researchScope.js';
+import { getCurrencyRates, saveCurrencyRates } from './modules/currencyRates.js';
 
 // ── Keep Service Worker Alive in MV3 ──
 // Calling any Chrome API resets the 30-second idle timer in Manifest V3.
@@ -72,6 +73,8 @@ async function ensureTaskLogRetentionAlarm() {
 
 async function applyPendingUpdateIfIdle(reason = "idle") {
   if (activeWorkflowRuns > 0) return false;
+  const schedulerState = await getWorkflowSchedulerState();
+  if (schedulerState.active) return false;
   const updateState = await getUpdateStatus();
   if (updateState.settings.autoApplyRuntimeUpdates === false) return false;
   if (!updateState.status.runtimeUpdateAvailable) return false;
@@ -421,6 +424,7 @@ const LEGACY_AGENT_CHECKPOINT_PREFIX = "etsyAgentCheckpoint:";
 const LEGACY_AGENT_CHECKPOINT_LATEST_KEY = "etsyAgentCheckpointLatest";
 const COMPLIANCE_DECISIONS_KEY = "etsyComplianceDecisions";
 const COMPLIANCE_DECISION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+const COMPLIANCE_SKILL_PATH = "skills/etsy_compliance_auditor.skill.md";
 
 function normalizeComplianceResourceKey(url = "") {
   try {
@@ -460,6 +464,19 @@ function requiresComplianceGate({ message = {}, matchedSkills = [], pageContext 
   ].includes(actionId);
   const skillRequiresGate = /etsy_listing_generator|etsy_sourcing_finder/.test(skills);
   return (actionRequiresGate || skillRequiresGate) && isComplianceSensitiveContext(pageContext, message.userInstruction);
+}
+
+function buildComplianceAutopilotInstruction({ originalInstruction = "", originalActionId = "", originalSkills = [] } = {}) {
+  const originalSkillText = originalSkills.length ? originalSkills.join(" + ") : "auto";
+  return [
+    "系统检测到原任务会生成 Listing、采购建议、利润护栏或扩品方案，且当前商品命中了儿童、IP、化妆品、食品接触、电器、电池或其他敏感合规场景。",
+    "本轮不要直接执行原任务；必须先自动补做 Etsy 商品合规审查，并输出合规审查 final 报告。",
+    "审查完成后，在 summary 中明确写出原任务是否允许继续，以及继续前必须补齐的 required_evidence。",
+    "",
+    `【原任务 action】${originalActionId || "manual"}`,
+    `【原任务 skill】${originalSkillText}`,
+    `【原用户指令】${originalInstruction || "未提供"}`,
+  ].join("\n");
 }
 
 async function getComplianceDecision(url = "") {
@@ -817,7 +834,7 @@ chrome.runtime.onConnect.addListener((port) => {
             selectedSkillPath,
             growthActionId: message.growthActionId || "",
           });
-          const matchedSkills = growthActionSkills
+          let matchedSkills = growthActionSkills
             ? growthActionSkills
             : selectedSkillPath
             ? [selectedSkillPath]
@@ -835,19 +852,42 @@ chrome.runtime.onConnect.addListener((port) => {
             activeCheckpointKey = "";
             return;
           }
+          let runUserInstruction = message.userInstruction || "";
+          let complianceAutopilot = null;
           if (requiresComplianceGate({ message, matchedSkills, pageContext })) {
+            const originalSkills = [...matchedSkills];
             const complianceDecision = await getComplianceDecision(pageContext.url || tab.url || "");
             if (!complianceDecision) {
-              const error = new Error("当前商品涉及儿童、IP、化妆品、食品接触、电器、电池或其他敏感合规场景，必须先完成 Etsy 商品合规审查，再生成 Listing、采购建议或扩品方案。");
-              error.code = "COMPLIANCE_AUDIT_REQUIRED";
-              throw error;
+              complianceAutopilot = {
+                reason: "COMPLIANCE_AUDIT_REQUIRED",
+                originalActionId: message.growthActionId || "",
+                originalSkills,
+                originalInstruction: message.userInstruction || "",
+              };
+              pageContext.compliance_autopilot = complianceAutopilot;
+              matchedSkills = [COMPLIANCE_SKILL_PATH];
+              runUserInstruction = buildComplianceAutopilotInstruction({
+                originalInstruction: message.userInstruction || "",
+                originalActionId: message.growthActionId || "",
+                originalSkills,
+              });
+              port.postMessage({
+                type: "PROGRESS",
+                data: {
+                  type: "compliance_autopilot",
+                  step: 0,
+                  message: "⚖️ 已检测到敏感合规场景，自动插入 Etsy 商品合规审查；本轮先完成审查，不直接生成 Listing、采购建议或扩品方案。",
+                  originalActionId: message.growthActionId || "",
+                  originalSkills,
+                },
+              });
             }
-            if (["high", "blocked"].includes(complianceDecision.riskLevel) || complianceDecision.publishDecision === "blocked") {
+            if (complianceDecision && (["high", "blocked"].includes(complianceDecision.riskLevel) || complianceDecision.publishDecision === "blocked")) {
               const error = new Error(`当前商品的合规决策为 ${complianceDecision.riskLevel}/${complianceDecision.publishDecision}，已阻断 Listing、采购和扩品动作。请先补齐证据并重新完成合规审查。`);
               error.code = "COMPLIANCE_ACTION_BLOCKED";
               throw error;
             }
-            if (complianceDecision.publishDecision !== "proceed") {
+            if (complianceDecision && complianceDecision.publishDecision !== "proceed") {
               const error = new Error(`当前商品合规审查结果为 ${complianceDecision.riskLevel}/${complianceDecision.publishDecision}，尚未满足直接发布条件。请先完成 required_evidence 后再继续。`);
               error.code = "COMPLIANCE_EVIDENCE_REQUIRED";
               throw error;
@@ -954,7 +994,7 @@ chrome.runtime.onConnect.addListener((port) => {
             tabId: tab.id,
             skillId: matchedSkills.join("+"),
             skillMarkdown: combinedSkillsMarkdown,
-            userInstruction: message.userInstruction,
+            userInstruction: runUserInstruction,
             pageContext,
             sendProgress,
             continueSession: shouldContinueSession || shouldResumeFromCheckpoint,
@@ -972,6 +1012,7 @@ chrome.runtime.onConnect.addListener((port) => {
                 growthRunId: message.growthRunId || "",
                 growthCaseId: message.growthCaseId || "",
                 workflowSessionId: message.workflowSessionId || "",
+                complianceAutopilot,
                 pageUrl: tab.url || "",
                 pageTitle: tab.title || "",
                 research_scope: pageContext.research_scope || null,
@@ -1263,6 +1304,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "SAVE_UPDATE_SETTINGS") {
     saveUpdateSettings(message.settings || {})
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "GET_CURRENCY_RATES") {
+    getCurrencyRates()
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "REFRESH_CURRENCY_RATES") {
+    getCurrencyRates({ forceRefresh: true })
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "SAVE_CURRENCY_RATES") {
+    saveCurrencyRates(message.rates || {})
       .then((data) => sendResponse({ ok: true, data }))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
@@ -1632,7 +1694,8 @@ chrome.runtime.onInstalled.addListener(() => {
     if (!data.llmProvider) {
       chrome.storage.local.set({
         llmProvider: "qwen",
-        llmModel: "qwen-max",
+        llmModel: "qwen3.6-plus",
+        llmFallbackModels: "qwen3.5-plus",
         temperature: "0.2",
         etsyTargetMargin: "20",
         etsyWarehouseType: "Etsy 自发货"

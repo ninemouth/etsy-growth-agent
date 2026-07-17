@@ -1,6 +1,6 @@
 // modules/toolRegistry.js — Tool registry and content script bridge
 
-import { callLLM, getSettings, prepareCleanProductImage } from './llmClient.js';
+import { callLLM, getSettings, prepareCleanProductImage, resolveLLMProfiles } from './llmClient.js';
 import { etsyGetProductList, etsyGetProductInfo, etsyGetAnalyticsData, etsyGetFbsPostingList, etsyGetFboPostingList, etsyGetStoreSnapshot, getEtsyApiCapabilities, getEtsySettings } from './etsyApi.js';
 import { getArtifactDataUrl, pruneArtifacts, putDataUrlArtifact } from './artifactStore.js';
 import { closeOwnedTab, createOwnedTab, createOwnedTabCallback } from './browserSessionManager.js';
@@ -621,6 +621,22 @@ function isVerificationUrl(url = "") {
   return /sec\.1688\.com|login|verify|passport|captcha|challenge/i.test(String(url || ""));
 }
 
+async function notifyVerificationRequired(tabId, url = "", context = {}) {
+  if (Number.isInteger(Number(tabId))) {
+    try { await chrome.tabs.update(Number(tabId), { active: true }); } catch (_) {}
+  }
+  try {
+    chrome.runtime.sendMessage({
+      type: "CAPTCHA_DETECTED",
+      code: "VERIFICATION_REQUIRED",
+      tabId,
+      url,
+      context,
+      message: "检测到 1688/淘宝 登录墙或人机验证，已切到验证页面等待人工处理。",
+    });
+  } catch (_) {}
+}
+
 function getReadinessProfile(url = "", label = "") {
   const text = `${url} ${label}`.toLowerCase();
   if (/trends\.google|google_trends/.test(text)) {
@@ -808,10 +824,14 @@ async function waitForTabReadiness(tabId, options = {}) {
 
     const currentUrl = lastTab?.url || expectedUrl || "";
     if (isVerificationUrl(currentUrl)) {
+      await notifyVerificationRequired(tabId, currentUrl, { stage: "tab_readiness", label });
       emit("tab_readiness_verification", `${label} 命中登录/验证页，已暂停自动读取等待人工处理。`, { tabId, url: currentUrl });
       return {
         ok: false,
         isCaptcha: true,
+        code: "VERIFICATION_REQUIRED",
+        verification_required: true,
+        userActionRequired: true,
         tab: lastTab,
         pageData: lastPageData,
         attempts,
@@ -2305,9 +2325,11 @@ Context:
     // 0. Prioritize using the large model's native built-in search tool via callLLM
     try {
       const settings = await getSettings();
-      const { llmProvider, llmModel, llmBaseUrl } = settings;
-      const provider = llmProvider || "openai";
-      
+      const [activeProfile] = resolveLLMProfiles(settings);
+      const provider = activeProfile?.provider || settings.llmProvider || "openai";
+      const llmModel = activeProfile?.model || settings.llmModel || "";
+      const llmBaseUrl = activeProfile?.baseUrl || settings.llmBaseUrl || "";
+
       const isQwenModel = provider === "qwen" || llmModel.toLowerCase().includes("qwen") || (llmBaseUrl && llmBaseUrl.includes("dashscope"));
       const isGeminiModel = llmModel.toLowerCase().includes("gemini") || (llmBaseUrl && llmBaseUrl.includes("google"));
       const isGlmModel = llmModel.toLowerCase().includes("glm") || provider === "zhipu" || (llmBaseUrl && llmBaseUrl.includes("zhipu"));
@@ -2784,13 +2806,19 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
               const currentUrl = t.url || "";
               const isVerification = currentUrl.includes("sec.1688.com") || currentUrl.includes("login") || currentUrl.includes("verify") || currentUrl.includes("passport");
               if (isVerification) {
-                chrome.tabs.update(targetTabId, { active: true });
-                chrome.runtime.sendMessage({ type: "CAPTCHA_DETECTED", url: currentUrl });
-                if (attempts >= maxAttempts) {
-                  clearInterval(checkLoad);
-                  readInFlight = false;
-                  resolve({ ok: true, tabId: targetTabId, isCaptcha: true, pageData: {}, message: "Search redirected to verification wall." });
-                }
+                clearInterval(checkLoad);
+                await notifyVerificationRequired(targetTabId, currentUrl, { stage: "text_search_result", tool: "input_text_and_search" });
+                readInFlight = false;
+                resolve({
+                  ok: false,
+                  code: "VERIFICATION_REQUIRED",
+                  verification_required: true,
+                  userActionRequired: true,
+                  tabId: targetTabId,
+                  isCaptcha: true,
+                  pageData: {},
+                  message: "Search redirected to verification wall. Complete verification and resume the workflow.",
+                });
                 readInFlight = false;
                 return;
               }
@@ -2887,6 +2915,20 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
             resolve({ ok: true, tabId: newTab?.id, searchUrl, pageData: {}, message: "1688 tab closed or not found", readiness });
             return;
           }
+          if (readiness.verification_required || readiness.code === "VERIFICATION_REQUIRED") {
+            resolve({
+              ok: false,
+              code: "VERIFICATION_REQUIRED",
+              verification_required: true,
+              userActionRequired: true,
+              tabId: newTab?.id,
+              searchUrl,
+              pageData: {},
+              readiness,
+              message: "检测到 1688/淘宝 登录墙或人机验证，已自动切到该页面；请完成验证后点击继续工作流。",
+            });
+            return;
+          }
           try {
             const result = await tools.image_search_in_browser({ imageUrl, tabId: newTab.id });
             resolve({ ...result, searchUrl, imageSearchEntry: normalizedEngine === "taobao" ? "taobao" : "1688", readiness });
@@ -2968,12 +3010,20 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
               const currentUrl = t.url || "";
               const isVerification = currentUrl.includes("sec.1688.com") || currentUrl.includes("login") || currentUrl.includes("verify") || currentUrl.includes("passport");
               if (isVerification) {
-                chrome.tabs.update(targetTabId, { active: true });
-                chrome.runtime.sendMessage({ type: "CAPTCHA_DETECTED", url: currentUrl });
-	                if (attempts >= maxAttempts) {
-	                  clearInterval(checkLoad);
-	                  resolve({ ok: true, tabId: targetTabId, isCaptcha: true, pageData: {}, uploadResult, submitClicked: !!uploadResult.submitClicked, message: "Image search redirected to verification wall." });
-	                }
+                clearInterval(checkLoad);
+                await notifyVerificationRequired(targetTabId, currentUrl, { stage: "image_search_result", tool: "image_search_in_browser" });
+                resolve({
+                  ok: false,
+                  code: "VERIFICATION_REQUIRED",
+                  verification_required: true,
+                  userActionRequired: true,
+                  tabId: targetTabId,
+                  isCaptcha: true,
+                  pageData: {},
+                  uploadResult,
+                  submitClicked: !!uploadResult.submitClicked,
+                  message: "Image search redirected to verification wall. Complete verification and resume the workflow.",
+                });
                 return;
               }
 

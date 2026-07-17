@@ -137,6 +137,7 @@
 - `platform_fees`：Etsy 佣金、交易服务费、履约或推广成本假设。
 - `customs_duty`：欧美个人免税额度按 200 EUR 作为风险线；超出部分按 15% 估算，并说明汇率/重量限制需要复核。
 - `margin_rate`：按 `(Etsy售价 - 采购USD - 包装USD - 运费USD - 平台扣款USD - 关税USD) / Etsy售价` 测算。
+- 若页面上下文提供 `currency_rates`，必须使用其中的 `USD_to_CNY`、`fx_loss_rate`、`shipping_per_kg_usd`、`platform_fee_rate` 和 `customs_threshold_usd`；不得凭经验猜汇率，也不得把 CNY、RUB 或 EUR 数值直接与 USD 售价相减。
 
 毛利率低于 20%、物流占比过高、认证风险不明且无差异化空间时，不推荐。
 

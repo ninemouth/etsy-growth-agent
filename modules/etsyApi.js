@@ -200,6 +200,24 @@ function buildQuery(params = {}) {
   return text ? `?${text}` : "";
 }
 
+function buildUnconfiguredApiResult(kind, settings = {}, extra = {}) {
+  return {
+    ok: true,
+    skipped: true,
+    reason: "etsy_personal_api_not_configured",
+    source: "etsy_personal_seller_api",
+    accessModel: ETSY_PERSONAL_API_CAPABILITIES.accessModel,
+    kind,
+    configured: Boolean(settings.apiKey && settings.shopId),
+    apiKeyConfigured: Boolean(settings.apiKey),
+    shopIdConfigured: Boolean(settings.shopId),
+    oauthConfigured: Boolean(settings.oauthToken),
+    message: "未配置/未取得 Etsy 个人访问 API，本轮允许继续使用公开页面、搜索和截图证据；订单、Sessions、转化、履约成本等后台数据必须降级为待验证假设。",
+    limitation: "未配置 Etsy 个人 API 时，不能声称已验证真实订单、真实流量、Sessions、转化或履约成本；需后续授权后复核。",
+    ...extra,
+  };
+}
+
 async function makeQueuedEtsyRequest(endpoint, { query = {}, method = "GET", body = null, requireOAuth = false } = {}, attempt = 0) {
   const settings = await getEtsySettings();
   const { apiKey, oauthToken } = settings;
@@ -291,9 +309,15 @@ function normalizeReceipt(receipt = {}) {
 }
 
 export async function etsyGetProductList(limit = 100, offset = 0) {
-  const { shopId } = await getEtsySettings();
-  if (!shopId) {
-    throw new Error("未配置 Etsy Shop ID，无法同步店铺 listings。");
+  const settings = await getEtsySettings();
+  const { shopId } = settings;
+  if (!settings.apiKey || !shopId) {
+    return buildUnconfiguredApiResult("active_listings", settings, {
+      items: [],
+      total: 0,
+      last_id: String(Number(offset || 0)),
+      raw: {},
+    });
   }
 
   const res = await makeEtsyRequest(`/shops/${encodeURIComponent(shopId)}/listings/active`, {
@@ -318,6 +342,14 @@ export async function etsyGetAllProductListings({ pageSize = 100, maxPages = 20 
   let pagesFetched = 0;
   for (let page = 0; page < Math.max(1, Math.min(Number(maxPages) || 20, 50)); page++) {
     const result = await etsyGetProductList(pageSize, page * pageSize);
+    if (result.skipped) {
+      return {
+        ...result,
+        pagesFetched,
+        complete: false,
+        coverage: result.message,
+      };
+    }
     pagesFetched += 1;
     total = Number(result.total || total || 0);
     items.push(...(result.items || []));
@@ -333,6 +365,13 @@ export async function etsyGetAllProductListings({ pageSize = 100, maxPages = 20 
 }
 
 export async function etsyGetProductInfo(productIds = [], skus = []) {
+  const settings = await getEtsySettings();
+  if (!settings.apiKey) {
+    return buildUnconfiguredApiResult("listing_details", settings, {
+      items: [],
+      failures: [],
+    });
+  }
   const ids = Array.isArray(productIds) ? productIds.filter(Boolean) : [];
   if (!ids.length && Array.isArray(skus) && skus.length) {
     const list = await etsyGetProductList(100, 0);
@@ -377,9 +416,15 @@ export async function etsyGetAnalyticsData(dateFrom, dateTo, dimension = ["sku"]
 }
 
 export async function etsyGetReceipts(dateFrom, dateTo, offset = 0, limit = 50) {
-  const { shopId } = await getEtsySettings();
-  if (!shopId) {
-    throw new Error("未配置 Etsy Shop ID，无法同步订单 receipts。");
+  const settings = await getEtsySettings();
+  const { shopId } = settings;
+  if (!settings.apiKey || !shopId || !settings.oauthToken) {
+    return buildUnconfiguredApiResult("seller_receipts", settings, {
+      receipts: [],
+      count: 0,
+      orders: [],
+      raw: {},
+    });
   }
   const res = await makeEtsyRequest(`/shops/${encodeURIComponent(shopId)}/receipts`, {
     requireOAuth: true,
@@ -406,6 +451,14 @@ export async function etsyGetReceiptWindow(dateFrom, dateTo, { pageSize = 100, m
   const pageLimit = Math.max(1, Math.min(Number(maxPages) || 20, 50));
   for (let page = 0; page < pageLimit; page++) {
     const result = await etsyGetReceipts(dateFrom, dateTo, page * pageSize, pageSize);
+    if (result.skipped) {
+      return {
+        ...result,
+        pagesFetched,
+        complete: false,
+        coverage: result.message,
+      };
+    }
     pagesFetched += 1;
     total = Number(result.count || total || 0);
     receipts.push(...(result.receipts || []));
