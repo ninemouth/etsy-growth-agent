@@ -40,9 +40,94 @@
 
 `data` 数组中的每个机会评分卡必须包含 `evidence_ledger`，每条证据包含：
 
-- `source_type`: 允许 `page_dom`、`screenshot_visual`、`etsy_search`、`google_search`、`google_trends`、`etsy_api`、`assumption`。
-- `source_ref`: 当前页面 URL、Etsy 搜索词、Google/Google/Google Trends 查询词、API 工具名或“待验证假设”。
+- `source_type`: 允许 `page_dom`、`screenshot_visual`、`etsy_search`、`google_search`、`google_trends`、`etsy_api`、`official_policy`、`official_regulation`、`user_input`、`assumption`。
+- `source_ref`: 当前页面 URL、Etsy 搜索词、Google/Google Trends 查询词、API 工具名或“待验证假设”。
 - `observed_value`: 具体观察值，例如价格带、评价数、搜索结果方向、评论痛点、合规疑点。
 - `used_for`: 说明该证据支撑需求评分、竞争评分、物流风险、合规风险或产品改良机会。
 - `confidence`: `high` / `medium` / `low`。
 - `limitation`: 说明局限，例如“仅第一页搜索结果”“未绑定 Seller API”“未打开评论分页”“趋势图待人工确认”。
+
+---
+
+## Etsy 选品“几不卖”原则（Negative Filter）
+
+当本 Skill 运行时，默认启用负面过滤（除非用户在侧栏手动关闭“几不卖”原则）：
+1. **高退货重灾区**：服饰、鞋帽、内衣等尺码敏感品类（除非为定制款且有明确尺寸策略）。
+2. **本地易得品**：欧美线下超市能轻易买到的日杂、普通文具、标品零食。
+3. **物流噩梦**：大件木作、家具、陶瓷花瓶、玻璃制品、易爆液体/粉末。
+4. **合规与知识产权深水区**：医疗器械、成人用品、迪士尼/漫威/动漫/球队/影视等任何可能侵权的图案。
+5. **利润率陷阱**：极致内卷的低毛利标品（如普通手机壳、数据线），缺乏“高附加值/定制感”。
+
+---
+
+## 工业级交付状态与画布回写
+
+- 最终报告必须输出 `report_status`：`completed`、`partial`、`blocked` 或 `assumption_only`。只有 Etsy 页面/搜索、站外趋势或评论/合规证据覆盖当前机会判断时才允许 `completed`。
+- 如果没有 Etsy 站内搜索或详情页证据，不得输出“蓝海”“爆品”“高增长”“低竞争”；必须把机会写入 `assumption_opportunities` 或 `blocking_gaps`。
+- `blocking_gaps` 必须列出影响机会判断的缺口，例如趋势页数据不足、竞品详情页未打开、评论缺失、合规来源未取得、物流重量未知。
+- `follow_up_tasks` 必须把机会拆成下一步工作，例如“趋势复核”“竞品详情页补采”“合规预审”“供应商可行性验证”“Listing 实验”。
+- `workflow_nodes` 必须让画布能从机会判断继续进入合规、寻源、Listing 或实验复盘。
+
+---
+
+## 输出硬结构
+
+```json
+{
+  "type": "final",
+  "output": {
+    "report_status": "completed|partial|blocked|assumption_only",
+    "overview": "机会概览，说明目标市场、品类范围和证据覆盖",
+    "analysis": "需求、竞争、物流、合规、评论痛点和改良空间分析",
+    "summary": "推荐机会、待验证假设和下一步增长路径",
+    "blocking_gaps": [
+      {
+        "gap_id": "G-1",
+        "evidence_missing": "缺少的趋势、竞品、评论、合规或物流证据",
+        "business_impact": "影响机会评分或是否进入寻源/上架的原因",
+        "recovery_action": "下一步补证动作",
+        "status": "blocked|manual_required|queued"
+      }
+    ],
+    "validated_opportunities": ["O-1"],
+    "assumption_opportunities": ["O-2"],
+    "follow_up_tasks": [
+      {
+        "task_id": "TASK-1",
+        "task_type": "trend_validation|competitor_detail|compliance_precheck|sourcing_validation|listing_experiment",
+        "priority": "P0|P1|P2",
+        "target": "关键词、类目、商品或机会方向",
+        "reason": "",
+        "required_evidence": ["Etsy 页面、趋势、评论、合规或供应商证据"],
+        "expected_output": "",
+        "requires_manual_confirmation": true
+      }
+    ],
+    "workflow_nodes": [
+      {
+        "node_id": "NODE-1",
+        "title": "机会验证节点",
+        "status": "validated|blocked|manual_confirm|queued|done",
+        "depends_on": [],
+        "next_action": ""
+      }
+    ],
+    "data": [
+      {
+        "opportunity_id": "O-1",
+        "title": "机会名称",
+        "opportunity_status": "validated|assumption|blocked",
+        "demand_score": "",
+        "competition_score": "",
+        "logistics_risk": "",
+        "compliance_risk": "",
+        "next_validation_action": "",
+        "evidence": "真实页面/搜索/评论/API 或待验证说明",
+        "evidence_ledger": []
+      }
+    ]
+  }
+}
+```
+
+没有真实 Etsy 页面、搜索、趋势或评论证据时，不得输出确定性增长结论；必须降级为待验证假设或阻断说明。

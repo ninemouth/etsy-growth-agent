@@ -33,11 +33,14 @@ etsy-growth-agent/
 │   ├── etsy_crossborder_explorer.skill.md
 │   ├── etsy_keyword_analysis.skill.md
 │   ├── etsy_product_opportunity_explorer.skill.md
+│   ├── etsy_platform_trends.skill.md
+│   ├── etsy_event_driven_trend_radar.skill.md
 │   ├── etsy_sourcing_finder.skill.md
 │   ├── etsy_global_shop_optimizer.skill.md
 │   ├── etsy_operations_tracker.skill.md
 │   ├── etsy_listing_generator.skill.md
 │   ├── etsy_review_analyzer.skill.md
+│   ├── etsy_compliance_auditor.skill.md
 │   └── base_report_auditor.skill.md
 └── scripts/
 ```

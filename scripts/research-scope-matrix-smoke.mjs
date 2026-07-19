@@ -13,6 +13,7 @@ const cases = [
     expectedType: "own_shop",
     expectedRole: "self_reference",
     clarify: false,
+    autoDiscovery: false,
   },
   {
     name: "own listing keyword entry",
@@ -22,6 +23,7 @@ const cases = [
     expectedType: "own_listing",
     expectedRole: "self_reference",
     clarify: false,
+    autoDiscovery: false,
   },
   {
     name: "etsy home weak trend entry",
@@ -30,7 +32,8 @@ const cases = [
     action: "explore_platform_trends",
     expectedType: "etsy_home",
     expectedRole: "platform_discovery",
-    clarify: true,
+    clarify: false,
+    autoDiscovery: true,
   },
   {
     name: "etsy home with user keyword",
@@ -40,6 +43,7 @@ const cases = [
     expectedType: "etsy_home",
     expectedRole: "user_keyword_only",
     clarify: false,
+    autoDiscovery: false,
   },
   {
     name: "etsy search page",
@@ -50,6 +54,7 @@ const cases = [
     expectedRole: "platform_discovery",
     expectedKeyword: "bridesmaid gift",
     clarify: false,
+    autoDiscovery: false,
   },
   {
     name: "competitor shop page",
@@ -59,6 +64,7 @@ const cases = [
     expectedType: "competitor_shop",
     expectedRole: "competitor_reference",
     clarify: false,
+    autoDiscovery: false,
   },
   {
     name: "competitor listing page",
@@ -68,6 +74,7 @@ const cases = [
     expectedType: "competitor_listing",
     expectedRole: "competitor_reference",
     clarify: false,
+    autoDiscovery: false,
   },
   {
     name: "external page without keyword",
@@ -75,8 +82,9 @@ const cases = [
     instruction: "分析 Etsy 趋势",
     action: "explore_platform_trends",
     expectedType: "external_page",
-    expectedRole: "unknown",
-    clarify: true,
+    expectedRole: "platform_discovery",
+    clarify: false,
+    autoDiscovery: true,
   },
 ];
 
@@ -91,6 +99,7 @@ const results = cases.map((item) => {
   assert.equal(scope.entry_page_type, item.expectedType, `${item.name}: entry_page_type`);
   assert.equal(scope.source_page_role, item.expectedRole, `${item.name}: source_page_role`);
   assert.equal(shouldClarifyResearchScope(scope), item.clarify, `${item.name}: clarify flag`);
+  assert.equal(Boolean(scope.auto_discovery_required), item.autoDiscovery, `${item.name}: auto_discovery_required`);
   if (item.expectedKeyword) {
     assert.equal(scope.target_entity.name, item.expectedKeyword, `${item.name}: extracted keyword`);
   }
@@ -100,6 +109,7 @@ const results = cases.map((item) => {
     source_page_role: scope.source_page_role,
     target: scope.target_entity.name,
     clarify: shouldClarifyResearchScope(scope),
+    autoDiscovery: Boolean(scope.auto_discovery_required),
   };
 });
 

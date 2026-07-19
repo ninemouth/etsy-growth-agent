@@ -230,11 +230,14 @@ export function hasValidGoogleTrendsEvidence(result = {}) {
     pageData.visibleText,
     pageData.metaDescription,
   ].filter(Boolean).join("\n");
+  const explicitNoData = /not enough data|doesn.?t have enough data|does not have enough data|insufficient data|数据不足|没有足够数据/i.test(text);
+  if (explicitNoData) return false;
   const hasTrendShell = /google trends|explore|趋势/i.test(text);
   const hasCoreTrendModule = /interest over time|趋势变化|随时间变化/i.test(text);
   const hasRelatedModule = /related queries|related topics|相关查询|相关主题/i.test(text);
   const visibleTextLength = String(pageData.visibleText || "").trim().length;
-  return hasTrendShell && ((hasCoreTrendModule && hasRelatedModule) || visibleTextLength >= 320);
+  const screenshotFallback = result.screenshotCaptured === true || Boolean(result.screenshotRef);
+  return hasTrendShell && ((hasCoreTrendModule && hasRelatedModule) || (screenshotFallback && visibleTextLength >= 120) || visibleTextLength >= 320);
 }
 
 function getGoogleTrendsEvidenceState(result = {}) {
@@ -246,20 +249,28 @@ function getGoogleTrendsEvidenceState(result = {}) {
     pageData.metaDescription,
   ].filter(Boolean).join("\n");
   const visibleTextLength = String(pageData.visibleText || "").trim().length;
+  const explicitNoData = /not enough data|doesn.?t have enough data|does not have enough data|insufficient data|数据不足|没有足够数据/i.test(text);
   const hasTrendShell = /google trends|explore|趋势/i.test(text);
   const hasCoreTrendModule = /interest over time|趋势变化|随时间变化/i.test(text);
   const hasRelatedModule = /related queries|related topics|相关查询|相关主题/i.test(text);
+  const screenshotCaptured = result.screenshotCaptured === true || Boolean(result.screenshotRef);
   return {
     hasTrendShell,
     hasCoreTrendModule,
     hasRelatedModule,
     visibleTextLength,
+    explicitNoData,
+    screenshotCaptured,
     stableEnough: hasValidGoogleTrendsEvidence(result),
-    readiness: hasCoreTrendModule && hasRelatedModule
-      ? "core_modules_visible"
-      : hasTrendShell
-      ? "trend_shell_visible"
-      : "not_trends_ready",
+    readiness: explicitNoData
+      ? "loaded_but_not_enough_data"
+      : hasCoreTrendModule && hasRelatedModule
+        ? "core_modules_visible"
+        : hasTrendShell && screenshotCaptured
+          ? "trend_shell_with_screenshot"
+          : hasTrendShell
+            ? "trend_shell_visible"
+            : "not_trends_ready",
   };
 }
 
@@ -278,6 +289,8 @@ function withSearchEvidenceStatus(payload, engine) {
     evidenceOk,
     evidenceType: normalizedEngine === "etsy" ? "etsy_search" : "google_trends",
     ...(trendsEvidenceState ? { trendsEvidenceState } : {}),
+    requestedQuery: payload.queryOriginal || payload.requestedQuery || "",
+    queryLocalized: payload.queryUsed || payload.queryLocalized || "",
     evidenceStatus: evidenceOk ? "valid" : "invalid_or_blocked",
     message: evidenceOk
       ? (payload.message || (normalizedEngine === "etsy" ? "Valid Etsy search evidence captured." : "Valid Google Trends evidence captured."))

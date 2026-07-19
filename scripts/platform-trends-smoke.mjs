@@ -220,6 +220,7 @@ const ledger = [
 const validReport = {
   type: "final",
   output: {
+    report_status: "completed",
     research_scope: pageContext.research_scope,
     page_role_notice: "当前页面识别为自营 Etsy 店铺，趋势结论必须说明当前店铺适配度。",
     fit_to_current_shop: {

@@ -252,20 +252,42 @@ export function buildResearchScope({
 
   const weakEntry = ["etsy_home", "external_page", "unknown"].includes(entryPageType);
   const weakContextKeywords = entryPageType === "external_page" ? explicitInstructionKeywords : seedKeywords;
-  const needsUserClarification = Boolean(
+  const autoDiscoveryRequired = Boolean(
     wantsTrend &&
     weakEntry &&
     !hasSpecificKeyword(weakContextKeywords)
   );
-  const recommendedNextAction = needsUserClarification
-    ? activeShopId
-      ? "select_keyword_or_use_bound_shop"
-      : "select_keyword"
-    : "run";
+  const needsUserClarification = Boolean(
+    !autoDiscoveryRequired &&
+    wantsTrend &&
+    weakEntry &&
+    !hasSpecificKeyword(weakContextKeywords)
+  );
+  const recommendedNextAction = autoDiscoveryRequired
+    ? "auto_discover_trend_candidates"
+    : needsUserClarification
+      ? (activeShopId ? "select_keyword_or_use_bound_shop" : "select_keyword")
+      : "run";
+
+  const diagnosisMode = activeShopId && isSelf
+    ? "api_bound_diagnosis"
+    : activeShopId
+      ? "mixed_diagnosis"
+      : "outer_visitor_diagnosis";
+
+  const discoverySources = [
+    "current_page_public_clues",
+    "etsy_home_recommendations",
+    "etsy_category_entrypoints",
+    "google_us_search",
+    "google_uk_search",
+    "google_trends_us",
+    "google_trends_uk",
+  ];
 
   return {
     entry_page_type: entryPageType,
-    source_page_role: sourcePageRole,
+    source_page_role: autoDiscoveryRequired ? "platform_discovery" : sourcePageRole,
     target_entity: {
       type: targetType,
       name: targetName,
@@ -277,9 +299,13 @@ export function buildResearchScope({
     seed_category: pageContext.category || pageContext.etsyCategory || "",
     seed_product_type: pageContext.productType || pageContext.h1 || "",
     market_locale: inferMarketLocale(pageContext, userInstruction),
-    scope_confidence: confidence,
+    scope_confidence: autoDiscoveryRequired ? "medium" : confidence,
     missing_inputs: Array.from(new Set(missingInputs)),
     needs_user_clarification: needsUserClarification,
+    auto_discovery_required: autoDiscoveryRequired,
+    discovery_sources: autoDiscoveryRequired ? discoverySources : [],
+    diagnosis_mode: diagnosisMode,
+    api_evidence_policy: activeShopId && isSelf ? "current_bound_shop_only" : "public_evidence_only",
     recommended_next_action: recommendedNextAction,
     selected_skill_path: selectedSkillPath || "",
     growth_action_id: growthActionId || "",

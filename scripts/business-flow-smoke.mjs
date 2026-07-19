@@ -197,7 +197,8 @@ const etsyHomeWeakScope = buildResearchScope({
   growthActionId: "explore_platform_trends",
 });
 assert.equal(etsyHomeWeakScope.entry_page_type, "etsy_home", "research scope should recognize Etsy home as weak context");
-assert.equal(shouldClarifyResearchScope(etsyHomeWeakScope), true, "Etsy home trend runs without a keyword should request clarification");
+assert.equal(shouldClarifyResearchScope(etsyHomeWeakScope), false, "Etsy home trend runs without a keyword should enter auto-discovery instead of clarification");
+assert.equal(Boolean(etsyHomeWeakScope.auto_discovery_required), true, "Etsy home trend runs without a keyword should set auto_discovery_required");
 
 const etsySearchScope = buildResearchScope({
   pageContext: {

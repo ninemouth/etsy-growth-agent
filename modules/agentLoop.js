@@ -7,6 +7,14 @@ import { putDataUrlArtifact } from './artifactStore.js';
 import { captureFullPageScreenshot } from './debuggerCapture.js';
 import { formatBrowserAutomationCapabilityPrompt } from './browserAutomationCapabilities.js';
 import { getCurrencyRateContextForPrompt } from './currencyRates.js';
+import { buildNegativeFilterPrompt } from './negativeFilters.js';
+import {
+  collectGoogleTrendsAttempts,
+  getTrendQueryGuardError,
+  getTrendQueryRefinementState,
+  hasUsableGoogleTrendsAttempt,
+  MAX_GOOGLE_TRENDS_QUERY_ATTEMPTS,
+} from './trendQueryPlanner.js';
 
 const globalSessionCache = {};
 const CHECKPOINT_PREFIX = "etsyAgentCheckpoint:";
@@ -553,7 +561,7 @@ function summarizeProductCards(cards = []) {
 const SOURCING_SKILL_RE = /domestic_sourcing_finder|etsy_sourcing_finder/;
 const IMAGE_SEARCH_TOOLS = ["image_search_1688", "image_search_taobao", "image_search_in_browser"];
 const COMPLIANCE_SKILL_RE = /etsy_compliance_auditor/;
-const PLATFORM_TRENDS_SKILL_RE = /etsy_platform_trends/;
+const PLATFORM_TRENDS_SKILL_RE = /etsy_platform_trends|etsy_event_driven_trend_radar/;
 const KEYWORD_SKILL_RE = /etsy_keyword_analysis/;
 const LISTING_SKILL_RE = /etsy_listing_generator/;
 const PRODUCT_OPPORTUNITY_SKILL_RE = /etsy_product_opportunity_explorer|etsy_crossborder_explorer/;
@@ -1107,6 +1115,8 @@ function compactPlatformTrendRunawayToolHistory(toolHistory = []) {
 function getEtsyBrowserWorkflowGuardResult({ skillId = "", toolName = "", toolArgs = {}, toolHistory = [] } = {}) {
   if (!isEtsyBusinessSkill(skillId)) return null;
   if (isPlatformTrendSkill(skillId) && toolName === "search_in_browser") {
+    const queryGuard = getTrendQueryGuardError({ skillId, toolName, toolArgs, toolHistory });
+    if (queryGuard) return queryGuard;
     const stageGuard = getPlatformTrendStageGuard({ toolName, toolArgs, toolHistory });
     if (stageGuard) return stageGuard;
   }
@@ -2724,16 +2734,24 @@ function validatePlatformTrendReport(out, toolHistory = [], pageContext = {}) {
   const entryPageType = String(scope.entry_page_type || "");
   const sourcePageRole = String(scope.source_page_role || "");
   const seedKeywords = Array.isArray(scope.seed_keywords) ? scope.seed_keywords : [];
+  const autoDiscoveryRequired = Boolean(scope.auto_discovery_required);
+  const trendsExhausted = isPlatformTrendSkill(scope.selected_skill_path || "") && !hasUsableGoogleTrendsAttempt(toolHistory) && collectGoogleTrendsAttempts(toolHistory).length >= MAX_GOOGLE_TRENDS_QUERY_ATTEMPTS;
 
   if (items.length === 0) return ["Etsy 趋势报告至少需要一个结构化机会项，不能返回空 data。"];
+  if (!out.report_status || !["completed", "partial", "blocked", "assumption_only"].includes(String(out.report_status))) {
+    errors.push("趋势报告必须输出 report_status（completed/partial/blocked/assumption_only），明确本轮交付状态。");
+  }
   if (!out.research_scope && !pageContext?.research_scope) {
     errors.push("趋势报告缺少 research_scope，必须先说明当前页面角色、研究对象、seed keywords 和范围置信度。");
   }
   if (!out.page_role_notice && !scope.page_role_notice) {
     errors.push("趋势报告缺少 page_role_notice，必须明确当前页面是自营、竞品、搜索页还是弱上下文。");
   }
-  if (["etsy_home", "external_page", "unknown"].includes(entryPageType) && seedKeywords.length === 0 && !/待明确|需要.*关键词|无法.*趋势|blocked|assumption/i.test(fullText)) {
+  if (["etsy_home", "external_page", "unknown"].includes(entryPageType) && seedKeywords.length === 0 && !autoDiscoveryRequired && !/待明确|需要.*关键词|无法.*趋势|blocked|assumption/i.test(fullText)) {
     errors.push("当前页面是 Etsy 首页/外部页/未知弱上下文且缺少明确关键词，趋势报告不得输出强结论；必须先要求用户选择关键词或类目。");
+  }
+  if (autoDiscoveryRequired && (!out.query_funnel || typeof out.query_funnel !== "object")) {
+    errors.push("当前为趋势自动发现模式，必须输出 query_funnel 对象，说明 user_intent、discovery_queries、scored_queries 和 focus_queries。");
   }
   if (sourcePageRole === "competitor_reference" && /你的店铺|你店|本店|自营店铺已|当前店铺已|our shop has|your shop has/i.test(fullText)) {
     errors.push("当前页面被识别为竞品参考，但报告把竞品页面写成自营店铺事实。必须明确它只是公开对标样本。");
@@ -2818,7 +2836,35 @@ function validatePlatformTrendReport(out, toolHistory = [], pageContext = {}) {
     if (/竞品|头部|高排名|竞品视觉|主图|best.?seller|top shop/i.test(itemText) && !hasTrendCompetitorPageEvidence(ledger)) {
       errors.push(`${label} 使用了竞品/视觉对标结论，但没有至少 2 个公开竞品店铺或商品详情页的页面文本+截图证据；Search Grid 不能替代详情页研究。`);
     }
+    if (autoDiscoveryRequired && !["recommended", "assumption", "blocked", "watch"].includes(String(item?.recommendation_status || "").toLowerCase())) {
+      errors.push(`${label} 在自动发现模式下必须标注 recommendation_status（recommended/assumption/blocked/watch）。`);
+    }
+    if (autoDiscoveryRequired && !["passed", "risk_guard", "rejected"].includes(String(item?.filter_verdict || "").toLowerCase())) {
+      errors.push(`${label} 在自动发现模式下必须标注 filter_verdict（passed/risk_guard/rejected），说明是否通过不卖原则过滤。`);
+    }
+    if (String(item?.recommendation_status || "").toLowerCase() === "recommended" && !hasValue(item?.seller_fit_reason)) {
+      errors.push(`${label} 标记为 recommended 时必须提供 seller_fit_reason，说明为何适合中小微/个体卖家。`);
+    }
+    if (trendsExhausted && String(item?.demand_signal || "").toLowerCase() === "observed") {
+      errors.push(`${label} 的 demand_signal 为 observed，但 Google Trends 已连续 ${MAX_GOOGLE_TRENDS_QUERY_ATTEMPTS} 次查询无可用数据；必须降级为 assumption 或 blocked。`);
+    }
   });
+
+  if (autoDiscoveryRequired) {
+    if (!Array.isArray(out.rejected_directions)) {
+      errors.push("自动发现模式下必须输出 rejected_directions 数组，记录被不卖原则淘汰的方向。");
+    }
+    if (!Array.isArray(out.recommended_opportunities) || out.recommended_opportunities.length === 0) {
+      errors.push("自动发现模式下必须输出 recommended_opportunities 数组，列出通过过滤的推荐机会 ID。");
+    }
+    const recommendedIds = new Set((out.recommended_opportunities || []).map(String));
+    items.forEach((item, idx) => {
+      if (String(item?.recommendation_status || "").toLowerCase() === "recommended" && !recommendedIds.has(String(item?.opportunity_id || ""))) {
+        errors.push(`趋势机会第 ${idx + 1} 项标记为 recommended，但未被包含在 recommended_opportunities 中。`);
+      }
+    });
+  }
+
   return errors;
 }
 
@@ -3256,7 +3302,7 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
   const analysisText = out.analysis || "";
   const combinedText = overviewText + analysisText;
   if (!combinedText.includes("市场") && !combinedText.includes("客群") && !combinedText.includes("定位")) {
-    errors.push("报告概述 (overview) 或分析 (analysis) 中未体现自主判断的目标销售市场与目标客群定位（例如：‘中国大陆/国内电商’或‘欧美礼品市场’等），请予以明确陈述！");
+    errors.push("报告概述 (overview) 或分析 (analysis) 中未体现自主判断的目标销售市场与目标客群定位（例如：‘欧美礼品市场’、‘Etsy 北美手工定制人群’或‘欧洲节庆礼品买家’等），请予以明确陈述！");
   }
 
   return errors;
@@ -3316,7 +3362,9 @@ export async function runAgentLoop({ tabId, skillId, skillMarkdown, userInstruct
 
   let systemPrompt = skillMarkdown;
   if (negativeFilter === false) {
-    systemPrompt += `\n\n=========================================\n\n⚠️ 【用户已手动关闭“不卖原则”过滤限制】：当前处于国内国内电商或不受限的宽容寻源环境，用户已手动取消了默认的“不卖原则”（Negative Filter）负面过滤。因此，你【无须】过滤服饰、鞋帽、内衣、大件重货、陶瓷玻璃易碎品、本地容易买到的普通日杂标品或医疗/成人等高风险品类。请完全根据当前页面商品的实际销量表现、货源品质以及用户指令，自由挖掘上述常规品类并推荐它们的源头供应商！`;
+    systemPrompt += `\n\n=========================================\n\n⚠️ 【用户已手动关闭“不卖原则”过滤限制】：当前处于 Etsy 跨境或不受限的宽容寻源环境，用户已手动取消了默认的“不卖原则”（Negative Filter）负面过滤。因此，你【无须】过滤服饰、鞋帽、内衣、大件重货、陶瓷玻璃易碎品、本地容易买到的普通日杂标品或医疗/成人/知名 IP 周边等高风险品类。请完全根据当前页面商品的实际销量表现、货源品质以及用户指令，自由挖掘上述常规品类并推荐它们的源头供应商！`;
+  } else {
+    systemPrompt += buildNegativeFilterPrompt(skillId, userInstruction);
   }
   
   const isApiActive = !!(settings.helium10ApiKey || settings.sellerSpriteApiKey);
@@ -3714,6 +3762,26 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     }
 
     if (parsed.type === "final") {
+      const trendRefinement = getTrendQueryRefinementState(skillId, toolHistory);
+      if (trendRefinement.required && !trendRefinement.exhausted) {
+        sendProgress({ type: "trend_query_refinement", step, message: trendRefinement.message });
+        messages.push({ role: "assistant", content: assistantContent });
+        messages.push({
+          role: "user",
+          content: `【Google Trends 查询恢复提示】\n${trendRefinement.message}\n\n请在重新输出 final 报告前，先调用 search_in_browser(engine="google_trends", query="<恢复后的词>") 尝试获取趋势截图证据；若仍数据不足，则必须将需求信号降级为 assumption/blocked 并写入 blocking_gaps。`,
+        });
+        await saveCheckpoint({ status: "trend_refinement", step, lastNode: "trend_query_refinement" });
+        continue;
+      }
+      if (trendRefinement.exhausted) {
+        sendProgress({ type: "trend_query_exhausted", step, message: trendRefinement.message });
+        messages.push({ role: "assistant", content: assistantContent });
+        messages.push({
+          role: "user",
+          content: `【Google Trends 查询已耗尽】\n${trendRefinement.message}\n\n请在 final 报告中严格执行：\n1. 所有基于 Google Trends 的需求信号必须标记为 assumption 或 blocked；\n2. 不得写出“Google Trends 证明/表明/因此…”等因果结论；\n3. 把缺失趋势证据写入 blocking_gaps，并使用 Etsy 搜索/Google 搜索等真实证据完成机会判断。`,
+        });
+      }
+
       const sanitizedFinal = sanitizeFinalReportForDelivery(parsed);
       if (sanitizedFinal.changed) {
         parsed = sanitizedFinal.parsed;

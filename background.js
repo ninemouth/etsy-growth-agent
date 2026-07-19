@@ -116,6 +116,7 @@ const ETSY_SKILL_PATHS = new Set([
   "skills/etsy_review_analyzer.skill.md",
   "skills/etsy_keyword_analysis.skill.md",
   "skills/etsy_compliance_auditor.skill.md",
+  "skills/etsy_event_driven_trend_radar.skill.md",
 ]);
 
 const GROWTH_ACTION_SKILL_MAP = {
@@ -194,6 +195,8 @@ async function dispatchEtsySkills(userInstruction, pageContext = {}) {
     /1688|寻源|货源|采购|供应商|源头|工厂|拿样|比价|套利|采购直达|供货|批发|起批/.test(inst);
   const hasPlatformTrendIntent =
     /平台趋势|趋势|google trends|谷歌趋势|搜索趋势|季节性|需求曲线|平台需求|类目趋势|热卖|头部商品共性|价格带|评价门槛|趋势窗口|market trend|platform trend/i.test(inst);
+  const hasEventDrivenTrendIntent =
+    /事件|突发|季节|母亲节|父亲节|情人节|圣诞|婚礼季|开学季|高温|寒潮|灾难|选举|运动会|奥运会|趋势雷达|event|radar|seasonal/i.test(inst);
   const hasProductOpportunityIntent =
     /选品|开发|类目|爆品|机会|牙刷|合规|eac|准入/.test(inst);
   const hasComplianceIntent =
@@ -202,6 +205,11 @@ async function dispatchEtsySkills(userInstruction, pageContext = {}) {
   const isEtsyShopPage =
     /etsy\.com\/shop\//.test(pageUrl) ||
     /etsy\s+shop|shop\s+on\s+etsy|seller|店铺/.test(pageTitle);
+
+  if (hasEventDrivenTrendIntent && !hasExplicitSourcingIntent && !hasExplicitShopDiagnosisIntent) {
+    pushUnique(matched, "skills/etsy_event_driven_trend_radar.skill.md");
+    return matched;
+  }
 
   if (hasPlatformTrendIntent && !hasExplicitSourcingIntent && !hasExplicitShopDiagnosisIntent) {
     pushUnique(matched, "skills/etsy_platform_trends.skill.md");
@@ -250,7 +258,7 @@ async function dispatchEtsySkills(userInstruction, pageContext = {}) {
         const classificationPrompt = [
         {
           role: "system",
-          content: `你是一个 Etsy 跨境电商运营智能路由器。请根据用户的输入需求，从以下 9 个专有 AI 技能路径中选择所有最相关的技能路径：
+          content: `你是一个 Etsy 跨境电商运营智能路由器。请根据用户的输入需求，从以下 10 个专有 AI 技能路径中选择所有最相关的技能路径：
 1. "skills/etsy_product_opportunity_explorer.skill.md" (Etsy选品、类目需求分析、合规性风险审计)
 2. "skills/etsy_sourcing_finder.skill.md" (1688货源开发、美元跨境利润套利测算、运费关税核算)
 3. "skills/etsy_global_shop_optimizer.skill.md" (Etsy店铺经营诊断、自营 listings/订单/发货资料对账、ABC分级优化)
@@ -260,6 +268,7 @@ async function dispatchEtsySkills(userInstruction, pageContext = {}) {
 7. "skills/etsy_compliance_auditor.skill.md" (Etsy 商品发布前合规、IP、产品安全与目的地法规审查)
 8. "skills/etsy_keyword_analysis.skill.md" (Etsy 站内搜索词、买家意图和标签证据分析)
 9. "skills/etsy_platform_trends.skill.md" (Etsy 平台公开搜索、Google Search/Trends 和趋势机会分析)
+10. "skills/etsy_event_driven_trend_radar.skill.md" (Etsy 事件驱动型季节性/突发事件选品与趋势机会雷达)
 
 请直接输出一个包含路径字符串的 JSON 数组（例如：["skills/etsy_sourcing_finder.skill.md"]），不要包含任何其他说明字符，格式必须是标准的 JSON 数组。`
         },
@@ -402,6 +411,13 @@ async function listSkills() {
       name: "Etsy 商品合规与发布风险审查专家",
       description: "基于商品页面、截图和官方来源审查 Etsy 政策、IP、产品安全、标签与目的地法规风险，阻断高风险发布动作",
       icon: "🛡️",
+    },
+    {
+      id: "etsy_event_driven_trend_radar",
+      path: "skills/etsy_event_driven_trend_radar.skill.md",
+      name: "Etsy 事件驱动型选品与趋势机会雷达 (Auto)",
+      description: "输入突发宏观事件或季节性窗口，全自动挖掘 Etsy 周边需求链、多语言长尾词及低风险替代品机会",
+      icon: "📡",
     }
   ];
 
