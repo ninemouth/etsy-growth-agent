@@ -1996,6 +1996,11 @@
         short: "货源",
         instruction: "基于当前 Etsy 商品、候选扩品方向或平台趋势机会筛选国内供应商货源。请重点验证同款/相似款图片匹配、规格一致、起批量、采购价、跨境物流、Etsy 佣金、关税和 USD 净利润率；未获得真实供应商详情页时不得输出采购直达链接。",
       },
+      validate_opportunity_sourcing: {
+        label: "验证机会货源",
+        short: "验证货源",
+        instruction: "基于前一轮选品/机会报告中的候选方向，进入供应链寻源第二阶段。请把机会目标当成待验证假设，优先用 1688/淘宝以图搜图或中文复合检索对齐真实货源，审计外观、规格、MOQ、采购价、跨境物流、Etsy 佣金、关税和 USD 净利润率；未取得真实供应商详情页时不得输出采购直达链接，并在报告中回写本次货源验证对原机会的支撑或推翻结论。",
+      },
       explore_platform_trends: {
         label: "平台趋势",
         short: "趋势",
@@ -2037,6 +2042,7 @@
       scan_competitor_changes: "skills/etsy_global_shop_optimizer.skill.md",
       find_expansion_opportunities: "skills/etsy_product_opportunity_explorer.skill.md",
       filter_supplier_sources: "skills/etsy_sourcing_finder.skill.md",
+      validate_opportunity_sourcing: "skills/etsy_sourcing_finder.skill.md",
       explore_platform_trends: "skills/etsy_platform_trends.skill.md",
       rewrite_listing: "skills/etsy_listing_generator.skill.md",
       analyze_review_defects: "skills/etsy_review_analyzer.skill.md",

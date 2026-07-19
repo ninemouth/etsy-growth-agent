@@ -105,6 +105,31 @@ assert.doesNotMatch(
   /find_expansion_opportunities:[^\n]+etsy_sourcing_finder/,
   "opportunity reports must not be polluted by sourcing skill output shape"
 );
+assert.match(
+  backgroundSource,
+  /ETSY_SKILL_PATHS[\s\S]*"skills\/etsy_crossborder_explorer\.skill\.md"/,
+  "cross-border explorer skill must be registered in the known skill path set"
+);
+assert.match(
+  backgroundSource,
+  /id:\s*"etsy_crossborder_explorer"[\s\S]*path:\s*"skills\/etsy_crossborder_explorer\.skill\.md"/,
+  "cross-border explorer skill must appear in listSkills()"
+);
+assert.match(
+  backgroundSource,
+  /validate_opportunity_sourcing:\s*\[\s*"skills\/etsy_sourcing_finder\.skill\.md"\s*\]/,
+  "validate_opportunity_sourcing must be an explicit two-stage sourcing action, not auto-loaded into find_expansion_opportunities"
+);
+assert.match(
+  js,
+  /validate_opportunity_sourcing[\s\S]*runFollowUpSourcingTask/,
+  "dashboard must render sourcing follow-up tasks and wire them to the two-stage action"
+);
+assert.match(
+  sidepanelSource,
+  /sidepanel-follow-up-sourcing-btn[\s\S]*activateGrowthAction\("validate_opportunity_sourcing"\)/,
+  "sidepanel must render sourcing follow-up tasks that activate the explicit two-stage action"
+);
 assert.match(agentLoopSource, /newestImageMessage/, "older screenshot data URLs should not be resent on every planning turn");
 assert.match(backgroundSource, /runInFlight/, "background should reject duplicate concurrent workflow starts on one port");
 assert.match(backgroundSource, /acquireWorkflowLease[\s\S]*releaseWorkflowLease/, "background should use a global workflow lease instead of a per-port lock only");

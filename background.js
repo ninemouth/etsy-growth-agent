@@ -117,6 +117,7 @@ const ETSY_SKILL_PATHS = new Set([
   "skills/etsy_keyword_analysis.skill.md",
   "skills/etsy_compliance_auditor.skill.md",
   "skills/etsy_event_driven_trend_radar.skill.md",
+  "skills/etsy_crossborder_explorer.skill.md",
 ]);
 
 const GROWTH_ACTION_SKILL_MAP = {
@@ -131,6 +132,7 @@ const GROWTH_ACTION_SKILL_MAP = {
   filter_supplier_sources: ["skills/etsy_sourcing_finder.skill.md"],
   detect_fulfillment_risk: ["skills/etsy_operations_tracker.skill.md"],
   find_expansion_opportunities: ["skills/etsy_product_opportunity_explorer.skill.md"],
+  validate_opportunity_sourcing: ["skills/etsy_sourcing_finder.skill.md"],
   explore_platform_trends: ["skills/etsy_platform_trends.skill.md"],
   create_growth_experiment: ["skills/etsy_operations_tracker.skill.md"],
   review_experiment_result: ["skills/etsy_operations_tracker.skill.md"],
@@ -199,6 +201,8 @@ async function dispatchEtsySkills(userInstruction, pageContext = {}) {
     /事件|突发|季节|母亲节|父亲节|情人节|圣诞|婚礼季|开学季|高温|寒潮|灾难|选举|运动会|奥运会|趋势雷达|event|radar|seasonal/i.test(inst);
   const hasProductOpportunityIntent =
     /选品|开发|类目|爆品|机会|牙刷|合规|eac|准入/.test(inst);
+  const hasCrossBorderExplorerIntent =
+    /跨境出海|多平台|跨境平台|出海缝隙|跨境电商|amazon|temu|ebay|shopee|速卖通|aliexpress|wish|lazada|shein|爆品榜|best seller|类目漫游|category roaming|产品蓝图|product blueprint/i.test(inst);
   const hasComplianceIntent =
     /合规|法规|认证|证书|侵权|商标|版权|cpc|cpsia|gpsr|reach|rohs|fcc|moCRA|禁售|安全审查|发布前审查/.test(inst);
   const hasKeywordIntent = /关键词|搜索词|keyword|seo|标签|tags?|标题词|长尾词|search intent/.test(inst);
@@ -208,6 +212,11 @@ async function dispatchEtsySkills(userInstruction, pageContext = {}) {
 
   if (hasEventDrivenTrendIntent && !hasExplicitSourcingIntent && !hasExplicitShopDiagnosisIntent) {
     pushUnique(matched, "skills/etsy_event_driven_trend_radar.skill.md");
+    return matched;
+  }
+
+  if (hasCrossBorderExplorerIntent && !hasExplicitSourcingIntent && !hasExplicitShopDiagnosisIntent && !hasPlatformTrendIntent) {
+    pushUnique(matched, "skills/etsy_crossborder_explorer.skill.md");
     return matched;
   }
 
@@ -258,7 +267,7 @@ async function dispatchEtsySkills(userInstruction, pageContext = {}) {
         const classificationPrompt = [
         {
           role: "system",
-          content: `你是一个 Etsy 跨境电商运营智能路由器。请根据用户的输入需求，从以下 10 个专有 AI 技能路径中选择所有最相关的技能路径：
+          content: `你是一个 Etsy 跨境电商运营智能路由器。请根据用户的输入需求，从以下 11 个专有 AI 技能路径中选择所有最相关的技能路径：
 1. "skills/etsy_product_opportunity_explorer.skill.md" (Etsy选品、类目需求分析、合规性风险审计)
 2. "skills/etsy_sourcing_finder.skill.md" (1688货源开发、美元跨境利润套利测算、运费关税核算)
 3. "skills/etsy_global_shop_optimizer.skill.md" (Etsy店铺经营诊断、自营 listings/订单/发货资料对账、ABC分级优化)
@@ -269,6 +278,7 @@ async function dispatchEtsySkills(userInstruction, pageContext = {}) {
 8. "skills/etsy_keyword_analysis.skill.md" (Etsy 站内搜索词、买家意图和标签证据分析)
 9. "skills/etsy_platform_trends.skill.md" (Etsy 平台公开搜索、Google Search/Trends 和趋势机会分析)
 10. "skills/etsy_event_driven_trend_radar.skill.md" (Etsy 事件驱动型季节性/突发事件选品与趋势机会雷达)
+11. "skills/etsy_crossborder_explorer.skill.md" (Amazon/Etsy/Temu/eBay/Shopee 多平台跨境出海趋势与产品蓝图探索)
 
 请直接输出一个包含路径字符串的 JSON 数组（例如：["skills/etsy_sourcing_finder.skill.md"]），不要包含任何其他说明字符，格式必须是标准的 JSON 数组。`
         },
@@ -418,6 +428,13 @@ async function listSkills() {
       name: "Etsy 事件驱动型选品与趋势机会雷达 (Auto)",
       description: "输入突发宏观事件或季节性窗口，全自动挖掘 Etsy 周边需求链、多语言长尾词及低风险替代品机会",
       icon: "📡",
+    },
+    {
+      id: "etsy_crossborder_explorer",
+      path: "skills/etsy_crossborder_explorer.skill.md",
+      name: "跨境电商多平台趋势与出海缝隙探索专家",
+      description: "基于 Amazon/Etsy/Temu/eBay/Shopee 等跨境平台首页、分类页或爆品榜自动发现出海趋势，输出轻定制、高溢价、跨境物流友好的产品蓝图",
+      icon: "🌍",
     }
   ];
 
@@ -967,6 +984,17 @@ chrome.runtime.onConnect.addListener((port) => {
               message: `🤖 [AI 智脑分流] 自动分析意图，调集底层运营能力: ${matchedNames.join(" + ")}`
             }
           });
+
+          if (message.growthActionId === "validate_opportunity_sourcing") {
+            port.postMessage({
+              type: "PROGRESS",
+              data: {
+                type: "thinking",
+                step: 0,
+                message: "[阶段 2：供应链寻源] 已承接前一轮选品机会，开始验证真实 1688/淘宝货源与跨境利润账本。",
+              }
+            });
+          }
 
           // Combine the system prompts of all matched skills
           let combinedSkillsMarkdown = baseMarkdown ? `${baseMarkdown}\n\n` : "";

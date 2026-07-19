@@ -116,6 +116,11 @@ const GROWTH_ACTIONS = {
     skillId: "etsy_sourcing_finder",
     instruction: "基于当前 Etsy 商品、候选扩品方向或平台趋势机会筛选国内供应商货源。请重点验证同款/相似款图片匹配、规格一致、起批量、采购价、跨境物流、Etsy 佣金、关税和 USD 净利润率；未获得真实供应商详情页时不得输出采购直达链接。",
   },
+  validate_opportunity_sourcing: {
+    label: "验证机会货源",
+    skillId: "etsy_sourcing_finder",
+    instruction: "基于前一轮选品/机会报告中的候选方向，进入供应链寻源第二阶段。请把机会目标当成待验证假设，优先用 1688/淘宝以图搜图或中文复合检索对齐真实货源，审计外观、规格、MOQ、采购价、跨境物流、Etsy 佣金、关税和 USD 净利润率；未取得真实供应商详情页时不得输出采购直达链接，并在报告中回写本次货源验证对原机会的支撑或推翻结论。",
+  },
   detect_fulfillment_risk: {
     label: "履约风险",
     skillId: "etsy_operations_tracker",
@@ -147,6 +152,7 @@ const GROWTH_ACTION_SKILL_PATHS = {
   analyze_review_defects: "skills/etsy_review_analyzer.skill.md",
   calculate_profit_guardrail: "skills/etsy_sourcing_finder.skill.md",
   filter_supplier_sources: "skills/etsy_sourcing_finder.skill.md",
+  validate_opportunity_sourcing: "skills/etsy_sourcing_finder.skill.md",
   detect_fulfillment_risk: "skills/etsy_operations_tracker.skill.md",
   find_expansion_opportunities: "skills/etsy_product_opportunity_explorer.skill.md",
   explore_platform_trends: "skills/etsy_platform_trends.skill.md",
@@ -994,6 +1000,7 @@ function showResult(response) {
       if (hasReport) {
         reportHtml = renderReport(rawData);
         report.innerHTML = sanitizeHtml(reportHtml);
+        attachSidepanelFollowUpListeners(report, rawData);
       } else {
         report.innerHTML = `<div class="empty-text">结果未包含标准报告字段，请查看 JSON 或 表格。</div>`;
       }
@@ -1039,6 +1046,7 @@ function showResult(response) {
       grid.innerHTML = `<div style="padding: 12px; color: var(--text2);">解析失败。</div>`;
       if (fallback && typeof fallback === "object" && (fallback.overview || fallback.analysis || fallback.summary)) {
         report.innerHTML = sanitizeHtml(renderReport(fallback));
+        attachSidepanelFollowUpListeners(report, fallback);
       } else {
         report.innerHTML = `<div style="padding: 12px; color: var(--text2);">解析失败。</div>`;
       }
@@ -1255,7 +1263,51 @@ function renderReport(resultObj) {
   if (depthMarkdown) html += `<div class="report-section" style="padding:10px;background:var(--bg3);border-radius:6px;margin-bottom:10px;">${renderMarkdown(depthMarkdown)}</div>`;
   const competitorMarkdown = renderCompetitorBenchmarksMarkdown(resultObj.competitor_benchmarks);
   if (competitorMarkdown) html += `<div class="report-section" style="padding:10px;background:var(--bg3);border-radius:6px;margin-bottom:10px;">${renderMarkdown(competitorMarkdown)}</div>`;
+
+  const followUpTasks = Array.isArray(resultObj.follow_up_tasks) ? resultObj.follow_up_tasks : [];
+  const sourcingTasks = followUpTasks.filter((task) => task?.task_type === "sourcing_validation");
+  if (sourcingTasks.length) {
+    const typeLabels = {
+      trend_validation: "趋势复核",
+      competitor_detail: "竞品详情补采",
+      compliance_precheck: "合规预审",
+      sourcing_validation: "供应商可行性验证",
+      listing_experiment: "Listing 实验",
+    };
+    let tasksHtml = `<div style="margin:10px 0;padding:10px;background:var(--bg3);border-radius:6px;"><h3 style="margin:0 0 8px 0;font-size:1.1em;color:var(--text);">选品 → 寻源 第二阶段</h3><div style="display:flex;flex-wrap:wrap;gap:8px;">`;
+    sourcingTasks.forEach((task, idx) => {
+      const label = typeLabels[task.task_type] || task.task_type || "后续任务";
+      tasksHtml += `<button class="btn btn-primary btn-sm sidepanel-follow-up-sourcing-btn" data-task-index="${idx}" style="font-size:12px;padding:6px 10px;">${escapeHtml(label)}：${escapeHtml(String(task.target || "").slice(0, 20))}${String(task.target || "").length > 20 ? "…" : ""}</button>`;
+    });
+    tasksHtml += `</div></div>`;
+    html += tasksHtml;
+  }
   return html;
+}
+
+function attachSidepanelFollowUpListeners(reportContainer, resultObj) {
+  const sourcingTasks = (Array.isArray(resultObj?.follow_up_tasks) ? resultObj.follow_up_tasks : []).filter(
+    (task) => task?.task_type === "sourcing_validation"
+  );
+  if (!sourcingTasks.length || !reportContainer) return;
+  reportContainer.querySelectorAll(".sidepanel-follow-up-sourcing-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const idx = Number(btn.dataset.taskIndex);
+      const task = sourcingTasks[idx];
+      if (!task) return;
+      activateGrowthAction("validate_opportunity_sourcing");
+      const extra = [
+        `【选品→寻源 第二阶段】`,
+        `任务目标：${task.target || ""}`,
+        `任务原因：${task.reason || ""}`,
+        task.expected_output ? `预期产出：${task.expected_output}` : "",
+        Array.isArray(task.required_evidence) && task.required_evidence.length ? `必须补齐的证据：${task.required_evidence.join("；")}` : "",
+      ].filter(Boolean).join("\n");
+      const current = $("instruction")?.value || "";
+      $("instruction").value = current ? `${current}\n\n${extra}` : extra;
+      addLog("info", "🚀", "已载入选品→寻源第二阶段任务，请确认指令后点击运行。");
+    });
+  });
 }
 
 const KEY_TRANSLATIONS = {
