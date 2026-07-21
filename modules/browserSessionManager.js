@@ -78,6 +78,19 @@ function workflowProtectedTabs(workflowId = "default") {
   return protectedTabs.get(workflowId);
 }
 
+async function focusCreatedTab(tab) {
+  if (!tab?.id) return false;
+  try {
+    await new Promise((resolve) => chrome.tabs.update(tab.id, { active: true }, () => resolve()));
+    if (Number.isInteger(Number(tab.windowId)) && chrome.windows?.update) {
+      await new Promise((resolve) => chrome.windows.update(tab.windowId, { focused: true }, () => resolve()));
+    }
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 export function protectWorkflowTab(workflowId = "default", tabId) {
   const id = Number(tabId);
   if (Number.isInteger(id)) {
@@ -107,16 +120,18 @@ export async function createOwnedTab({ workflowId = "default", url, active = fal
   });
   workflowTabs(workflowId).add(tab.id);
   scheduleSave();
+  if (active) await focusCreatedTab(tab);
   return tab;
 }
 
 export function createOwnedTabCallback({ workflowId = "default", url, active = false, openerTabId = null } = {}, callback) {
   const createArgs = { url, active };
   if (Number.isInteger(Number(openerTabId))) createArgs.openerTabId = Number(openerTabId);
-  chrome.tabs.create(createArgs, (tab) => {
+  chrome.tabs.create(createArgs, async (tab) => {
     if (!chrome.runtime.lastError && tab?.id !== undefined) {
       workflowTabs(workflowId).add(tab.id);
       scheduleSave();
+      if (active) await focusCreatedTab(tab);
     }
     callback(tab);
   });
@@ -163,4 +178,4 @@ export function listOwnedTabs(workflowId = "default") {
   return Array.from(ownedTabs.get(workflowId) || []);
 }
 
-export const __testInternals = { ownedTabs, protectedTabs, STORAGE_KEY, hydrateFromStorage, persistToStorage, serializeMap };
+export const __testInternals = { ownedTabs, protectedTabs, STORAGE_KEY, focusCreatedTab, hydrateFromStorage, persistToStorage, serializeMap };

@@ -4219,6 +4219,18 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
           actionLabel: toolAction.actionLabel,
           tabLifecycle: toolAction.lifecycle,
         });
+        sendProgress({
+          type: "tool_stage",
+          step,
+          toolName,
+          toolRunId,
+          actionKind: toolAction.actionKind,
+          actionLabel: toolAction.actionLabel,
+          tabLifecycle: toolAction.lifecycle,
+          stage: "tool_execution_started",
+          elapsedSeconds: 0,
+          message: `${toolAction.actionLabel} 已进入工具执行，正在发起浏览器动作。`,
+        });
         toolHeartbeatTimer = setInterval(() => {
           const elapsedSeconds = Math.max(1, Math.round((Date.now() - toolStartedAt) / 1000));
           sendProgress({
@@ -4231,7 +4243,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
             tabLifecycle: toolAction.lifecycle,
             elapsedSeconds,
             timeoutSeconds: Math.round(toolTimeoutMs / 1000),
-            message: `${toolAction.actionLabel} 已运行 ${elapsedSeconds} 秒，最长等待 ${Math.round(toolTimeoutMs / 1000)} 秒；${toolAction.lifecycle || "若超时会返回阶段错误并保留 workflow 上下文。"}。`,
+            message: `${toolAction.actionLabel} 工具执行已持续 ${elapsedSeconds} 秒，最长等待 ${Math.round(toolTimeoutMs / 1000)} 秒；当前可能在等待页面加载、DOM 可读或截图保存。${toolAction.lifecycle ? ` ${toolAction.lifecycle}。` : ""}`,
           });
         }, 30000);
         toolResult = await runToolWithTimeout(toolName, executableToolArgs);

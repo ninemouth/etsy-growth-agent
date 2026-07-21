@@ -142,6 +142,8 @@ assert.match(toolRegistrySource, /getTabForCapture[\s\S]*isCapturableTabUrl[\s\S
 assert.match(agentLoopSource, /captureFullPageScreenshot[\s\S]*captureVisibleTab_viewport/, "Etsy detail-page loop screenshots should prefer full-page capture and retain viewport fallback");
 assert.match(toolRegistrySource, /createOwnedTab[\s\S]*closeOwnedTab/, "Etsy crawl tabs should have centralized workflow ownership");
 assert.match(browserSessionManagerSource, /openerTabId[\s\S]*chrome\.tabs\.create/, "workflow-created tabs should preserve the source tab as opener instead of replacing the shop page");
+assert.match(browserSessionManagerSource, /function focusCreatedTab[\s\S]*chrome\.tabs\.update\(tab\.id,\s*\{\s*active:\s*true\s*\}[\s\S]*chrome\.windows\.update\(tab\.windowId,\s*\{\s*focused:\s*true\s*\}/, "active workflow tabs should be explicitly selected and their window focused");
+assert.match(browserSessionManagerSource, /createOwnedTabCallback[\s\S]*if \(active\) await focusCreatedTab\(tab\)/, "callback-created visible evidence tabs should be focused after creation");
 assert.match(browserSessionManagerSource, /protectWorkflowTab[\s\S]*isProtectedWorkflowTab[\s\S]*closeOwnedTab[\s\S]*return false/, "workflow tab manager must refuse to close protected source tabs");
 assert.match(browserSessionManagerSource, /cleanupOwnedTabs[\s\S]*protectedIds[\s\S]*filter\(\(id\) => !protectedIds\.has\(id\)\)/, "workflow cleanup must exclude protected source tabs");
 assert.match(backgroundSource, /protectWorkflowTab\(checkpointKey,\s*tab\.id\)/, "background must register the originating shop tab as protected for the workflow");
@@ -362,6 +364,7 @@ assert.match(backgroundSource, /acquireWorkflowSlot[\s\S]*updateWorkflowSlot[\s\
 assert.match(backgroundSource, /GET_WORKFLOW_RUNTIME_STATUS[\s\S]*getWorkflowSchedulerState/, "UI should be able to query the real background workflow runtime state");
 assert.match(agentLoopSource, /__workflowContext[\s\S]*toolRunId[\s\S]*recordWorkflowExecutionEvent/, "tool execution should receive a unified workflow context and write execution ledger events");
 assert.match(agentLoopSource, /tool_planned[\s\S]*tool_started[\s\S]*tool_finished/, "tool execution ledger should record planned, started and finished events");
+assert.match(agentLoopSource, /stage:\s*"tool_execution_started"[\s\S]*正在发起浏览器动作/, "tool progress should distinguish accepted execution from later browser/page-read waiting");
 assert.match(toolRegistrySource, /getWorkflowIdFromArgs[\s\S]*__workflowContext[\s\S]*isToolCancellationRequested/, "tool registry should understand the unified workflow context and cancellation checks");
 assert.doesNotMatch(contentSource, /Привет|Здравствуйте|Спасибо|Пожалуйста/, "content overlay should not contain Russian copy in the Etsy plugin UI");
 assert.match(backgroundSource, /resumeState:\s*shouldResumeFromCheckpoint\s*\?/, "background should pass resumable workflow state into the agent loop");
