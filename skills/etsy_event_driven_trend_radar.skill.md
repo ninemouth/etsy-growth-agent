@@ -84,6 +84,7 @@
 ## 🔍 证据与边界
 
 - 必须使用 `search_in_browser` 获取 Etsy 真实搜索页、Google Search 和 Google Trends 页面截图证据。
+- 支持使用 `search_in_browser` 查询社交与新闻源（`pinterest`, `pinterest_trends`, `tiktok`, `instagram`, `reddit`, `google_news`）获取外围舆情与种草热度截图。
 - Google Trends 截图必须包含 Interest over time / Related queries / Related topics 等核心模块；若只加载壳页，则 `demand_signal` 必须写 `assumption` 或 `blocked`。
 - 不得凭空捏造市场数据、竞品销量或平台搜索量。
 - 涉及儿童、化妆品、电器、电池、食品接触或 IP 时，下一步必须进入 `etsy_compliance_auditor` 合规审查。

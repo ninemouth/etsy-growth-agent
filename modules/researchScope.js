@@ -2,6 +2,8 @@
 // This is intentionally deterministic: page role must be known before an LLM
 // decides which evidence path or business framing to use.
 
+import { getUpcomingSeasonalContext } from './seasonalCalendar.js';
+
 const BROAD_KEYWORDS = new Set([
   "etsy",
   "gift",
@@ -166,6 +168,7 @@ export function buildResearchScope({
   shops = [],
   selectedSkillPath = "",
   growthActionId = "",
+  currentDate = new Date(),
 } = {}) {
   const url = normalizeUrl(pageContext.url || pageContext.currentPageUrl || "");
   const parsedUrl = parseUrl(url);
@@ -174,6 +177,7 @@ export function buildResearchScope({
   const title = normalizeText(pageContext.title || "");
   const seedKeywords = inferSeedKeywords(pageContext, userInstruction, parsedUrl);
   const explicitInstructionKeywords = extractInstructionKeywords(userInstruction);
+  const hasUserSeedKeyword = hasSpecificKeyword(seedKeywords);
   const listingId = extractListingIdFromUrl(url);
   const shopSlug = extractShopSlugFromUrl(url);
   const isEtsy = /(^|\.)etsy\.com$/i.test(host);
@@ -186,10 +190,26 @@ export function buildResearchScope({
   const wantsCompetitor = /竞品|对手|benchmark|competitor|top shop|头部店铺|高排名/i.test(userInstruction);
   const wantsTrend = /趋势|trend|season|需求|market|平台|机会|opportunit/i.test(userInstruction) || growthActionId === "explore_platform_trends" || /etsy_platform_trends/.test(selectedSkillPath);
 
+  const isPredictive = wantsTrend && /预测|未来|前瞻|下一季度|下半|秋季|冬季|春季|夏季|fall|autumn|winter|spring|summer|future|next season|q3|q4/i.test(userInstruction);
+  let targetSeason = null;
+  let seasonalContext = null;
+  let finalSeedKeywords = [...seedKeywords];
+
+  if (isPredictive) {
+    const currentMonth = currentDate instanceof Date && !Number.isNaN(currentDate.getTime())
+      ? currentDate.getMonth()
+      : new Date().getMonth();
+    seasonalContext = getUpcomingSeasonalContext(currentMonth);
+    targetSeason = seasonalContext.seasonName;
+    if (seasonalContext.seedKeywords) {
+      finalSeedKeywords = unique([...seasonalContext.seedKeywords, ...seedKeywords]).slice(0, 8);
+    }
+  }
+
   let entryPageType = "unknown";
   let sourcePageRole = "unknown";
   let targetType = "unknown";
-  let targetName = seedKeywords[0] || "";
+  let targetName = finalSeedKeywords[0] || "";
   let targetUrl = url;
   let isSelf = false;
   let confidence = "low";
@@ -213,14 +233,14 @@ export function buildResearchScope({
     entryPageType = "etsy_search";
     sourcePageRole = "platform_discovery";
     targetType = "keyword";
-    targetName = extractSearchQuery(parsedUrl, pageContext) || seedKeywords[0] || "";
+    targetName = extractSearchQuery(parsedUrl, pageContext) || finalSeedKeywords[0] || "";
     confidence = targetName ? "high" : "medium";
     if (!targetName) missingInputs.push("search_keyword");
   } else if (isHome) {
     entryPageType = "etsy_home";
-    sourcePageRole = hasSpecificKeyword(seedKeywords) ? "user_keyword_only" : "platform_discovery";
-    targetType = hasSpecificKeyword(seedKeywords) ? "keyword" : "unknown";
-    targetName = hasSpecificKeyword(seedKeywords) ? seedKeywords[0] : "";
+    sourcePageRole = hasUserSeedKeyword ? "user_keyword_only" : "platform_discovery";
+    targetType = hasUserSeedKeyword || isPredictive ? "keyword" : "unknown";
+    targetName = hasUserSeedKeyword || isPredictive ? finalSeedKeywords[0] : "";
     confidence = targetName ? "medium" : "low";
     if (!targetName) missingInputs.push("keyword_or_category");
   } else if (url) {
@@ -231,11 +251,11 @@ export function buildResearchScope({
     confidence = targetName ? "medium" : "low";
     if (!targetName) missingInputs.push("etsy_keyword_or_category");
   } else {
-    if (hasSpecificKeyword(seedKeywords)) {
+    if (hasUserSeedKeyword || isPredictive) {
       entryPageType = "unknown";
-      sourcePageRole = "user_keyword_only";
+      sourcePageRole = hasUserSeedKeyword ? "user_keyword_only" : "platform_discovery";
       targetType = "keyword";
-      targetName = seedKeywords[0];
+      targetName = finalSeedKeywords[0];
       confidence = "medium";
     } else {
       missingInputs.push("page_or_keyword");
@@ -255,7 +275,7 @@ export function buildResearchScope({
   const autoDiscoveryRequired = Boolean(
     wantsTrend &&
     weakEntry &&
-    !hasSpecificKeyword(weakContextKeywords)
+    (!hasSpecificKeyword(weakContextKeywords) || (isPredictive && !hasUserSeedKeyword))
   );
   const needsUserClarification = Boolean(
     !autoDiscoveryRequired &&
@@ -283,6 +303,11 @@ export function buildResearchScope({
     "google_uk_search",
     "google_trends_us",
     "google_trends_uk",
+    "pinterest_search",
+    "pinterest_trends",
+    "tiktok_search",
+    "reddit_search",
+    "google_news",
   ];
 
   return {
@@ -295,7 +320,7 @@ export function buildResearchScope({
       is_self: isSelf,
       confidence,
     },
-    seed_keywords: seedKeywords,
+    seed_keywords: finalSeedKeywords,
     seed_category: pageContext.category || pageContext.etsyCategory || "",
     seed_product_type: pageContext.productType || pageContext.h1 || "",
     market_locale: inferMarketLocale(pageContext, userInstruction),
@@ -310,6 +335,9 @@ export function buildResearchScope({
     selected_skill_path: selectedSkillPath || "",
     growth_action_id: growthActionId || "",
     page_role_notice: buildPageRoleNotice(entryPageType, sourcePageRole, targetName),
+    is_predictive: isPredictive,
+    target_season: targetSeason,
+    seasonal_context: seasonalContext,
   };
 }
 

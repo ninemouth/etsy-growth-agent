@@ -481,6 +481,8 @@ export const __testInternals = {
   getPlatformTrendStageGuard,
   compactPlatformTrendRunawayToolHistory,
   checkpointSkillMatches,
+  hasEvidenceSource,
+  validateEvidenceLedgerEntries,
 };
 
 async function saveAgentCheckpoint(sessionKey, checkpoint = {}) {
@@ -1449,6 +1451,17 @@ const EVIDENCE_SOURCE_TYPE_ALIASES = {
   user_provided: "user_input",
   user_data: "user_input",
   user_note: "user_input",
+  pinterest: "pinterest_social",
+  pinterest_trends: "pinterest_social",
+  pinterest_search: "pinterest_social",
+  tiktok: "tiktok_social",
+  tiktok_search: "tiktok_social",
+  instagram: "tiktok_social",
+  instagram_search: "tiktok_social",
+  reddit: "reddit_social",
+  reddit_search: "reddit_social",
+  news: "google_news",
+  news_search: "google_news",
 };
 
 function normalizeEvidenceLedgerSourceType(sourceType = "") {
@@ -1506,8 +1519,28 @@ function hasEvidenceSource(toolHistory = [], pageContext = {}, sourceType = "") 
   if (normalized === "google_search") {
     return hasSuccessfulToolCall(toolHistory, (entry) => {
       const engine = String(entry.arguments?.engine || "").toLowerCase();
-      return entry.tool === "search_in_browser" && (engine === "google" || engine === "google_us");
+      return entry.tool === "search_in_browser" && ["google", "google_us"].includes(engine);
     });
+  }
+  if (normalized === "pinterest_social") {
+    return hasSuccessfulToolCall(toolHistory, (entry) =>
+      entry.tool === "search_in_browser" && ["pinterest", "pinterest_trends"].includes(String(entry.arguments?.engine || "").toLowerCase())
+    );
+  }
+  if (normalized === "tiktok_social") {
+    return hasSuccessfulToolCall(toolHistory, (entry) =>
+      entry.tool === "search_in_browser" && ["tiktok", "instagram"].includes(String(entry.arguments?.engine || "").toLowerCase())
+    );
+  }
+  if (normalized === "reddit_social") {
+    return hasSuccessfulToolCall(toolHistory, (entry) =>
+      entry.tool === "search_in_browser" && String(entry.arguments?.engine || "").toLowerCase() === "reddit"
+    );
+  }
+  if (normalized === "google_news") {
+    return hasSuccessfulToolCall(toolHistory, (entry) =>
+      entry.tool === "search_in_browser" && String(entry.arguments?.engine || "").toLowerCase() === "google_news"
+    );
   }
   if (normalized === "google_trends") {
     return hasSuccessfulToolCall(toolHistory, (entry) =>
@@ -1917,7 +1950,7 @@ function validateEvidenceLedgerEntries({
   label,
   toolHistory,
   pageContext,
-  allowedTypes = ["page_dom", "screenshot_visual", "etsy_api", "etsy_search", "google_search", "google_trends", "sourcing_search", "supplier_page", "official_policy", "official_regulation", "user_input", "assumption"],
+  allowedTypes = ["page_dom", "screenshot_visual", "etsy_api", "etsy_search", "google_search", "google_trends", "sourcing_search", "supplier_page", "official_policy", "official_regulation", "pinterest_social", "tiktok_social", "reddit_social", "google_news", "user_input", "assumption"],
 }) {
   const errors = [];
   if (!Array.isArray(entries) || entries.length === 0) {
@@ -2581,7 +2614,7 @@ function validateKeywordReport(out, toolHistory = [], pageContext = {}) {
       label,
       toolHistory,
       pageContext,
-      allowedTypes: ["page_dom", "screenshot_visual", "etsy_search", "google_search", "google_trends", "etsy_api", "user_input", "assumption"],
+      allowedTypes: ["page_dom", "screenshot_visual", "etsy_search", "google_search", "google_trends", "etsy_api", "pinterest_social", "tiktok_social", "reddit_social", "google_news", "user_input", "assumption"],
     }));
     if (!hasValue(item?.keyword || item?.title || item?.name)) errors.push(`${label} 缺少 keyword/title/name，无法和报告表格同步展示。`);
     if (tags.length > 13) errors.push(`${label} 输出了 ${tags.length} 个 Etsy tags，超过 Etsy Listing 最多 13 个标签的硬限制。`);
@@ -2619,7 +2652,7 @@ function validateListingReport(out, toolHistory = [], pageContext = {}) {
       label,
       toolHistory,
       pageContext,
-      allowedTypes: ["page_dom", "screenshot_visual", "etsy_search", "google_search", "google_trends", "supplier_page", "official_policy", "official_regulation", "user_input", "assumption"],
+      allowedTypes: ["page_dom", "screenshot_visual", "etsy_search", "google_search", "google_trends", "supplier_page", "official_policy", "official_regulation", "pinterest_social", "tiktok_social", "reddit_social", "google_news", "user_input", "assumption"],
     }));
     if (tags.length > 13) errors.push(`${label} 输出了 ${tags.length} 个 Etsy tags，超过 Etsy Listing 最多 13 个标签的硬限制。`);
     if (/已填写|confirmed|verified|已确认|确定属性/i.test(itemText) && !hasAnyLedgerType(ledger, ["page_dom", "user_input", "supplier_page"])) {
@@ -2648,7 +2681,7 @@ function validateProductOpportunityReport(out, toolHistory = [], pageContext = {
       label,
       toolHistory,
       pageContext,
-      allowedTypes: ["page_dom", "screenshot_visual", "etsy_search", "google_search", "google_trends", "etsy_api", "official_policy", "official_regulation", "user_input", "assumption"],
+      allowedTypes: ["page_dom", "screenshot_visual", "etsy_search", "google_search", "google_trends", "etsy_api", "official_policy", "official_regulation", "pinterest_social", "tiktok_social", "reddit_social", "google_news", "user_input", "assumption"],
     }));
     if (OPPORTUNITY_STRONG_CLAIM_RE.test(itemText) && !hasAnyLedgerType(ledger, ["etsy_search", "google_search", "google_trends", "page_dom"]) && !hasAssumptionFallback(ledger, /机会|需求|竞争|趋势|待验证|未取得/i)) {
       errors.push(`${label} 输出蓝海/爆品/高增长/低竞争/机会评分等强结论，但没有 Etsy/Google/Trends/页面证据。`);
@@ -2817,7 +2850,7 @@ function validatePlatformTrendReport(out, toolHistory = [], pageContext = {}) {
       label,
       toolHistory,
       pageContext,
-      allowedTypes: ["page_dom", "screenshot_visual", "etsy_search", "google_search", "google_trends", "official_policy", "official_regulation", "user_input", "assumption"],
+      allowedTypes: ["page_dom", "screenshot_visual", "etsy_search", "google_search", "google_trends", "official_policy", "official_regulation", "pinterest_social", "tiktok_social", "reddit_social", "google_news", "user_input", "assumption"],
     }));
     const itemText = JSON.stringify(item);
     if (TREND_STRONG_CLAIM_RE.test(itemText) && !hasTrendSampleScope(item)) {
@@ -3023,7 +3056,7 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
         const observedValue = entry?.observed_value;
         const usedFor = entry?.used_for;
         const limitation = entry?.limitation;
-        const allowedTypes = ["page_dom", "screenshot_visual", "etsy_api", "etsy_search", "google_search", "google_trends", "official_policy", "official_regulation", "user_input", "assumption"];
+        const allowedTypes = ["page_dom", "screenshot_visual", "etsy_api", "etsy_search", "google_search", "google_trends", "official_policy", "official_regulation", "pinterest_social", "tiktok_social", "reddit_social", "google_news", "user_input", "assumption"];
         if (!allowedTypes.includes(sourceType)) {
           errors.push(`${prefix} 的 source_type 无效，必须是 ${allowedTypes.join(" / ")}。`);
         }

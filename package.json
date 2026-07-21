@@ -13,6 +13,7 @@
     "test:compliance": "node scripts/compliance-smoke.mjs",
     "test:etsy-api": "node scripts/etsy-api-contract-smoke.mjs",
     "test:trends": "node scripts/platform-trends-smoke.mjs",
+    "test:predictive-trends": "node scripts/predictive-trends-smoke.mjs",
     "test:trend-query-planner": "node scripts/trend-query-planner-smoke.mjs",
     "test:updates": "node scripts/update-manager-smoke.mjs",
     "test:research-scope": "node scripts/research-scope-matrix-smoke.mjs",

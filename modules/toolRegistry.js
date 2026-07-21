@@ -184,7 +184,7 @@ function shouldLocalizeSearchQuery(engine = "", query = "") {
   const normalizedEngine = String(engine || "").toLowerCase();
   const value = String(query || "").trim();
   if (!value) return false;
-  if (!["amazon", "etsy", "google", "google_us", "google_ru", "google_trends", "bing"].includes(normalizedEngine)) return false;
+  if (!["amazon", "etsy", "google", "google_us", "google_ru", "google_trends", "bing", "pinterest", "pinterest_trends", "tiktok", "instagram", "reddit", "google_news"].includes(normalizedEngine)) return false;
   if (/https?:\/\//i.test(value)) return false;
   if (/["“”']/.test(value)) return false;
   if (/^[A-Z][A-Za-z0-9]+(?:[A-Z][A-Za-z0-9]+)+$/.test(value)) return false; // likely brand/shop name
@@ -321,6 +321,12 @@ function buildSearchUrl(engine, targetQuery, searchType = "listing") {
     taobao: `https://s.taobao.com/search?q=${encodedQuery}&_input_charset=utf-8`,
     jd: `https://search.jd.com/Search?keyword=${encodedQuery}&enc=utf-8`,
     pinduoduo: `https://mobile.yangkeduo.com/search_result.html?search_key=${encodedQuery}`,
+    pinterest: `https://www.pinterest.com/search/pins/?q=${encodedQuery}`,
+    pinterest_trends: `https://trends.pinterest.com/?q=${encodedQuery}`,
+    tiktok: `https://www.tiktok.com/search?q=${encodedQuery}`,
+    instagram: `https://www.instagram.com/explore/tags/${encodedQuery.replace(/\s+/g, "")}`,
+    reddit: `https://www.reddit.com/search/?q=${encodedQuery}`,
+    google_news: `https://www.google.com/search?q=${encodedQuery}&tbm=nws`,
   };
   return engines[engine] || engines.google;
 }
@@ -2552,12 +2558,12 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
       : normalizedEngine === "etsy"
       ? "Etsy 搜索结果页取证"
       : "Google Search 结果页取证";
-    const shouldAutoCloseSearchTab = !keepTab && ["google", "google_us", "google_ru", "google_trends", "bing", "etsy"].includes(normalizedEngine);
+    const shouldAutoCloseSearchTab = !keepTab && ["google", "google_us", "google_ru", "google_trends", "bing", "etsy", "pinterest", "pinterest_trends", "tiktok", "instagram", "reddit", "google_news"].includes(normalizedEngine);
     const maxPollAttempts = normalizedEngine === "google_trends" ? 44 : normalizedEngine === "etsy" ? 30 : 20;
     const minStablePollAttempts = normalizedEngine === "google_trends" ? 8 : 1;
     const pollDelayMs = 500;
     const attachSearchScreenshotArtifact = async (tabId, payload = {}) => {
-      if (!["google", "google_us", "google_trends", "etsy"].includes(normalizedEngine)) return payload;
+      if (!["google", "google_us", "google_trends", "etsy", "pinterest", "pinterest_trends", "tiktok", "instagram", "reddit", "google_news"].includes(normalizedEngine)) return payload;
       if (payload.screenshotRef || payload.screenshotCaptured) return payload;
       try {
         emitSearchProgress("search_screenshot_started", `${searchActionLabel} 正在保存搜索页截图证据。`, { tabId, searchUrl: payload.searchUrl });

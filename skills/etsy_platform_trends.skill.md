@@ -61,19 +61,25 @@
 - 严禁输出 `XXXX`、`example.com`、`placeholder`、`待补链接` 等占位链接；没有真实 URL 时必须写阻断原因和下一步验证动作。
 - 不得在面向用户的报告正文中暴露工具函数名、标签页清理动作或内部技术措辞；必须翻译成“公开页面取证”“趋势页未稳定加载”“竞品详情页未完成”等业务语言。
 
-## 关键词漏斗与 Google Trends 查询恢复
+## 关键词漏斗、前瞻选品与社交舆情审计
 
-当任务需要趋势/季节性判断时，必须先建立关键词漏斗，再调用 Google Trends：
+当任务需要趋势/季节性/前瞻性判断时，必须先建立关键词漏斗，再进行多源验证：
 
-1. **意图拆解**：把用户意图拆成 3 个以上的维度（如场景、人群、用途、材质、情感价值、价格带）。
-2. **发现词族**：从 Etsy 搜索、Google Search 和页面公开线索中生成至少 6 个候选查询词，覆盖 exact（精确长尾）、parent_proxy（上位品类头词）、adjacent_proxy（相邻需求表达）。
-3. **打分筛选**：对每个候选词从以下 5 个维度打分（0–10）：
-   - `etsy_attention`：Etsy 站内可见热度/竞争饱和度（0–3）
-   - `cross_site_coverage`：Google Search / 社交媒体覆盖度（0–2）
-   - `future_signal`：未来 3–6 个月趋势/季节性信号（0–2）
+1. **前瞻时令与生命周期判断 (Operations Timeline & Trend Stages)**：
+   - 评估当前项目距离目标季节的距离（如在 7 月预测秋季）。
+   - 计算 **上架倒推时间窗**：打样制作 (3-5天) + 寻源备货 (5-7天) + 物流运输 (7-15天) + Etsy SEO 权重积累 (10-14天)。总前置时效约 25-40 天。
+   - 判断趋势所处的生命周期：`dormant` (潜伏期：打样设计)、`sprouting` (萌芽期：上架曝光黄金期)、`surging` (爆发期：备货热卖)、`peaked` (衰退期：降价清仓)。
+2. **意图拆解与多源发现**：把用户意图拆成 3 个以上的维度（如场景、人群、用途、材质、情感价值、价格带）。
+3. **发现词族**：从 Etsy 搜索、Google Search 以及外围社交/新闻平台中生成至少 6 个候选查询词。
+   - **社交舆情审计 (Social Buzz Audit)**：调用 `search_in_browser` 查询社交平台（`pinterest`, `pinterest_trends`, `tiktok`, `instagram`, `reddit`）或新闻（`google_news`），捕获非周期性潮流 Meme、小众审美、社媒种草、合规新闻等外围舆情。
+   - 候选词覆盖 exact（精确长尾）、parent_proxy（上位品类头词）、adjacent_proxy（相邻需求表达）。
+4. **打分筛选**：对每个候选词从以下 5 个维度打分（满分 8 分，以评估周期规律和外围事件的组合驱动力）：
+   - `seasonal_cyclicality`：周期时令评分（0–2，根据历史循环确定性）
+   - `social_buzz_acceleration`：社交媒体增长加速度（0–2，来源于 Pinterest/TikTok/Reddit 的互动和种草反馈）
+   - `news_event_driver`：政策/官方指南/外围事件驱动（0–1，如 Google News 的合规动态或 Etsy Seller Handbook）
    - `seller_fit`：中小微卖家可切入度（轻小、低认证、可定制）（0–3）
-4. **聚焦词**：选出 2–4 个 focus_queries 进入 Google Trends 取证。
-5. **Google Trends 3 次恢复上限**：
+5. **聚焦词与 Google Trends 验证**：选出 2–4 个 focus_queries 进入 Google Trends 取证。
+6. **Google Trends 3 次恢复上限**：
    - 第一次查询若显示 `not enough data`，退宽一个语义层级，使用 parent_proxy。
    - 第二次仍无数据，切换到相邻同义词族 adjacent_proxy。
    - 第三次仍无数据，则停止 Google Trends 搜索，将趋势需求信号降级为 `assumption`/`blocked`，写入 `blocking_gaps`。
@@ -140,12 +146,12 @@
           "query_en": "打分后的英文词",
           "scope_relation": "exact|parent_proxy|adjacent_proxy",
           "decision": "focus|reserve|reject",
-          "etsy_attention": 0,
-          "cross_site_coverage": 0,
-          "future_signal": 0,
+          "seasonal_cyclicality": 0,
+          "social_buzz_acceleration": 0,
+          "news_event_driver": 0,
           "seller_fit": 0,
           "total_score": 0,
-          "evidence": "打分依据"
+          "evidence": "打分依据（需说明周期性、社媒舆情或事件政策等来源证据）"
         }
       ],
       "focus_queries": ["最终进入 Google Trends 的 2-4 个词"]
@@ -211,7 +217,7 @@
         },
         "evidence_ledger": [
           {
-            "source_type": "etsy_search|google_search|google_trends|page_dom|screenshot_visual|official_policy|assumption|blocked",
+            "source_type": "etsy_search|google_search|google_trends|pinterest_social|tiktok_social|reddit_social|google_news|page_dom|screenshot_visual|official_policy|assumption|blocked",
             "source_ref": "",
             "observed_value": "",
             "used_for": "",
