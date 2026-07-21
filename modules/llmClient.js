@@ -304,7 +304,6 @@ function buildChatBody(profile, messages, finalTemperature, isStreaming) {
     if (profile.enableThinking !== false && /qwen3|reason/i.test(profile.model)) body.enable_thinking = true;
     if (profile.enableSearch !== false) {
       body.enable_search = true;
-      body.tools = [{ type: "web_search" }];
     }
   } else if (isGeminiModel) {
     body.tools = [{ googleSearch: {} }];
@@ -317,7 +316,7 @@ function buildChatBody(profile, messages, finalTemperature, isStreaming) {
   return body;
 }
 
-function buildRequestBody(profile, messages, protocol, finalTemperature, isStreaming) {
+export function buildRequestBody(profile, messages, protocol, finalTemperature, isStreaming) {
   if (profile.provider === "anthropic") {
     const systemMsg = messages.find((m) => m.role === "system")?.content || "";
     const userMessages = messages.filter((m) => m.role !== "system");

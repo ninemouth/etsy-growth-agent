@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { resolveLLMProfiles } from "../modules/llmClient.js";
+import { buildRequestBody, resolveLLMProfiles } from "../modules/llmClient.js";
 
 const profiles = resolveLLMProfiles({
   apiKey: "test-key",
@@ -13,6 +13,17 @@ assert.equal(profiles.length, 2, "qwen3.6-plus should get a same-provider fallba
 assert.equal(profiles[0].model, "qwen3.6-plus");
 assert.equal(profiles[1].model, "qwen3.5-plus");
 assert.equal(profiles[0].provider, "qwen");
+
+const qwenChatBody = buildRequestBody(
+  profiles[0],
+  [{ role: "user", content: "hello" }],
+  "chat",
+  0.2,
+  false
+);
+assert.equal(qwenChatBody.enable_search, true, "Qwen chat requests should keep DashScope search enabled");
+assert.equal(qwenChatBody.enable_thinking, true, "Qwen reasoning models should keep thinking enabled");
+assert.equal(qwenChatBody.tools, undefined, "Qwen chat/completions must not send Responses-style web_search tools");
 
 const source = fs.readFileSync("modules/llmClient.js", "utf8");
 assert.match(source, /function resolveProtocol[\s\S]*profile\.provider === "qwen"\) return "chat"/, "Qwen should use OpenAI-compatible chat/completions by default");
