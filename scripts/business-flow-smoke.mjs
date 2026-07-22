@@ -1595,10 +1595,57 @@ assert.deepEqual(
   ["page_dom", "screenshot_visual", "screenshot_visual", "screenshot_visual", "etsy_search", "google_search"],
   "auto-repair should canonicalize page, screenshot and Google Search source_type aliases"
 );
-assert.equal(
-  repairedShopOptimizerSourceTypeAliases.parsed.output.data[0].evidence_ledger.at(-1).source_type,
-  "assumption",
+assert.ok(
+  repairedShopOptimizerSourceTypeAliases.parsed.output.data[0].evidence_ledger.some((entry) =>
+    entry.source_type === "assumption" && /Etsy|API|未配置|未取得/i.test(`${entry.source_ref || ""} ${entry.observed_value || ""} ${entry.limitation || ""}`)
+  ),
   "auto-repair should canonicalize API aliases and then downgrade them when no Etsy API evidence exists"
+);
+
+const thinShopHealthReport = {
+  type: "final",
+  output: {
+    overview: "店铺体检报告：当前店铺视觉统一，但需要更明确的垂直定位和欧美买家场景。",
+    analysis: "已读取当前店铺页面，并完成 Etsy 搜索、Google Search US 和 Google Trends US 取证。建议优先优化首图、标题与商品矩阵。",
+    summary: "先改主推款首图和标题，再复盘点击与加购。",
+    data: [{
+      plan_id: "B-1",
+      title: "首图与标题整改",
+      diagnosis_level: "B",
+      direction: "优化主推款首图卖点、SEO 标题和商品矩阵。",
+    }],
+  },
+};
+assert.notDeepEqual(
+  validateReport(thinShopHealthReport, "", "skills/etsy_global_shop_optimizer.skill.md", validShopEvidenceHistory, meaningfulPageContext),
+  [],
+  "thin shop health reports should fail before skeleton auto-repair"
+);
+const repairedThinShopHealthReport = autoRepairFinalReportForDelivery(thinShopHealthReport, {
+  skillId: "skills/etsy_global_shop_optimizer.skill.md",
+  toolHistory: validShopEvidenceHistory,
+  pageContext: meaningfulPageContext,
+});
+assert.equal(repairedThinShopHealthReport.changed, true, "shop optimizer auto-repair should generate a report skeleton for thin reports when evidence exists");
+assert.ok(
+  Array.isArray(repairedThinShopHealthReport.parsed.output.diagnostic_depth_matrix) &&
+  repairedThinShopHealthReport.parsed.output.diagnostic_depth_matrix.length >= 7,
+  "shop health skeleton should include the required 7 diagnostic dimensions"
+);
+assert.ok(
+  repairedThinShopHealthReport.parsed.output.competitor_benchmarks.length >= 2,
+  "shop health skeleton should generate per-competitor benchmarks from opened competitor pages"
+);
+assert.ok(
+  repairedThinShopHealthReport.parsed.output.data[0].evidence_ledger.some((entry) => entry.source_type === "etsy_search") &&
+  repairedThinShopHealthReport.parsed.output.data[0].evidence_ledger.some((entry) => entry.source_type === "google_search") &&
+  repairedThinShopHealthReport.parsed.output.data[0].evidence_ledger.some((entry) => entry.source_type === "google_trends"),
+  "shop health skeleton should bind Etsy, Google Search and Google Trends evidence ledgers"
+);
+assert.deepEqual(
+  validateReport(repairedThinShopHealthReport.parsed, "", "skills/etsy_global_shop_optimizer.skill.md", validShopEvidenceHistory, meaningfulPageContext),
+  [],
+  "auto-generated shop health skeleton should prevent QA from bouncing evidence-complete thin reports"
 );
 
 const dom = new JSDOM(html, {

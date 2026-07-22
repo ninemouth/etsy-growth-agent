@@ -240,6 +240,13 @@
      7. 信任资产、评价、政策与履约/物流。
    - `analysis` 正文必须与 `diagnostic_depth_matrix`、`competitor_benchmarks` 中的数据一致；不能正文写了比较表但结构化字段缺失。
 
+7. **店铺体检报告骨架不得省略**：
+   - 即使本轮证据有限，也必须先输出完整报告骨架，而不是只写“分析概述 / 深度商业诊断 / 核心建议”三段短文。
+   - `output` 顶层至少包含 `overview`、`analysis`、`summary`、`data`、`competitor_benchmarks`、`diagnostic_depth_matrix`。
+   - `data` 中每个整改方案至少包含 `plan_id`、`title`、`diagnosis_level`、`direction`、`evidence`、`stage_fit`、`buyer_scenario`、`evidence_ledger`、`first_actions`、`review_window`、`risk_guard`。
+   - 如果某一项缺少真实工具证据，不要伪造；写成 `assumption` 或 `blocking_gaps`，明确人工确认点。但只要 Etsy 搜索、Google Search/Trends、竞品页和截图证据已经存在，就必须把这些证据落到结构化字段，不能让最终报告显得单薄。
+   - 前台价格按本轮访问页面显示币种记录，并在证据账本写明区域/币种口径；店铺体检、关键词和机会对标不要为了展示而二次换算 USD。只有进入采购成本、物流、关税、平台扣费或利润率测算时，才统一到 USD 财务口径。
+
 ## 🔐 结构化证据账本硬规则
 
 每个 A/B/C 优化方案都必须带 `evidence_ledger`，用于把“对比数据”和“推导依据”拆成可审计来源：
