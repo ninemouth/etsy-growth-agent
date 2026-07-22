@@ -10,8 +10,9 @@ export async function getSettings() {
 }
 
 const LLM_ATTEMPT_TIMEOUT_MS = 60_000;
-const LLM_MAX_RETRIES = 2;
+const LLM_MAX_RETRIES = 4;
 const LLM_BODY_READ_TIMEOUT_MS = 90_000;
+const LLM_RATE_LIMIT_RETRY_DELAYS_MS = [5000, 15000, 30000];
 const PROVIDER_ENDPOINTS = {
   openai: "https://api.openai.com/v1",
   anthropic: "https://api.anthropic.com/v1/messages",
@@ -50,6 +51,44 @@ async function readStreamChunkWithTimeout(reader) {
   }
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseRetryAfterMs(response) {
+  const retryAfter = response.headers?.get?.("retry-after");
+  if (!retryAfter) return 0;
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 45_000);
+  const retryDateMs = Date.parse(retryAfter);
+  if (Number.isFinite(retryDateMs)) return Math.min(Math.max(0, retryDateMs - Date.now()), 45_000);
+  return 0;
+}
+
+function isRateLimitText(text = "") {
+  return /429|rate limit|limit_burst_rate|limit_requests|too many requests|please slow down/i.test(String(text || ""));
+}
+
+function computeRetryDelayMs(response, attemptIndex, responseText = "") {
+  if (response?.status === 429 || isRateLimitText(responseText)) {
+    return parseRetryAfterMs(response) || LLM_RATE_LIMIT_RETRY_DELAYS_MS[Math.min(attemptIndex, LLM_RATE_LIMIT_RETRY_DELAYS_MS.length - 1)];
+  }
+  return Math.min(1000 * (2 ** attemptIndex), 8000);
+}
+
+function describeLLMHttpError(status, text = "", profile = {}, endpoint = "") {
+  if (status === 429 || isRateLimitText(text)) {
+    return [
+      `LLM API 触发供应商频率限制 (${status}) [${profile.provider}/${profile.model}] [${endpoint}]。`,
+      "这不是 Responses API/Chat Completions 协议错误，而是模型服务限流或瞬时并发过高。",
+      "当前节点和浏览器证据已保存；请稍后发送“继续”，或降低并发/切换更高额度模型后重试。",
+      `原始响应: ${text}`,
+    ].join("\n");
+  }
+  const label = profile.provider === "anthropic" ? "Anthropic API" : "LLM API";
+  return `${label} 错误 (${status}) [${profile.provider}/${profile.model}] [${endpoint}]: ${text}`;
+}
+
 async function fetchWithRetry(url, options, maxRetries = LLM_MAX_RETRIES) {
   let delay = 1000;
   for (let i = 0; i < maxRetries; i++) {
@@ -59,9 +98,13 @@ async function fetchWithRetry(url, options, maxRetries = LLM_MAX_RETRIES) {
       const response = await fetch(url, { ...options, signal: controller.signal });
       if (response.status === 429 || response.status >= 500) {
         if (i === maxRetries - 1) return response;
+        let responseText = "";
+        try {
+          responseText = await response.clone().text();
+        } catch (_) {}
+        delay = computeRetryDelayMs(response, i, responseText);
         console.warn(`LLM API returned HTTP ${response.status}. Retrying in ${delay}ms (Attempt ${i + 1}/${maxRetries})...`);
-        await new Promise(r => setTimeout(r, delay));
-        delay *= 2;
+        await sleep(delay);
         continue;
       }
       return response;
@@ -69,8 +112,8 @@ async function fetchWithRetry(url, options, maxRetries = LLM_MAX_RETRIES) {
       const reason = err.name === "AbortError" ? `请求超过 ${LLM_ATTEMPT_TIMEOUT_MS / 1000} 秒` : err.message;
       if (i === maxRetries - 1) throw new Error(`LLM 请求超时或网络失败：${reason}`);
       console.warn(`LLM API network failure: ${reason}. Retrying in ${delay}ms (Attempt ${i + 1}/${maxRetries})...`);
-      await new Promise(r => setTimeout(r, delay));
-      delay *= 2;
+      await sleep(delay);
+      delay = Math.min(delay * 2, 8000);
     } finally {
       clearTimeout(timeoutId);
     }
@@ -405,8 +448,7 @@ async function callLLMWithProfile(profile, messages, streamCallback, isHighRando
 
   if (!response.ok) {
     const text = await response.text();
-    const label = profile.provider === "anthropic" ? "Anthropic API" : "LLM API";
-    throw createLLMError(`${label} 错误 (${response.status}) [${profile.provider}/${profile.model}] [${endpoint}]: ${text}`, profile, endpoint, response.status);
+    throw createLLMError(describeLLMHttpError(response.status, text, profile, endpoint), profile, endpoint, response.status);
   }
 
   if (isStreaming) {
@@ -549,3 +591,9 @@ async function readSSEStream(response, callback, format) {
 
   return fullText;
 }
+
+export const __testInternals = {
+  computeRetryDelayMs,
+  describeLLMHttpError,
+  isRateLimitText,
+};
