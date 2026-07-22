@@ -121,6 +121,7 @@ function getWorkflowIdFromArgs(args = {}) {
 }
 
 async function isToolCancellationRequested(args = {}) {
+  if (args.__toolRunState?.cancelled) return true;
   const workflowId = getWorkflowIdFromArgs(args);
   return workflowId !== "default" && await isWorkflowCancellationRequested(workflowId);
 }
@@ -188,9 +189,7 @@ function shouldLocalizeSearchQuery(engine = "", query = "") {
   if (/https?:\/\//i.test(value)) return false;
   if (/["“”']/.test(value)) return false;
   if (/^[A-Z][A-Za-z0-9]+(?:[A-Z][A-Za-z0-9]+)+$/.test(value)) return false; // likely brand/shop name
-  if (/[\u4e00-\u9fa5]/.test(value)) return true;
-  if (normalizedEngine === "etsy" && value.split(/\s+/).length >= 2) return false;
-  return normalizedEngine !== "etsy";
+  return /[\u4e00-\u9fa5]/.test(value);
 }
 
 export function hasValidEtsySearchEvidence(result = {}) {
@@ -306,6 +305,7 @@ function normalizeSearchEngine(engine = "") {
 
 function buildSearchUrl(engine, targetQuery, searchType = "listing") {
   const encodedQuery = encodeURIComponent(targetQuery);
+  const etsyRegionParams = "ship_to=US";
   const engines = {
     google: `https://www.google.com/search?q=${encodedQuery}`,
     google_us: `https://www.google.com/search?q=${encodedQuery}&hl=en&gl=us`,
@@ -314,10 +314,10 @@ function buildSearchUrl(engine, targetQuery, searchType = "listing") {
     bing: `https://www.bing.com/search?q=${encodedQuery}`,
     amazon: `https://www.amazon.com/s?k=${encodedQuery}`,
     etsy: searchType === "shop"
-      ? `https://www.etsy.com/search/shops?search_query=${encodedQuery}`
+      ? `https://www.etsy.com/search/shops?search_query=${encodedQuery}&${etsyRegionParams}`
       : searchType === "market"
-      ? `https://www.etsy.com/market/${encodedQuery.replace(/%20/g, "_")}`
-      : `https://www.etsy.com/search?q=${encodedQuery}`,
+      ? `https://www.etsy.com/market/${encodedQuery.replace(/%20/g, "_")}?${etsyRegionParams}`
+      : `https://www.etsy.com/search?q=${encodedQuery}&${etsyRegionParams}`,
     taobao: `https://s.taobao.com/search?q=${encodedQuery}&_input_charset=utf-8`,
     jd: `https://search.jd.com/Search?keyword=${encodedQuery}&enc=utf-8`,
     pinduoduo: `https://mobile.yangkeduo.com/search_result.html?search_key=${encodedQuery}`,
@@ -334,23 +334,24 @@ function buildSearchUrl(engine, targetQuery, searchType = "listing") {
 function buildBrowserSearchAttempts(engine, targetQuery, searchType = "listing") {
   const normalizedEngine = normalizeSearchEngine(engine);
   const encodedQuery = encodeURIComponent(targetQuery);
+  const etsyRegionParams = "ship_to=US";
   if (normalizedEngine === "etsy") {
     const attempts = [];
     const push = (type, url, reason) => {
       if (!attempts.some((attempt) => attempt.url === url)) attempts.push({ engine: normalizedEngine, searchType: type, url, reason });
     };
     if (searchType === "shop") {
-      push("shop", `https://www.etsy.com/search/shops?search_query=${encodedQuery}`, "etsy_shop_search");
-      push("listing", `https://www.etsy.com/search?q=${encodedQuery}`, "etsy_listing_fallback");
-      push("market", `https://www.etsy.com/market/${encodedQuery.replace(/%20/g, "_")}`, "etsy_market_fallback");
+      push("shop", `https://www.etsy.com/search/shops?search_query=${encodedQuery}&${etsyRegionParams}`, "etsy_shop_search");
+      push("listing", `https://www.etsy.com/search?q=${encodedQuery}&${etsyRegionParams}`, "etsy_listing_fallback");
+      push("market", `https://www.etsy.com/market/${encodedQuery.replace(/%20/g, "_")}?${etsyRegionParams}`, "etsy_market_fallback");
     } else if (searchType === "market") {
-      push("market", `https://www.etsy.com/market/${encodedQuery.replace(/%20/g, "_")}`, "etsy_market_search");
-      push("listing", `https://www.etsy.com/search?q=${encodedQuery}`, "etsy_listing_fallback");
-      push("shop", `https://www.etsy.com/search/shops?search_query=${encodedQuery}`, "etsy_shop_fallback");
+      push("market", `https://www.etsy.com/market/${encodedQuery.replace(/%20/g, "_")}?${etsyRegionParams}`, "etsy_market_search");
+      push("listing", `https://www.etsy.com/search?q=${encodedQuery}&${etsyRegionParams}`, "etsy_listing_fallback");
+      push("shop", `https://www.etsy.com/search/shops?search_query=${encodedQuery}&${etsyRegionParams}`, "etsy_shop_fallback");
     } else {
-      push("listing", `https://www.etsy.com/search?q=${encodedQuery}`, "etsy_listing_search");
-      push("market", `https://www.etsy.com/market/${encodedQuery.replace(/%20/g, "_")}`, "etsy_market_fallback");
-      push("shop", `https://www.etsy.com/search/shops?search_query=${encodedQuery}`, "etsy_shop_fallback");
+      push("listing", `https://www.etsy.com/search?q=${encodedQuery}&${etsyRegionParams}`, "etsy_listing_search");
+      push("market", `https://www.etsy.com/market/${encodedQuery.replace(/%20/g, "_")}?${etsyRegionParams}`, "etsy_market_fallback");
+      push("shop", `https://www.etsy.com/search/shops?search_query=${encodedQuery}&${etsyRegionParams}`, "etsy_shop_fallback");
     }
     return attempts;
   }
@@ -2488,6 +2489,17 @@ Context:
     
     let targetQuery = query;
 
+    if (await isToolCancellationRequested(args)) {
+      return {
+        ok: false,
+        cancelled: true,
+        queryOriginal: query,
+        queryUsed: targetQuery,
+        pageData: {},
+        message: "搜索工具在打开页面前已被当前工具超时或 workflow 取消，未继续创建临时标签页。",
+      };
+    }
+
     if (shouldLocalizeSearchQuery(engine, query)) {
       try {
         console.log(`Localizing query "${query}" for ${engine}...`);
@@ -2613,8 +2625,43 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
     };
 
       const runAttempt = (attempt, attemptIndex) => new Promise((resolve) => {
+        if (args.__toolRunState?.cancelled) {
+          resolve(withSearchEvidenceStatus({
+            ok: false,
+            cancelled: true,
+            searchUrl: attempt.url,
+            queryOriginal: query,
+            queryUsed: targetQuery,
+            searchType: attempt.searchType || searchType,
+            searchAttempt: attemptIndex + 1,
+            searchAttemptReason: attempt.reason,
+            searchAttemptsTotal: searchAttempts.length,
+            pageData: {},
+            message: "搜索工具在创建临时标签页前已被当前工具超时取消。",
+          }, normalizedEngine));
+          return;
+        }
         emitSearchProgress("search_tab_opening", `${searchActionLabel} 正在打开临时标签页（第 ${attemptIndex + 1}/${searchAttempts.length} 次尝试）。`, { searchUrl: attempt.url });
         createOwnedTabCallback({ workflowId, url: safeEncodeURI(attempt.url), active: true, openerTabId: __sourceTabId }, (newTab) => {
+        if (args.__toolRunState?.cancelled) {
+          closeOwnedTab(workflowId, newTab?.id).finally(() => {
+            resolve(withSearchEvidenceStatus({
+              ok: false,
+              cancelled: true,
+              tabId: newTab?.id,
+              searchUrl: attempt.url,
+              queryOriginal: query,
+              queryUsed: targetQuery,
+              searchType: attempt.searchType || searchType,
+              searchAttempt: attemptIndex + 1,
+              searchAttemptReason: attempt.reason,
+              searchAttemptsTotal: searchAttempts.length,
+              pageData: {},
+              message: "搜索工具在临时标签页创建后检测到超时取消，已关闭该页且不作为有效证据。",
+            }, normalizedEngine));
+          });
+          return;
+        }
         emitSearchProgress("search_tab_opened", `${searchActionLabel} 已打开临时标签页 tabId=${newTab.id}，开始等待页面可读。`, { tabId: newTab.id, searchUrl: attempt.url });
         const attemptStartedAt = Date.now();
         const readinessProfile = getReadinessProfile(attempt.url, searchActionLabel);

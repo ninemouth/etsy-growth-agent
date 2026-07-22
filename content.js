@@ -4010,6 +4010,84 @@
       return String(value);
     };
 
+    const markdownTable = (headers = [], rows = []) => {
+      if (!rows.length) return "";
+      const clean = (value) => valueToBusinessText(value).replace(/\n+/g, " ").replace(/\|/g, "/");
+      return [
+        `| ${headers.map(clean).join(" | ")} |`,
+        `| ${headers.map(() => "---").join(" | ")} |`,
+        ...rows.map((row) => `| ${row.map(clean).join(" | ")} |`),
+      ].join("\n");
+    };
+
+    const renderDepthMatrixMarkdown = (matrix = []) => {
+      if (!Array.isArray(matrix) || matrix.length === 0) return "";
+      return `\n\n### 店铺体检深度矩阵\n\n${markdownTable(
+        ["维度", "当前判断", "证据来源", "风险/缺口", "建议动作"],
+        matrix.slice(0, 12).map((item) => [
+          item.dimension || item.name || item.topic,
+          item.finding || item.current_state || item.diagnosis,
+          item.evidence || item.evidence_ref || item.source,
+          item.gap || item.risk || item.issue,
+          item.action || item.recommendation || item.next_step,
+        ])
+      )}`;
+    };
+
+    const renderCompetitorBenchmarksMarkdown = (benchmarks = []) => {
+      if (!Array.isArray(benchmarks) || benchmarks.length === 0) return "";
+      const competitorName = (item = {}) => item.competitor_name || item.shop_name || item.name || item.competitor_url || "竞品店铺";
+      const sections = [
+        `\n\n### 竞品店铺商品结构解析\n\n${markdownTable(
+          ["竞品", "可见 SKU/样本", "价格分布", "类别/场景结构", "促销/信任信号", "评论/评分", "可见排序口径", "视觉方法", "SEO 方法"],
+          benchmarks.slice(0, 5).map((item) => [
+            competitorName(item),
+            item.visible_sku_count_estimate || item.sampled_products_count || "未记录",
+            item.price_distribution,
+            item.category_mix || item.category_structure,
+            item.promotion_signals,
+            item.shop_review_signal || item.review_signal || item.rating_signal,
+            item.listing_order_insight || item.visible_order_insight || item.product_order_insight,
+            item.visual_method,
+            item.seo_method,
+          ])
+        )}`,
+      ];
+      benchmarks.slice(0, 3).forEach((item, index) => {
+        const samples = Array.isArray(item.product_samples || item.sample_products || item.visible_products)
+          ? (item.product_samples || item.sample_products || item.visible_products)
+          : [];
+        if (!samples.length) return;
+        sections.push(`#### ${index + 1}. ${competitorName(item)} 商品样本\n\n${markdownTable(
+          ["商品", "价格", "类别/场景", "促销信号", "可见顺序"],
+          samples.slice(0, 4).map((sample) => [
+            sample.title || sample.name,
+            sample.price,
+            sample.category_or_scenario || sample.category || sample.scenario,
+            sample.promotion_signal || sample.promotion || sample.badge,
+            sample.visible_order_rank || sample.rank,
+          ])
+        )}`);
+      });
+      return sections.filter(Boolean).join("\n\n");
+    };
+
+    const renderEvidenceLedgerSummaryMarkdown = (data = []) => {
+      const ledgerRows = (Array.isArray(data) ? data : [])
+        .flatMap((item, itemIndex) => (Array.isArray(item?.evidence_ledger) ? item.evidence_ledger : [])
+          .slice(0, 5)
+          .map((entry) => [
+            item.plan_id || item.title || `行动项 ${itemIndex + 1}`,
+            entry.source_type,
+            entry.source_ref,
+            entry.observed_value,
+            entry.limitation,
+          ]))
+        .slice(0, 18);
+      if (!ledgerRows.length) return "";
+      return `\n\n### 证据账本摘要\n\n${markdownTable(["方案", "来源类型", "来源", "观察值", "局限"], ledgerRows)}`;
+    };
+
     const renderStructuredDataMarkdown = (data = [], skillId = "") => {
       if (!Array.isArray(data) || data.length === 0) return "";
       if (shouldRenderSourcingData(skillId, data)) return "";
@@ -4048,6 +4126,8 @@
       const parts = [];
       if (res.overview) parts.push(`### 分析概述\n\n${res.overview}`);
       if (res.analysis) parts.push(`### 深度商业诊断\n\n${res.analysis}`);
+      parts.push(renderDepthMatrixMarkdown(res.diagnostic_depth_matrix || res.depth_matrix || res.diagnosis_dimensions));
+      parts.push(renderCompetitorBenchmarksMarkdown(res.competitor_benchmarks));
       if (res.summary) parts.push(`### 核心运营建议\n\n${res.summary}`);
 
       if (shouldRenderSourcingData(skillId, res.data)) {
@@ -4073,6 +4153,7 @@
         parts.push(sourcingMd);
       } else {
         parts.push(renderStructuredDataMarkdown(res.data, skillId));
+        parts.push(renderEvidenceLedgerSummaryMarkdown(res.data));
       }
 
       if (!parts.filter(Boolean).length) {

@@ -45,6 +45,7 @@ function toolRunKey(toolName, toolArgs = {}) {
   delete dedupeArgs.__progress;
   delete dedupeArgs.__sourceTabId;
   delete dedupeArgs.__workflowContext;
+  delete dedupeArgs.__toolRunState;
   return `${workflowId}:${toolName}:${JSON.stringify(stableToolValue(dedupeArgs))}`;
 }
 
@@ -1249,6 +1250,7 @@ function stripRuntimeToolArgs(toolArgs = {}) {
   delete clean.__progress;
   delete clean.__sourceTabId;
   delete clean.__workflowContext;
+  delete clean.__toolRunState;
   return clean;
 }
 
@@ -1285,7 +1287,7 @@ async function recordWorkflowExecutionEvent(workflowId = "", type = "", payload 
   }
 }
 
-async function runToolWithTimeout(toolName, toolArgs) {
+async function runToolWithTimeout(toolName, toolArgs, toolRunState = null) {
   const timeoutMs = getToolTimeoutMs(toolName);
   let timeoutId = null;
   const key = toolRunKey(toolName, toolArgs);
@@ -1303,6 +1305,11 @@ async function runToolWithTimeout(toolName, toolArgs) {
       operation,
       new Promise((_, reject) => {
         timeoutId = setTimeout(async () => {
+          if (toolRunState) {
+            toolRunState.cancelled = true;
+            toolRunState.cancelReason = `${toolName} timed out after ${Math.round(timeoutMs / 1000)} seconds`;
+          }
+          if (inFlightToolRuns.get(key) === operation) inFlightToolRuns.delete(key);
           reject(new Error(`${toolName} timed out after ${Math.round(timeoutMs / 1000)} seconds`));
         }, timeoutMs);
       }),
@@ -1392,6 +1399,55 @@ function getToolPageDataCandidates(toolHistory = []) {
     }
   });
   return candidates;
+}
+
+function getBestEtsyApiEvidence(toolHistory = []) {
+  const priority = [
+    "etsy_api_get_store_snapshot",
+    "etsy_api_get_connection_status",
+    "etsy_api_get_capabilities",
+    "etsy_api_get_products",
+    "etsy_api_get_product_info",
+  ];
+  const entries = (toolHistory || []).filter((entry) =>
+    entry?.result?.ok !== false &&
+    !entry?.result?.error &&
+    String(entry?.tool || "").startsWith("etsy_api_")
+  );
+  if (!entries.length) return null;
+  return entries.sort((a, b) => {
+    const ai = priority.indexOf(a.tool);
+    const bi = priority.indexOf(b.tool);
+    return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
+  })[0];
+}
+
+function buildEtsyApiLedgerEntry(entry = {}) {
+  const result = entry.result?.result || entry.result || {};
+  const capabilities = result.capabilities || result.apiCapabilities || result;
+  const supported = [];
+  const unsupported = [];
+  Object.entries(capabilities || {}).forEach(([key, value]) => {
+    if (value === true || value?.supported === true) supported.push(key);
+    if (value === false || value?.supported === false) unsupported.push(key);
+  });
+  const listingCount = Array.isArray(result.listings) ? result.listings.length : result.listingCount || result.activeListingCount;
+  const receiptCount = Array.isArray(result.receipts) ? result.receipts.length : result.receiptCount;
+  const observed = [
+    `工具 ${entry.tool || "etsy_api"} 已返回自营店铺 API 边界/快照。`,
+    Number.isFinite(Number(listingCount)) ? `可见 listings=${listingCount}` : "",
+    Number.isFinite(Number(receiptCount)) ? `可见 receipts=${receiptCount}` : "",
+    supported.length ? `supported=${supported.slice(0, 6).join(", ")}` : "",
+    unsupported.length ? `unsupported=${unsupported.slice(0, 6).join(", ")}` : "",
+  ].filter(Boolean).join("；");
+  return {
+    source_type: "etsy_api",
+    source_ref: entry.tool || "etsy_api",
+    observed_value: observed || "本轮已取得 Etsy 个人访问 API 工具返回，用于确认自营店铺可访问数据边界。",
+    used_for: "支撑自营店铺 API 能力边界、公开页面与 API 可验证/不可验证字段的区分；不能用于竞品后台、平台大盘、Sessions、点击率或加购率。",
+    confidence: "medium",
+    limitation: "Etsy 个人 API 只覆盖当前授权自营店铺；若工具返回 capabilities 显示 analytics/traffic/fulfillment 不支持，相关结论仍需在报告中写成待验证假设或人工确认点。",
+  };
 }
 
 function hasMeaningfulToolPageDom(toolHistory = []) {
@@ -2393,6 +2449,7 @@ export function autoRepairFinalReportForDelivery(parsed, {
     reasons.push("已自动规范化 evidence_ledger.source_type 别名为可校验的标准类型");
   }
   const hasEtsyApiEvidence = hasEvidenceSource(toolHistory, pageContext, "etsy_api");
+  const bestEtsyApiEvidence = getBestEtsyApiEvidence(toolHistory);
   const pageDomEvidence = getBestPageDomEvidence(toolHistory, pageContext);
   const shouldAutoAttachPageDom = isShopOptimizerOnly(skillId) && pageDomEvidence;
   const etsySearchEvidence = getEtsySearchEvidence(toolHistory);
@@ -2460,7 +2517,10 @@ export function autoRepairFinalReportForDelivery(parsed, {
 
     const itemClaimText = getReportItemClaimText(item);
     const shopOptimizerUsesApiBoundary = isShopOptimizerOnly(skillId) && SHOP_OPTIMIZER_API_CLAIM_RE.test(itemClaimText);
-    if (shopOptimizerUsesApiBoundary && !hasEtsyApiEvidence && !hasAssumptionFallback(ledger, SHOP_OPTIMIZER_API_ASSUMPTION_TOPIC_RE)) {
+    if (shopOptimizerUsesApiBoundary && hasEtsyApiEvidence && bestEtsyApiEvidence && !hasLedgerType(ledger, "etsy_api")) {
+      ledger.push(buildEtsyApiLedgerEntry(bestEtsyApiEvidence));
+      itemChanged = true;
+    } else if (shopOptimizerUsesApiBoundary && !hasEtsyApiEvidence && !hasAssumptionFallback(ledger, SHOP_OPTIMIZER_API_ASSUMPTION_TOPIC_RE)) {
       ledger.push(buildAssumptionLedgerEntry({
         sourceRef: "Etsy personal API not configured in this run",
         observedValue: "本轮未配置或未取得 Etsy 个人访问 API，无法验证真实流量、Sessions、订单、转化、履约成本、物流配置、Etsy 自发货或第三方海外仓数据。",
@@ -3457,7 +3517,10 @@ ${JSON.stringify(ctxForPrompt, null, 2)}
 ## 当前汇率与套利参数
 ${JSON.stringify(ctxForPrompt.currency_rates, null, 2)}
 
-财务账本硬约束：Etsy 售价、采购成本、包装成本、物流、平台扣款和关税必须统一换算为 USD 后再计算净利润；不得把 CNY、RUB 或 EUR 数值直接与 USD 售价相减。
+价格与区域口径硬约束：
+- 浏览器取证工具会优先访问 Etsy/Google 的 US 区域页面（例如 Etsy 搜索带 ship_to=US，Google Search 带 gl=us/hl=en）。店铺体检、关键词分析和机会分析应优先使用页面实际显示的币种/区域口径，并在证据账本中写明“页面显示币种/区域”；不要为了前台对标把 Etsy 页面显示价格二次换算成 USD。
+- 只有进入国内寻源、采购成本、物流成本、平台扣款、关税或净利润测算时，才使用上方汇率参数把 CNY/RUB/EUR 成本统一换算进 USD 财务账本；不得把不同币种数值直接相减。
+- 如果页面仍显示 AUD/EUR/GBP 等非 USD 价格，按原样引用并标明页面显示币种；需要可比利润测算时再单独列“待统一币种复核”，不要把它包装成已验证 USD 利润。
 
 ## 当前研究范围与页面角色
 ${ctxForPrompt.research_scope ? JSON.stringify(ctxForPrompt.research_scope, null, 2) : "未识别到 research_scope。请先通过 read_current_page 确认页面角色。"}
@@ -4179,6 +4242,12 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       const toolAction = describeToolAction(toolName, toolArgs);
       const tabsBeforeTool = await snapshotTabIds();
       try {
+        const toolRunState = {
+          cancelled: false,
+          cancelReason: "",
+          toolRunId,
+          toolName,
+        };
         const workflowContext = {
           workflowId,
           workflowGeneration,
@@ -4193,7 +4262,9 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
           ...toolArgs,
           __sourceTabId: tabId,
           __workflowContext: workflowContext,
+          __toolRunState: toolRunState,
           __progress: (stage = {}) => {
+            if (toolRunState.cancelled) return;
             const stageMessage = stage.message || `${toolAction.actionLabel} 正在执行`;
             sendProgress({
               type: "tool_stage",
@@ -4246,7 +4317,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
             message: `${toolAction.actionLabel} 工具执行已持续 ${elapsedSeconds} 秒，最长等待 ${Math.round(toolTimeoutMs / 1000)} 秒；当前可能在等待页面加载、DOM 可读或截图保存。${toolAction.lifecycle ? ` ${toolAction.lifecycle}。` : ""}`,
           });
         }, 30000);
-        toolResult = await runToolWithTimeout(toolName, executableToolArgs);
+        toolResult = await runToolWithTimeout(toolName, executableToolArgs, toolRunState);
         if (workflowId && !(await isWorkflowGenerationCurrent(workflowId, workflowGeneration))) {
           toolResult = {
             ok: false,

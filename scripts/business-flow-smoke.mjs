@@ -164,7 +164,11 @@ assert.match(contentSource, /data\.type === "tool_stage"/, "floating overlay sho
 assert.match(contentSource, /activeOverlayToolRunId[\s\S]*data\.type === "tool_heartbeat"[\s\S]*data\.toolRunId !== activeOverlayToolRunId[\s\S]*return/, "floating overlay should ignore stale tool heartbeats from completed tool runs");
 assert.match(backgroundSource, /buildResearchScope[\s\S]*pageContext\.research_scope[\s\S]*shouldClarifyResearchScope/, "background should build research_scope before running Etsy workflows and block weak trend scope");
 assert.match(agentLoopSource, /当前研究范围与页面角色[\s\S]*source_page_role 是 competitor_reference[\s\S]*entry_page_type 是 etsy_home/, "agent loop prompt should make research_scope a first-class execution constraint");
-assert.match(agentLoopSource, /currency_rates[\s\S]*财务账本硬约束[\s\S]*统一换算为 USD/, "agent loop prompt should inject currency rates and forbid mixed-currency profit math");
+assert.match(agentLoopSource, /currency_rates[\s\S]*价格与区域口径硬约束[\s\S]*ship_to=US[\s\S]*不要为了前台对标把 Etsy 页面显示价格二次换算成 USD[\s\S]*统一换算进 USD 财务账本/, "agent loop prompt should use regional frontend prices and reserve FX conversion for financial ledgers");
+assert.match(toolRegistrySource, /ship_to=US/, "Etsy browser evidence URLs should request the US regional storefront instead of relying on post-hoc currency conversion");
+assert.match(toolRegistrySource, /function shouldLocalizeSearchQuery[\s\S]*return \/\[\\u4e00-\\u9fa5\]\//, "English Google/Etsy evidence queries should not pay an extra LLM localization call before opening the browser page");
+assert.match(agentLoopSource, /__toolRunState[\s\S]*cancelled[\s\S]*inFlightToolRuns\.delete\(key\)/, "timed-out tools should receive a soft cancellation token and stop leaking late browser stages");
+assert.match(toolRegistrySource, /__toolRunState\?\.cancelled[\s\S]*搜索工具在创建临时标签页前已被当前工具超时取消/, "browser searches should check the soft cancellation token before opening tabs");
 assert.match(backgroundSource, /GET_CURRENCY_RATES[\s\S]*REFRESH_CURRENCY_RATES[\s\S]*SAVE_CURRENCY_RATES/, "background should expose shared currency-rate management endpoints");
 assert.match(toolRegistrySource, /code:\s*"VERIFICATION_REQUIRED"[\s\S]*notifyVerificationRequired/, "1688/Taobao verification walls should return an explicit resumable verification code");
 assert.match(sidepanelSource, /captcha-resume-btn[\s\S]*我已完成验证[\s\S]*instruction\.value = "继续"/, "sidepanel verification banner should provide a resume action after manual verification");
@@ -534,6 +538,7 @@ assert.match(agentLoopSource, /USER_REQUESTS_API_ASSUMPTION_DOWNGRADE_RE[\s\S]*�
 assert.match(sidepanelSource, /valueToReadableMarkdown[\s\S]*renderMarkdown\(valueToReadableMarkdown\(val\)\)/, "sidepanel report renderer should expand nested overview/analysis/summary objects instead of stringifying them");
 assert.doesNotMatch(sidepanelSource, /renderMarkdown\(String\(val\)\)/, "sidepanel report renderer must not stringify nested report sections into [object Object]");
 assert.match(js, /valueToReadableMarkdown[\s\S]*resultToReportMarkdown[\s\S]*深度商业诊断/, "dashboard report center should expand nested report objects into readable markdown sections");
+assert.match(contentSource, /renderDepthMatrixMarkdown[\s\S]*店铺体检深度矩阵[\s\S]*renderCompetitorBenchmarksMarkdown[\s\S]*竞品店铺商品结构解析[\s\S]*renderEvidenceLedgerSummaryMarkdown[\s\S]*证据账本摘要/, "floating overlay final report should render depth matrix, competitor benchmarks, and evidence ledger summary");
 
 const proseThenBareFinalJson = `The critic agent has identified several issues with my report.
 Let me create a corrected report.{
@@ -1489,6 +1494,41 @@ assert.deepEqual(
   validateReport(repairedShopOptimizerApiClaims.parsed, "", "skills/etsy_global_shop_optimizer.skill.md", validShopEvidenceHistory, meaningfulPageContext),
   [],
   "auto-repaired shop optimizer API assumptions should pass validation without critic redo"
+);
+const shopOptimizerReportWithAvailableApiClaims = globalThis.structuredClone(shopOptimizerReportWithApiClaims);
+const validShopEvidenceHistoryWithApi = [
+  {
+    tool: "etsy_api_get_store_snapshot",
+    arguments: {},
+    result: {
+      ok: true,
+      result: {
+        listings: [{ title: "Personalized wedding clutch" }],
+        receipts: [],
+        capabilities: {
+          listings: { supported: true },
+          receipts: { supported: true },
+          analytics: { supported: false },
+        },
+      },
+    },
+  },
+  ...validShopEvidenceHistory,
+];
+const repairedShopOptimizerAvailableApiClaims = autoRepairFinalReportForDelivery(shopOptimizerReportWithAvailableApiClaims, {
+  skillId: "skills/etsy_global_shop_optimizer.skill.md",
+  toolHistory: validShopEvidenceHistoryWithApi,
+  pageContext: meaningfulPageContext,
+});
+assert.equal(repairedShopOptimizerAvailableApiClaims.changed, true, "shop optimizer API/order/fulfillment claims should auto-attach available Etsy API boundary evidence");
+assert.ok(
+  repairedShopOptimizerAvailableApiClaims.parsed.output.data[0].evidence_ledger.some((entry) => entry.source_type === "etsy_api" && /analytics/.test(`${entry.observed_value || ""} ${entry.limitation || ""}`)),
+  "auto-repaired API ledger should preserve supported/unsupported Etsy API capability boundaries"
+);
+assert.deepEqual(
+  validateReport(repairedShopOptimizerAvailableApiClaims.parsed, "", "skills/etsy_global_shop_optimizer.skill.md", validShopEvidenceHistoryWithApi, meaningfulPageContext),
+  [],
+  "auto-attached Etsy API boundary evidence should prevent non-quality critic redo"
 );
 const shopOptimizerReportWithPrivateMetricPlan = globalThis.structuredClone(shopOptimizerReportWithEtsyEvidence);
 shopOptimizerReportWithPrivateMetricPlan.output.data[0].title = "清退低相关 SKU，重建垂直婚礼场景专营店";
