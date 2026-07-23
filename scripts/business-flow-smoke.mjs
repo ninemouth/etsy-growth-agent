@@ -526,6 +526,7 @@ assert.match(shopOptimizerSkillSource, /analyze_etsy_shop_crawl_screenshots[\s\S
 assert.match(shopOptimizerSkillSource, /competitor_benchmarks[\s\S]*listing_order_insight/, "shop optimizer should require per-competitor product structure and visible order analysis");
 assert.match(agentLoopSource, /Google Trends 截图视觉解读证据/, "critic should require Google Trends screenshot interpretation when trends are used");
 assert.match(shopOptimizerSkillSource, /Google Trends 页面截图解读趋势图/, "shop optimizer should require screenshot-based Google Trends interpretation");
+assert.match(agentLoopSource, /isGoogleTrendsGuardedWorkflow[\s\S]*isShopOptimizerOnly[\s\S]*getTrendQueryGuardError/, "shop optimizer should share Google Trends duplicate and exhaustion guards");
 assert.doesNotMatch(remainingBusinessSkillSource, /俄文|俄语|озон|Ozon|CE\/CE|FDA\/IP\/FDA|欧美礼品市场市场|蓝海爆品/, "remaining Etsy skill prompts must not keep Ozon/RU leftovers or unsupported blue-ocean wording");
 assert.doesNotMatch(operationsSkillSource, /Session View 提升|Conv to Cart 提升|加购率提升至少 X/, "operations tracker must not use personal-API-unsupported analytics as validated examples");
 assert.match(operationsSkillSource, /当前个人卖家 API 不提供这些指标/, "operations tracker must state the personal Etsy API analytics boundary");

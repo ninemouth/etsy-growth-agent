@@ -65,6 +65,15 @@ const duplicateGuard = getTrendQueryGuardError({
 assert.ok(duplicateGuard);
 assert.match(duplicateGuard.error, /已经查询过/);
 
+const shopDuplicateGuard = getTrendQueryGuardError({
+  skillId: "skills/etsy_global_shop_optimizer.skill.md",
+  toolName: "search_in_browser",
+  toolArgs: { engine: "google_trends", query: "PERSONALIZED WEDDING CLUTCH FOR BRIDE" },
+  toolHistory: firstHistory,
+});
+assert.ok(shopDuplicateGuard, "shop optimizer should not reopen the same Google Trends keyword");
+assert.match(shopDuplicateGuard.error, /已经查询过/);
+
 const secondHistory = [
   ...firstHistory,
   entry("wedding clutch", invalidResult("wedding clutch")),
@@ -82,6 +91,10 @@ const exhausted = getTrendQueryRefinementState("skills/etsy_platform_trends.skil
 assert.equal(exhausted.required, false);
 assert.equal(exhausted.exhausted, true);
 assert.equal(collectGoogleTrendsAttempts(exhaustedHistory).length, 3);
+
+const shopExhausted = getTrendQueryRefinementState("skills/etsy_global_shop_optimizer.skill.md", exhaustedHistory);
+assert.equal(shopExhausted.required, false);
+assert.equal(shopExhausted.exhausted, true, "shop optimizer should stop Google Trends recovery after 3 insufficient attempts");
 
 const recoveredHistory = [
   ...firstHistory,

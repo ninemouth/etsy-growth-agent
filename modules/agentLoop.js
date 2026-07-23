@@ -785,6 +785,10 @@ function isShopOptimizerOnly(skillId = "") {
   return id.includes("etsy_global_shop_optimizer") && !id.includes("etsy_sourcing_finder") && !id.includes("domestic_sourcing_finder");
 }
 
+function isGoogleTrendsGuardedWorkflow(skillId = "") {
+  return isPlatformTrendSkill(skillId) || isShopOptimizerOnly(skillId);
+}
+
 function isEtsyBusinessSkill(skillId = "") {
   return String(skillId || "").includes("etsy_");
 }
@@ -1119,9 +1123,11 @@ function compactPlatformTrendRunawayToolHistory(toolHistory = []) {
 
 function getEtsyBrowserWorkflowGuardResult({ skillId = "", toolName = "", toolArgs = {}, toolHistory = [] } = {}) {
   if (!isEtsyBusinessSkill(skillId)) return null;
-  if (isPlatformTrendSkill(skillId) && toolName === "search_in_browser") {
+  if (isGoogleTrendsGuardedWorkflow(skillId) && toolName === "search_in_browser") {
     const queryGuard = getTrendQueryGuardError({ skillId, toolName, toolArgs, toolHistory });
     if (queryGuard) return queryGuard;
+  }
+  if (isPlatformTrendSkill(skillId) && toolName === "search_in_browser") {
     const stageGuard = getPlatformTrendStageGuard({ toolName, toolArgs, toolHistory });
     if (stageGuard) return stageGuard;
   }

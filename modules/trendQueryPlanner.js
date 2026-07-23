@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT | Copyright (c) 2026 Yang Cao <cao.x.yang@gmail.com> */
 
 export const MAX_GOOGLE_TRENDS_QUERY_ATTEMPTS = 3;
+const GOOGLE_TRENDS_GUARDED_SKILL_RE = /etsy_platform_trends|etsy_event_driven_trend_radar|etsy_global_shop_optimizer/;
 
 function normalizedText(value = "") {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -68,9 +69,9 @@ export function collectGoogleTrendsAttempts(toolHistory = []) {
 }
 
 export function getTrendQueryGuardError({ skillId = "", toolName = "", toolArgs = {}, toolHistory = [] } = {}) {
-  const isPlatformTrend = /etsy_platform_trends|etsy_event_driven_trend_radar/.test(String(skillId));
+  const isGuardedTrendWorkflow = GOOGLE_TRENDS_GUARDED_SKILL_RE.test(String(skillId));
   const isGoogleTrends = toolName === "search_in_browser" && String(toolArgs.engine || "").toLowerCase() === "google_trends";
-  if (!isPlatformTrend || !isGoogleTrends) return null;
+  if (!isGuardedTrendWorkflow || !isGoogleTrends) return null;
 
   const query = normalizedText(toolArgs.query || toolArgs.keyword || "");
   const normalizedQuery = normalizeTrendQuery(query);
@@ -103,7 +104,7 @@ export function getTrendQueryGuardError({ skillId = "", toolName = "", toolArgs 
 }
 
 export function getTrendQueryRefinementState(skillId = "", toolHistory = []) {
-  if (!/etsy_platform_trends|etsy_event_driven_trend_radar/.test(String(skillId))) return { required: false, exhausted: false, attempts: [] };
+  if (!GOOGLE_TRENDS_GUARDED_SKILL_RE.test(String(skillId))) return { required: false, exhausted: false, attempts: [] };
   const attempts = collectGoogleTrendsAttempts(toolHistory);
   if (!attempts.length) return { required: false, exhausted: false, attempts };
   if (attempts.some((attempt) => !attempt.insufficient)) return { required: false, exhausted: false, attempts };
