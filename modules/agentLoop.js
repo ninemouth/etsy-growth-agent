@@ -780,6 +780,41 @@ function isLogisticsOrPolicySearchQuery(query = "") {
   return /运费|物流|空派|海运|快递|货代|FBA|配送费|佣金|费率|关税|税率|清关|政策|认证|合规|freight|shipping|logistics|fulfillment|tariff|customs|duty|fee|commission|policy/i.test(String(query || ""));
 }
 
+function searchEngineFamily(engine = "") {
+  const normalized = String(engine || "").toLowerCase();
+  if (normalized === "google" || /^google_(us|uk|de|fr|ca|au|ru)$/.test(normalized)) return "google_search";
+  if (normalized === "google_news" || /^google_news_(us|uk|de|fr|ca|au)$/.test(normalized)) return "google_news";
+  if (normalized === "google_trends" || /^google_trends_(us|uk|de|fr|ca|au)$/.test(normalized)) return "google_trends";
+  if (normalized === "etsy" || /^etsy_(us|uk|de|fr|ca|au)$/.test(normalized)) return "etsy";
+  if (normalized === "amazon" || /^amazon_(us|uk|de|fr|ca|au)$/.test(normalized)) return "amazon";
+  if (/^ebay_(us|uk|de|fr|ca|au)$/.test(normalized)) return "ebay";
+  return normalized;
+}
+
+function isGoogleSearchEngine(engine = "") {
+  return searchEngineFamily(engine) === "google_search";
+}
+
+function isGoogleTrendsEngine(engine = "") {
+  return searchEngineFamily(engine) === "google_trends";
+}
+
+function isGoogleNewsEngine(engine = "") {
+  return searchEngineFamily(engine) === "google_news";
+}
+
+function isEtsySearchEngine(engine = "") {
+  return searchEngineFamily(engine) === "etsy";
+}
+
+function isAmazonSearchEngine(engine = "") {
+  return searchEngineFamily(engine) === "amazon";
+}
+
+function isEbaySearchEngine(engine = "") {
+  return searchEngineFamily(engine) === "ebay";
+}
+
 function isShopOptimizerOnly(skillId = "") {
   const id = String(skillId || "");
   return id.includes("etsy_global_shop_optimizer") && !id.includes("etsy_sourcing_finder") && !id.includes("domestic_sourcing_finder");
@@ -860,9 +895,9 @@ function isReusableSearchEvidence(entry = {}) {
   const result = entry.result || {};
   if (result.error || result.isCaptcha || result.cancelled || result.stale) return false;
   const engine = String(entry.arguments?.engine || "").toLowerCase();
-  if (engine === "etsy") return hasValidEtsySearchEvidence(result) || result.evidenceOk === true || Boolean(result.screenshotRef);
-  if (engine === "google_trends") return hasValidGoogleTrendsEvidence(result) || (result.evidenceOk === true && Boolean(result.screenshotRef || result.screenshotCaptured));
-  if (engine === "google" || engine === "google_us" || engine === "google_ru" || engine === "bing") {
+  if (isEtsySearchEngine(engine)) return hasValidEtsySearchEvidence(result) || result.evidenceOk === true || Boolean(result.screenshotRef);
+  if (isGoogleTrendsEngine(engine)) return hasValidGoogleTrendsEvidence(result) || (result.evidenceOk === true && Boolean(result.screenshotRef || result.screenshotCaptured));
+  if (isGoogleSearchEngine(engine) || isGoogleNewsEngine(engine) || engine === "bing") {
     return hasValidGoogleSearchEvidence(result) || result.evidenceOk === true || Boolean(result.screenshotRef || result.screenshotCaptured);
   }
   return result.ok !== false && (result.evidenceOk === true || Boolean(result.pageData || result.screenshotRef || result.screenshotCaptured));
@@ -894,16 +929,16 @@ function getPlatformTrendEvidenceState(toolHistory = []) {
     const key = searchEvidenceKey(entry.arguments || {});
     if (key) uniqueSearchKeys.add(key);
     let valid = false;
-    if (engine === "etsy") {
+    if (isEtsySearchEngine(engine)) {
       etsySearches++;
       valid = hasValidEtsySearchEvidence(entry.result || {});
       if (valid) validEtsySearches++;
-    } else if (engine === "google_trends") {
+    } else if (isGoogleTrendsEngine(engine)) {
       googleTrendsSearches++;
       valid = hasValidGoogleTrendsEvidence(entry.result || {});
       if (valid) validGoogleTrendsSearches++;
       if (entry.result?.screenshotRef || entry.result?.screenshotCaptured) googleTrendsScreenshots++;
-    } else if (["google", "google_us", "google_ru"].includes(engine)) {
+    } else if (isGoogleSearchEngine(engine)) {
       googleSearches++;
       valid = hasValidGoogleSearchEvidence(entry.result || {});
       if (valid) validGoogleSearches++;
@@ -973,7 +1008,7 @@ function getPlatformTrendStageGuard({ toolName = "", toolArgs = {}, toolHistory 
   const state = getPlatformTrendEvidenceState(toolHistory);
   const engine = String(toolArgs.engine || "google").toLowerCase();
   const requestedKey = searchEvidenceKey(toolArgs);
-  const searchRequestsExhausted = state.searchStageComplete || state.validEtsySearches >= 1 && state.validGoogleSearches >= 1 && engine !== "google_trends";
+  const searchRequestsExhausted = state.searchStageComplete || state.validEtsySearches >= 1 && state.validGoogleSearches >= 1 && !isGoogleTrendsEngine(engine);
 
   if (state.searchStageComplete) {
     const targets = getTrendCompetitorTargetsFromSearch(toolHistory);
@@ -1055,9 +1090,9 @@ function compactPlatformTrendRunawayToolHistory(toolHistory = []) {
     const existing = bestSearchByKey.get(key);
     const result = entry.result || {};
     const isValid =
-      String(entry.arguments?.engine || "").toLowerCase() === "etsy"
+      isEtsySearchEngine(entry.arguments?.engine)
         ? hasValidEtsySearchEvidence(result)
-        : String(entry.arguments?.engine || "").toLowerCase() === "google_trends"
+        : isGoogleTrendsEngine(entry.arguments?.engine)
         ? hasValidGoogleTrendsEvidence(result)
         : hasValidGoogleSearchEvidence(result);
     const score = [
@@ -1223,9 +1258,9 @@ function describeToolAction(toolName = "", toolArgs = {}, toolResult = null) {
   const engine = String(toolArgs.engine || "").toLowerCase();
   const url = String(toolArgs.url || toolResult?.finalUrl || toolResult?.url || toolResult?.pageData?.url || "");
   if (toolName === "search_in_browser") {
-    if (engine === "etsy") return { actionKind: "search_results", actionLabel: "Etsy 搜索结果页取证", lifecycle: "搜索页在保存页面文本和截图证据后会自动关闭" };
-    if (engine === "google_trends") return { actionKind: "trend_chart", actionLabel: "Google Trends 趋势图取证", lifecycle: "趋势页在保存截图证据后会自动关闭" };
-    if (engine === "google" || engine === "google_us") return { actionKind: "web_search", actionLabel: "Google Search 结果页取证", lifecycle: "搜索页在保存页面文本和截图证据后会自动关闭" };
+    if (isEtsySearchEngine(engine)) return { actionKind: "search_results", actionLabel: "Etsy 搜索结果页取证", lifecycle: "搜索页在保存页面文本和截图证据后会自动关闭" };
+    if (isGoogleTrendsEngine(engine)) return { actionKind: "trend_chart", actionLabel: "Google Trends 趋势图取证", lifecycle: "趋势页在保存截图证据后会自动关闭" };
+    if (isGoogleSearchEngine(engine) || isGoogleNewsEngine(engine)) return { actionKind: "web_search", actionLabel: "Google Search 结果页取证", lifecycle: "搜索页在保存页面文本和截图证据后会自动关闭" };
     if (engine === "1688" || engine === "taobao") return { actionKind: "sourcing_search", actionLabel: "采购平台搜索结果页取证", lifecycle: "平台页可能保留用于人工验证或继续筛选" };
     return { actionKind: "browser_search", actionLabel: "浏览器搜索取证", lifecycle: "临时搜索页可能在证据保存后自动关闭" };
   }
@@ -1509,7 +1544,17 @@ const EVIDENCE_SOURCE_TYPE_ALIASES = {
   screenshot: "screenshot_visual",
   visual_screenshot: "screenshot_visual",
   google_us: "google_search",
+  google_uk: "google_search",
+  google_de: "google_search",
+  google_fr: "google_search",
+  google_ca: "google_search",
+  google_au: "google_search",
   google_search_us: "google_search",
+  google_search_uk: "google_search",
+  google_search_de: "google_search",
+  google_search_fr: "google_search",
+  google_search_ca: "google_search",
+  google_search_au: "google_search",
   etsy_policy: "official_policy",
   official_etsy_policy: "official_policy",
   user_provided: "user_input",
@@ -1520,12 +1565,16 @@ const EVIDENCE_SOURCE_TYPE_ALIASES = {
   pinterest_search: "pinterest_social",
   tiktok: "tiktok_social",
   tiktok_search: "tiktok_social",
-  instagram: "tiktok_social",
-  instagram_search: "tiktok_social",
+  instagram: "instagram_social",
+  instagram_search: "instagram_social",
   reddit: "reddit_social",
   reddit_search: "reddit_social",
   news: "google_news",
   news_search: "google_news",
+  amazon: "amazon_search",
+  amazon_search: "amazon_search",
+  ebay: "ebay_search",
+  ebay_search: "ebay_search",
 };
 
 function normalizeEvidenceLedgerSourceType(sourceType = "") {
@@ -1583,14 +1632,14 @@ function hasEvidenceSource(toolHistory = [], pageContext = {}, sourceType = "") 
   if (normalized === "etsy_search") {
     return hasSuccessfulToolCall(toolHistory, (entry) =>
       entry.tool === "search_in_browser" &&
-      String(entry.arguments?.engine || "").toLowerCase() === "etsy" &&
+      isEtsySearchEngine(entry.arguments?.engine) &&
       hasValidEtsySearchEvidence(entry.result)
     );
   }
   if (normalized === "google_search") {
     return hasSuccessfulToolCall(toolHistory, (entry) => {
       const engine = String(entry.arguments?.engine || "").toLowerCase();
-      return entry.tool === "search_in_browser" && ["google", "google_us"].includes(engine);
+      return entry.tool === "search_in_browser" && isGoogleSearchEngine(engine);
     });
   }
   if (normalized === "pinterest_social") {
@@ -1600,7 +1649,12 @@ function hasEvidenceSource(toolHistory = [], pageContext = {}, sourceType = "") 
   }
   if (normalized === "tiktok_social") {
     return hasSuccessfulToolCall(toolHistory, (entry) =>
-      entry.tool === "search_in_browser" && ["tiktok", "instagram"].includes(String(entry.arguments?.engine || "").toLowerCase())
+      entry.tool === "search_in_browser" && String(entry.arguments?.engine || "").toLowerCase() === "tiktok"
+    );
+  }
+  if (normalized === "instagram_social") {
+    return hasSuccessfulToolCall(toolHistory, (entry) =>
+      entry.tool === "search_in_browser" && String(entry.arguments?.engine || "").toLowerCase() === "instagram"
     );
   }
   if (normalized === "reddit_social") {
@@ -1610,12 +1664,22 @@ function hasEvidenceSource(toolHistory = [], pageContext = {}, sourceType = "") 
   }
   if (normalized === "google_news") {
     return hasSuccessfulToolCall(toolHistory, (entry) =>
-      entry.tool === "search_in_browser" && String(entry.arguments?.engine || "").toLowerCase() === "google_news"
+      entry.tool === "search_in_browser" && isGoogleNewsEngine(entry.arguments?.engine)
     );
   }
   if (normalized === "google_trends") {
     return hasSuccessfulToolCall(toolHistory, (entry) =>
-      entry.tool === "search_in_browser" && String(entry.arguments?.engine || "").toLowerCase() === "google_trends" && hasValidGoogleTrendsEvidence(entry.result)
+      entry.tool === "search_in_browser" && isGoogleTrendsEngine(entry.arguments?.engine) && hasValidGoogleTrendsEvidence(entry.result)
+    );
+  }
+  if (normalized === "amazon_search") {
+    return hasSuccessfulToolCall(toolHistory, (entry) =>
+      entry.tool === "search_in_browser" && isAmazonSearchEngine(entry.arguments?.engine)
+    );
+  }
+  if (normalized === "ebay_search") {
+    return hasSuccessfulToolCall(toolHistory, (entry) =>
+      entry.tool === "search_in_browser" && isEbaySearchEngine(entry.arguments?.engine)
     );
   }
   if (normalized === "sourcing_search") {
@@ -2021,7 +2085,7 @@ function validateEvidenceLedgerEntries({
   label,
   toolHistory,
   pageContext,
-  allowedTypes = ["page_dom", "screenshot_visual", "etsy_api", "etsy_search", "google_search", "google_trends", "sourcing_search", "supplier_page", "official_policy", "official_regulation", "pinterest_social", "tiktok_social", "reddit_social", "google_news", "user_input", "assumption"],
+  allowedTypes = ["page_dom", "screenshot_visual", "etsy_api", "etsy_search", "google_search", "google_trends", "sourcing_search", "supplier_page", "official_policy", "official_regulation", "pinterest_social", "tiktok_social", "instagram_social", "reddit_social", "google_news", "amazon_search", "ebay_search", "user_input", "assumption"],
 }) {
   const errors = [];
   if (!Array.isArray(entries) || entries.length === 0) {
@@ -2193,7 +2257,7 @@ function getGoogleTrendsScreenshotEvidence(toolHistory = []) {
   for (let i = toolHistory.length - 1; i >= 0; i--) {
     const entry = toolHistory[i];
     if (entry?.tool !== "search_in_browser") continue;
-    if (String(entry.arguments?.engine || "").toLowerCase() !== "google_trends") continue;
+    if (!isGoogleTrendsEngine(entry.arguments?.engine)) continue;
     if (!hasValidGoogleTrendsEvidence(entry.result || {})) continue;
     if (!entry.result?.screenshotRef && !entry.result?.screenshotCaptured) continue;
     return {
@@ -2215,7 +2279,7 @@ function getGoogleTrendsToolEvidence(toolHistory = []) {
   for (let i = toolHistory.length - 1; i >= 0; i--) {
     const entry = toolHistory[i];
     if (entry?.tool !== "search_in_browser") continue;
-    if (String(entry.arguments?.engine || "").toLowerCase() !== "google_trends") continue;
+    if (!isGoogleTrendsEngine(entry.arguments?.engine)) continue;
     if (!hasValidGoogleTrendsEvidence(entry.result || {})) continue;
     const pageData = entry.result?.pageData || {};
     return {
@@ -2255,7 +2319,7 @@ function getGoogleSearchEvidence(toolHistory = []) {
     const entry = toolHistory[i];
     if (entry?.tool !== "search_in_browser") continue;
     const engine = String(entry.arguments?.engine || "").toLowerCase();
-    if (engine !== "google" && engine !== "google_us") continue;
+    if (!isGoogleSearchEngine(engine)) continue;
     const result = entry.result || {};
     if (result.ok === false || result.error || result.isCaptcha) continue;
     const pageData = result.pageData || {};
@@ -2694,10 +2758,10 @@ function buildShopOptimizerDepthMatrixSkeleton(out = {}, evidence = {}) {
     },
     {
       dimension: "Google/Trends 站外需求",
-      finding: trendsToolEvidence ? "Google Trends US 证据已取得，可用于判断相对需求方向和季节窗口。" : "若未取得 Trends 图表，只能把季节性写成待验证假设。",
+      finding: trendsToolEvidence ? "Google Trends 地区证据已取得，可用于判断相对需求方向和季节窗口。" : "若未取得 Trends 图表，只能把季节性写成待验证假设。",
       evidence: [googleSearchEvidence?.sourceRef, trendsToolEvidence?.sourceRef, trendsScreenshotEvidence?.sourceRef].filter(Boolean).join("；") || "Google Search/Trends 证据待补齐",
       gap: "Google Trends 是相对热度，不等于 Etsy 搜索量、订单或点击率。",
-      action: "在报告中写明 US 区域、近 12 个月口径、查询词、曲线可见方向和截图局限。",
+      action: "在报告中写明地区、近 12 个月口径、查询词、曲线可见方向和截图局限。",
     },
     {
       dimension: "信任资产、评价、政策与履约",
@@ -2821,7 +2885,7 @@ const SHOP_OPTIMIZER_PRODUCTION_SLOTS = [
     title: "SEO 标题、描述与 Attributes",
     finalFields: ["diagnostic_depth_matrix[SEO]", "data[].buyer_scenario", "data[].first_actions"],
     requiredEvidence: "Etsy 搜索可见标题词、Google Search 站外表达和当前页面标题/属性文本",
-    nextAction: "完成 Etsy Search 与 Google Search US 后，再重构标题前 60 字、tags 和 attributes。",
+    nextAction: "完成 Etsy Search 与 Google 地区搜索后，再重构标题前 60 字、tags 和 attributes。",
   },
   {
     id: "product_matrix_price",
@@ -2841,7 +2905,7 @@ const SHOP_OPTIMIZER_PRODUCTION_SLOTS = [
     id: "external_demand",
     title: "Etsy 站内搜索与 Google/Trends 站外需求",
     finalFields: ["diagnostic_depth_matrix[站外需求]", "data[].evidence_ledger(etsy_search/google_search/google_trends)"],
-    requiredEvidence: "Etsy Search、Google Search US、Google Trends US 和 Trends 截图视觉解读",
+    requiredEvidence: "Etsy Search、Google 地区搜索、Google Trends 地区页和 Trends 截图视觉解读",
     nextAction: "先补齐 Etsy/Search/Trends 证据；趋势图只能写相对热度、地区、时间范围和截图局限。",
   },
   {
@@ -2865,7 +2929,7 @@ function hasShopOptimizerShippingSearchEvidence(toolHistory = []) {
   return toolHistory.some((entry) => {
     if (entry?.tool !== "search_in_browser") return false;
     const engine = String(entry.arguments?.engine || "").toLowerCase();
-    if (!["google", "google_us"].includes(engine)) return false;
+    if (!isGoogleSearchEngine(engine)) return false;
     const text = [
       entry.arguments?.query,
       entry.arguments?.keyword,
@@ -2919,7 +2983,7 @@ function buildShopOptimizerProductionSkeletonState(toolHistory = [], pageContext
       [pageDomEvidence?.sourceRef, etsySearchEvidence?.sourceRef, googleSearchEvidence?.sourceRef],
       etsySearchEvidence && googleSearchEvidence
         ? "围绕 Etsy 可见标题词和 Google 站外表达输出标题/tags/attributes 动作。"
-        : "补齐 Etsy Search 与 Google Search US，再写 SEO/Attributes 结论。"
+        : "补齐 Etsy Search 与 Google 地区搜索，再写 SEO/Attributes 结论。"
     ),
     product_matrix_price: productionSlot(
       competitorBenchmarks.some((item) => hasValue(item.price_distribution) && hasValue(item.product_samples)) ? "filled" : pageDomEvidence || competitorBenchmarks.length ? "partial" : "missing",
@@ -2943,7 +3007,7 @@ function buildShopOptimizerProductionSkeletonState(toolHistory = [], pageContext
       [etsySearchEvidence?.sourceRef, googleSearchEvidence?.sourceRef, trendsToolEvidence?.sourceRef, trendsScreenshotEvidence?.sourceRef],
       etsySearchEvidence && googleSearchEvidence && trendsToolEvidence && trendsScreenshotEvidence
         ? "把站内/站外/Trends 证据写入 evidence_ledger 和站外需求维度，趋势只写相对热度。"
-        : "补齐 Etsy Search、Google Search US、Google Trends US 和 Trends 截图视觉解读。"
+        : "补齐 Etsy Search、Google 地区搜索、Google Trends 地区页和 Trends 截图视觉解读。"
     ),
     trust_fulfillment: productionSlot(
       hasShippingSearch ? "filled" : pageDomEvidence || competitorBenchmarks.length ? "partial" : "missing",
@@ -3282,7 +3346,7 @@ function validateKeywordReport(out, toolHistory = [], pageContext = {}) {
       label,
       toolHistory,
       pageContext,
-      allowedTypes: ["page_dom", "screenshot_visual", "etsy_search", "google_search", "google_trends", "etsy_api", "pinterest_social", "tiktok_social", "reddit_social", "google_news", "user_input", "assumption"],
+      allowedTypes: ["page_dom", "screenshot_visual", "etsy_search", "google_search", "google_trends", "etsy_api", "pinterest_social", "tiktok_social", "instagram_social", "reddit_social", "google_news", "amazon_search", "ebay_search", "user_input", "assumption"],
     }));
     if (!hasValue(item?.keyword || item?.title || item?.name)) errors.push(`${label} 缺少 keyword/title/name，无法和报告表格同步展示。`);
     if (tags.length > 13) errors.push(`${label} 输出了 ${tags.length} 个 Etsy tags，超过 Etsy Listing 最多 13 个标签的硬限制。`);
@@ -3320,7 +3384,7 @@ function validateListingReport(out, toolHistory = [], pageContext = {}) {
       label,
       toolHistory,
       pageContext,
-      allowedTypes: ["page_dom", "screenshot_visual", "etsy_search", "google_search", "google_trends", "supplier_page", "official_policy", "official_regulation", "pinterest_social", "tiktok_social", "reddit_social", "google_news", "user_input", "assumption"],
+      allowedTypes: ["page_dom", "screenshot_visual", "etsy_search", "google_search", "google_trends", "supplier_page", "official_policy", "official_regulation", "pinterest_social", "tiktok_social", "instagram_social", "reddit_social", "google_news", "amazon_search", "ebay_search", "user_input", "assumption"],
     }));
     if (tags.length > 13) errors.push(`${label} 输出了 ${tags.length} 个 Etsy tags，超过 Etsy Listing 最多 13 个标签的硬限制。`);
     if (/已填写|confirmed|verified|已确认|确定属性/i.test(itemText) && !hasAnyLedgerType(ledger, ["page_dom", "user_input", "supplier_page"])) {
@@ -3349,7 +3413,7 @@ function validateProductOpportunityReport(out, toolHistory = [], pageContext = {
       label,
       toolHistory,
       pageContext,
-      allowedTypes: ["page_dom", "screenshot_visual", "etsy_search", "google_search", "google_trends", "etsy_api", "official_policy", "official_regulation", "pinterest_social", "tiktok_social", "reddit_social", "google_news", "user_input", "assumption"],
+      allowedTypes: ["page_dom", "screenshot_visual", "etsy_search", "google_search", "google_trends", "etsy_api", "official_policy", "official_regulation", "pinterest_social", "tiktok_social", "instagram_social", "reddit_social", "google_news", "amazon_search", "ebay_search", "user_input", "assumption"],
     }));
     if (OPPORTUNITY_STRONG_CLAIM_RE.test(itemText) && !hasAnyLedgerType(ledger, ["etsy_search", "google_search", "google_trends", "page_dom"]) && !hasAssumptionFallback(ledger, /机会|需求|竞争|趋势|待验证|未取得/i)) {
       errors.push(`${label} 输出蓝海/爆品/高增长/低竞争/机会评分等强结论，但没有 Etsy/Google/Trends/页面证据。`);
@@ -3518,7 +3582,7 @@ function validatePlatformTrendReport(out, toolHistory = [], pageContext = {}) {
       label,
       toolHistory,
       pageContext,
-      allowedTypes: ["page_dom", "screenshot_visual", "etsy_search", "google_search", "google_trends", "official_policy", "official_regulation", "pinterest_social", "tiktok_social", "reddit_social", "google_news", "user_input", "assumption"],
+      allowedTypes: ["page_dom", "screenshot_visual", "etsy_search", "google_search", "google_trends", "official_policy", "official_regulation", "pinterest_social", "tiktok_social", "instagram_social", "reddit_social", "google_news", "amazon_search", "ebay_search", "user_input", "assumption"],
     }));
     const itemText = JSON.stringify(item);
     if (TREND_STRONG_CLAIM_RE.test(itemText) && !hasTrendSampleScope(item)) {
@@ -3573,16 +3637,16 @@ function validatePlatformTrendToolResult(toolName, toolArgs = {}, toolResult = {
   const errors = [];
   const engine = String(toolArgs.engine || "").toLowerCase();
   if (toolName === "search_in_browser") {
-    if (engine === "etsy" && !hasValidEtsySearchEvidence(toolResult)) {
+    if (isEtsySearchEngine(engine) && !hasValidEtsySearchEvidence(toolResult)) {
       errors.push("Etsy 搜索结果没有通过可用证据校验，未获得可验证的商品/店铺卡片或页面文本。");
     }
-    if (engine === "google_trends" && !hasValidGoogleTrendsEvidence(toolResult)) {
+    if (isGoogleTrendsEngine(engine) && !hasValidGoogleTrendsEvidence(toolResult)) {
       errors.push("Google Trends 页面没有通过可用证据校验，未获得可验证的趋势页面内容。");
     }
-    if (engine === "google_trends" && !toolResult?.screenshotRef && !toolResult?.screenshotCaptured) {
+    if (isGoogleTrendsEngine(engine) && !toolResult?.screenshotRef && !toolResult?.screenshotCaptured) {
       errors.push("Google Trends 搜索没有形成截图 artifact，不能进入趋势图视觉解读或季节性结论阶段。");
     }
-    if (["google", "google_us", "google_ru"].includes(engine)) {
+    if (isGoogleSearchEngine(engine)) {
       const pageData = toolResult?.pageData || {};
       if (toolResult?.ok === false || String(pageData.visibleText || "").trim().length < 80) {
         errors.push("Google Search 页面内容不足，不能把空页面或搜索失败当成站外证据。");
@@ -3724,7 +3788,7 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
         const observedValue = entry?.observed_value;
         const usedFor = entry?.used_for;
         const limitation = entry?.limitation;
-        const allowedTypes = ["page_dom", "screenshot_visual", "etsy_api", "etsy_search", "google_search", "google_trends", "official_policy", "official_regulation", "pinterest_social", "tiktok_social", "reddit_social", "google_news", "user_input", "assumption"];
+        const allowedTypes = ["page_dom", "screenshot_visual", "etsy_api", "etsy_search", "google_search", "google_trends", "official_policy", "official_regulation", "pinterest_social", "tiktok_social", "instagram_social", "reddit_social", "google_news", "amazon_search", "ebay_search", "user_input", "assumption"];
         if (!allowedTypes.includes(sourceType)) {
           errors.push(`${prefix} 的 source_type 无效，必须是 ${allowedTypes.join(" / ")}。`);
         }
@@ -3793,7 +3857,7 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
       }
     }
     if (!hasAnyLedgerType(allLedgerEntries, ["google_search", "google_trends"])) {
-      errors.push("店铺优化报告缺少必须完成的 Google Trends US / Google Search 站外需求证据。该项不能降级为 assumption，请调用 search_in_browser(engine=google_us 或 google_trends) 获取真实检索/趋势证据。");
+      errors.push("店铺优化报告缺少必须完成的 Google Trends / Google Search 地区站外需求证据。该项不能降级为 assumption，请调用 search_in_browser(engine=google_us/google_uk/google_de/google_fr/google_ca/google_au 或 google_trends_us/google_trends_uk/google_trends_de/google_trends_fr/google_trends_ca/google_trends_au) 获取真实检索/趋势证据。");
     }
     const hasTrendInterpretation = /Google Trends|谷歌趋势|趋势图|搜索趋势|搜索热度|年度趋势|季度趋势|近\s*12\s*个月|YoY|QoQ|季节性|需求曲线|Interest over time|related queries|related topics/i.test(fullReportText);
     if ((hasLedgerType(allLedgerEntries, "google_trends") || hasTrendInterpretation) && !hasTrendsVisualLedger(allLedgerEntries)) {
@@ -4127,7 +4191,7 @@ ${JSON.stringify(ctxForPrompt, null, 2)}
 ${JSON.stringify(ctxForPrompt.currency_rates, null, 2)}
 
 价格与区域口径硬约束：
-- 浏览器取证工具会优先访问 Etsy/Google 的 US 区域页面（例如 Etsy 搜索带 ship_to=US，Google Search 带 gl=us/hl=en）。店铺体检、关键词分析和机会分析应优先使用页面实际显示的币种/区域口径，并在证据账本中写明“页面显示币种/区域”；不要为了前台对标把 Etsy 页面显示价格二次换算成 USD。
+- 浏览器取证工具会优先访问免费公开的 Etsy/Google 地区页面（例如 Etsy 搜索带 ship_to=US/GB/DE/FR/CA/AU，Google Search 带 gl/hl，Google Trends 带 geo）。店铺体检、关键词分析和机会分析应优先使用页面实际显示的币种/区域口径，并在证据账本中写明“免费公开页面、页面显示币种/区域”；不要为了前台对标把 Etsy 页面显示价格二次换算成 USD。付费、后台或账号型工具不得作为必需证据。
 - 只有进入国内寻源、采购成本、物流成本、平台扣款、关税或净利润测算时，才使用上方汇率参数把 CNY/RUB/EUR 成本统一换算进 USD 财务账本；不得把不同币种数值直接相减。
 - 如果页面仍显示 AUD/EUR/GBP 等非 USD 价格，按原样引用并标明页面显示币种；需要可比利润测算时再单独列“待统一币种复核”，不要把它包装成已验证 USD 利润。
 

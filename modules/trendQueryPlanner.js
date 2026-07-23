@@ -53,7 +53,7 @@ export function classifyGoogleTrendsEvidence(result = {}) {
 
 export function collectGoogleTrendsAttempts(toolHistory = []) {
   return toolHistory
-    .filter((entry) => entry?.tool === "search_in_browser" && String(entry.arguments?.engine || "").toLowerCase() === "google_trends")
+    .filter((entry) => entry?.tool === "search_in_browser" && /^google_trends(?:_(?:us|uk|de|fr|ca|au))?$/.test(String(entry.arguments?.engine || "").toLowerCase()))
     .map((entry, index) => {
       const requestedQuery = normalizedText(entry.arguments?.query || entry.arguments?.keyword || "");
       const queryUsed = normalizedText(entry.result?.queryUsed || requestedQuery);
@@ -70,7 +70,7 @@ export function collectGoogleTrendsAttempts(toolHistory = []) {
 
 export function getTrendQueryGuardError({ skillId = "", toolName = "", toolArgs = {}, toolHistory = [] } = {}) {
   const isGuardedTrendWorkflow = GOOGLE_TRENDS_GUARDED_SKILL_RE.test(String(skillId));
-  const isGoogleTrends = toolName === "search_in_browser" && String(toolArgs.engine || "").toLowerCase() === "google_trends";
+  const isGoogleTrends = toolName === "search_in_browser" && /^google_trends(?:_(?:us|uk|de|fr|ca|au))?$/.test(String(toolArgs.engine || "").toLowerCase());
   if (!isGuardedTrendWorkflow || !isGoogleTrends) return null;
 
   const query = normalizedText(toolArgs.query || toolArgs.keyword || "");

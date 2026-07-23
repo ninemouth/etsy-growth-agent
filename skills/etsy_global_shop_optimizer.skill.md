@@ -24,8 +24,10 @@
    - 商品详情页强制阶段：竞品店铺分页采集完成后，必须从每个竞品的可见商品卡片中选取排名靠前的 listing，至少打开并读取 2 个商品详情页；每个详情页必须同时产出 `page_dom`、详情页截图 artifact、标题/价格/描述/评分/评论/图片/JSON-LD 等可见字段。没有详情页证据时，只能输出“店铺首页/搜索卡片初筛”，不得输出商品级材质、尺寸、画廊、变体或详情页 SEO 结论。
    - 截图口径：`captureVisibleTab` 得到的是当前 viewport 截图，不能写成“全屏截图/完整画廊”。只有完成滚动分段截图并记录覆盖区间，才允许写“页面分段截图”；没有覆盖完整详情页时，必须明确“当前可见区域”。
    - 覆盖口径：Search Grid 可见 17 个卡片只能写“本轮可见 17 个样本”，不能写“全店 17 款”；只有 Etsy 个人访问 API 全量返回，或分页记录 `completedFullCrawl=true` 且每页 URL/页码/商品数量齐全，才允许写全店商品数、全量价格分布或完整 SKU 结构。
-6. 必须调用 `search_in_browser` 且 `engine="google_us"` 或 `engine="google_trends"`，验证欧美站外需求表达、Google Trends US 近 12 个月方向或相关 Google 结果。若使用 `engine="google_trends"` 或报告正文输出趋势/季节性/搜索热度方向，必须结合 Google Trends 页面截图解读趋势图；`evidence_ledger` 中必须至少有一条 `screenshot_visual` 明确写明 “Google Trends / trends.google.com / 趋势图截图” 中观察到的时间范围、需求曲线方向、季节峰值或 related queries。图中这类“Google Trends US 未直接访问，来自行业报告摘要”不允许作为最终交付。
-7. 如果报告涉及配送/物流/时效/工作日，必须额外调用 `search_in_browser` 且 `engine="google_us"`，用 “Etsy international shipping delivery time + 发货地/目的地/品类/承运商” 等关键词做实时物流研究。国际物流因地区、发货地、承运商、季节和清关差异很大，禁止凭模型常识写“香港发货 7-12 工作日”这类确定承诺；没有实时证据时只能写成待确认区间和人工确认点。
+6. 必须调用 `search_in_browser` 且使用免费公开的 Google 地区搜索或 Google Trends 地区页（例如 `engine="google_us"` / `google_uk` / `google_de` / `google_fr` / `google_ca` / `google_au`，或 `google_trends_us` / `google_trends_uk` / `google_trends_de` / `google_trends_fr` / `google_trends_ca` / `google_trends_au`），验证欧美站外需求表达、Google Trends 近 12 个月方向或相关 Google 结果。若使用 Google Trends 或报告正文输出趋势/季节性/搜索热度方向，必须结合 Google Trends 页面截图解读趋势图；`evidence_ledger` 中必须至少有一条 `screenshot_visual` 明确写明 “Google Trends / trends.google.com / 趋势图截图” 中观察到的地区、时间范围、需求曲线方向、季节峰值或 related queries。图中这类“Google Trends 未直接访问，来自行业报告摘要”不允许作为最终交付。
+7. 如果报告涉及配送/物流/时效/工作日，必须额外调用 `search_in_browser` 且使用免费公开的 Google 地区搜索页，用 “Etsy international shipping delivery time + 发货地/目的地/品类/承运商” 等关键词做实时物流研究。国际物流因地区、发货地、承运商、季节和清关差异很大，禁止凭模型常识写“香港发货 7-12 工作日”这类确定承诺；没有实时证据时只能写成待确认区间和人工确认点。
+8. 证据源收敛到免费公开网页：默认只能使用 Etsy/Google/Google Trends/Google News/Pinterest/TikTok/Instagram/Reddit/Amazon/eBay 等免费公开页面。Google Ads Keyword Planner、Glimpse、Semrush、Ahrefs、Similarweb、EverBee、eRank、Marmalead 等付费、后台或账号型工具不得作为必需证据；若用户手动提供截图/导出，只能写成 `user_input` 或 `assumption` 辅助，并说明口径局限。
+9. 地区口径优先通过页面参数完成，而不是事后换算汇率：可调用 `etsy_us/etsy_uk/etsy_de/etsy_fr/etsy_ca/etsy_au`、`google_us/google_uk/google_de/google_fr/google_ca/google_au`、`google_trends_us/google_trends_uk/google_trends_de/google_trends_fr/google_trends_ca/google_trends_au` 等免费地区源；报告必须记录地区、页面显示币种和目的地口径。
 8. 在没有完成店铺健康度评级前，严禁把工作流切到 1688/采购/货源推荐。
 
 ### 严禁行为
@@ -109,11 +111,12 @@
    - **逻辑**：通过 Etsy 站内搜索、market 页面、热卖榜或高排名结果评估目标品类的真实竞争环境。
    - **证据链**：分析该品类排名靠前商品/店铺的价格区间、评价门槛、首图卖点规范、标题词、店铺定位、促销标签、履约承诺以及组货/SKU 搭配策略；至少学习 2-3 个同类高排名店铺或高排名商品页面。
 3. **第三层：欧美站外需求趋势 (External Demand Trends)**
-   - **逻辑**：通过 `search_in_browser` 对核心商品词执行 Google Search US 和 Google Trends US 检索，判断欧美本地需求表达、季节性窗口、站外内容竞争和搜索趋势。
+   - **逻辑**：通过 `search_in_browser` 对核心商品词执行免费公开的 Google Search 地区页和 Google Trends 地区页检索，判断欧美本地需求表达、季节性窗口、站外内容竞争和搜索趋势。
    - **证据链**：
-     - **Google Search US**：欧美本地搜索结果、站外竞品分布、内容入口和本地常用词。
-     - **Google Search US + Etsy 关键词**：Etsy 相关 Google 搜索结果，用于交叉验证关键词表达和站外内容竞争。
-     - **Google Trends US**：年度/季度/近 12 个月趋势方向；必须基于 Trends 截图解读 `Interest over time` 曲线、季节峰值和 related queries。无法读取或截图无法判断图表时必须继续访问或写成“趋势图待人工确认”，不得输出具体 YoY/QoQ 数字或确定的上升/下降结论。
+     - **Google Search 地区页**：欧美本地搜索结果、站外竞品分布、内容入口和本地常用词。
+     - **Google Search 地区页 + Etsy 关键词**：Etsy 相关 Google 搜索结果，用于交叉验证关键词表达和站外内容竞争。
+     - **Amazon/eBay 本地公开搜索页（可选）**：只用于购买意图、标题表达和价格带辅助校准，不能替代 Etsy 平台证据。
+     - **Google Trends 地区页**：年度/季度/近 12 个月趋势方向；必须基于 Trends 截图解读 `Interest over time` 曲线、地区、季节峰值和 related queries。无法读取或截图无法判断图表时必须继续访问或写成“趋势图待人工确认”，不得输出具体 YoY/QoQ 数字或确定的上升/下降结论。
 4. **第四层：高销竞品店铺反向工程 (Competitor Reverse Engineering)**
    - **逻辑**：对 2-3 个 Etsy 高销相似竞品或头部店铺做页面级对标，而不是只看单个商品卡。
    - **证据链**：竞品标题结构、英文 SEO 长尾词、首图卖点文案占比、评价数量门槛、价格带、履约承诺、促销标签和店铺垂直度。
@@ -181,7 +184,7 @@
    - 包含一个完整的 markdown 对标表格。列出针对该诊断评级，你拟定的 **2-3 个具体整改候选方向（如 A-1/A-2 等）**的执行成本、预期影响、风险、以及六层证据链对比（自营底账、Etsy 大盘、站外趋势、竞品反推、欧美客群敏感度、视觉与文本评估）。
    - 必须包含“已完成证据任务”小节，明确列出：
      1. Etsy 站内搜索/热卖榜/高排名竞品店铺对标已经访问的查询词和页面。
-     2. Google Search US / Google Trends US 已访问的查询词和页面。
+     2. Google Search / Google Trends 地区页已访问的查询词、地区和页面。
      3. 如涉及配送时效，国际物流实时研究的查询词、目的地、承运商或平台说明来源。
    - 必须包含“竞品店铺商品结构解析”小节，逐店铺对应 `competitor_benchmarks` 中的结构化数据；正文展示的数据必须与 `competitor_benchmarks` 数组一致，不能正文写 3 家而结构化只给 1 家。
 3. **summary (下一步决策)**：
@@ -257,8 +260,10 @@
       如果使用 Google Trends 或输出趋势/季节性判断，也必须包含一条明确来自 Google Trends 图表截图的 `screenshot_visual`，说明时间范围、曲线方向、峰值月份或 related queries。
   - `etsy_api`: `etsy_api_get_capabilities` / `etsy_api_get_store_snapshot` / `etsy_api_get_products` / `etsy_api_get_product_info` / `etsy_api_get_transactions` 返回的当前授权自营 Etsy 个人 API 值；不得把 unsupported analytics、竞品页面或公开搜索样本写成 API 数据。
   - `etsy_search`: Etsy 站内搜索或榜单页面返回值。
-  - `google_search`: Google Search US 搜索返回值。
-  - `google_trends`: Google Trends US 趋势页面返回值。
+  - `google_search`: Google Search 地区搜索返回值。
+  - `google_trends`: Google Trends 地区趋势页面返回值。
+  - `amazon_search` / `ebay_search`: Amazon/eBay 本地公开搜索页辅助返回值，仅用于购买意图、价格带和标题表达。
+  - `instagram_social`: Instagram hashtag / 公开话题辅助证据，仅用于内容兴趣，不等同 Etsy 转化。
   - `official_policy` / `official_regulation`: Etsy 官方政策或目标市场官方法规来源。
   - `user_input`: 用户手动提供的后台指标、订单事实、广告数据、成本或履约资料。
   - `assumption`: 明确标注为待验证假设，不得写成真实数据。

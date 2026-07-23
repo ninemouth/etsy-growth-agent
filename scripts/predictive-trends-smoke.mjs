@@ -39,6 +39,9 @@ assert.ok(scope1.seed_keywords.length > 0);
 assert.ok(scope1.seed_keywords.includes("fall home decor"));
 assert.ok(scope1.discovery_sources.includes("pinterest_trends"));
 assert.ok(scope1.discovery_sources.includes("google_news"));
+assert.ok(scope1.discovery_sources.includes("google_trends_uk"));
+assert.ok(scope1.discovery_sources.includes("amazon_public_search"));
+assert.ok(scope1.discovery_sources.includes("ebay_public_search"));
 
 // 3. Verify allowedTypes validation in agentLoop
 console.log("Testing evidence validation for social media...");
@@ -51,5 +54,38 @@ const mockToolHistory = [
 ];
 const hasPinterest = __testInternals.hasEvidenceSource(mockToolHistory, {}, "pinterest_social");
 assert.equal(hasPinterest, true, "pinterest_social evidence must be verified by search_in_browser(engine='pinterest')");
+
+const regionalToolHistory = [
+  {
+    tool: "search_in_browser",
+    arguments: { engine: "google_uk", query: "wedding clutch" },
+    result: { ok: true, pageData: { title: "Google", visibleText: "wedding clutch UK public search results with enough readable regional evidence" } }
+  },
+  {
+    tool: "search_in_browser",
+    arguments: { engine: "google_news_de", query: "Etsy handmade policy" },
+    result: { ok: true, pageData: { title: "Google News", visibleText: "German regional news search results about Etsy handmade policy" } }
+  },
+  {
+    tool: "search_in_browser",
+    arguments: { engine: "instagram", query: "weddingclutch" },
+    result: { ok: true, pageData: { visibleText: "Instagram hashtag public posts" } }
+  },
+  {
+    tool: "search_in_browser",
+    arguments: { engine: "amazon_de", query: "camera grip" },
+    result: { ok: true, pageData: { visibleText: "Amazon Germany public search results" } }
+  },
+  {
+    tool: "search_in_browser",
+    arguments: { engine: "ebay_uk", query: "camera thumb rest" },
+    result: { ok: true, pageData: { visibleText: "eBay UK public search results" } }
+  }
+];
+assert.equal(__testInternals.hasEvidenceSource(regionalToolHistory, {}, "google_search"), true, "regional Google engines should satisfy google_search evidence");
+assert.equal(__testInternals.hasEvidenceSource(regionalToolHistory, {}, "google_news"), true, "regional Google News engines should satisfy google_news evidence");
+assert.equal(__testInternals.hasEvidenceSource(regionalToolHistory, {}, "instagram_social"), true, "Instagram should have its own social evidence source");
+assert.equal(__testInternals.hasEvidenceSource(regionalToolHistory, {}, "amazon_search"), true, "Amazon public search should be an auxiliary purchase-intent source");
+assert.equal(__testInternals.hasEvidenceSource(regionalToolHistory, {}, "ebay_search"), true, "eBay public search should be an auxiliary purchase-intent source");
 
 console.log("predictive-trends-smoke: ok");

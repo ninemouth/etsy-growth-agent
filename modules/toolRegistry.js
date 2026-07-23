@@ -185,11 +185,63 @@ function shouldLocalizeSearchQuery(engine = "", query = "") {
   const normalizedEngine = String(engine || "").toLowerCase();
   const value = String(query || "").trim();
   if (!value) return false;
-  if (!["amazon", "etsy", "google", "google_us", "google_ru", "google_trends", "bing", "pinterest", "pinterest_trends", "tiktok", "instagram", "reddit", "google_news"].includes(normalizedEngine)) return false;
+  if (!isFreePublicSearchEngine(normalizedEngine)) return false;
   if (/https?:\/\//i.test(value)) return false;
   if (/["“”']/.test(value)) return false;
   if (/^[A-Z][A-Za-z0-9]+(?:[A-Z][A-Za-z0-9]+)+$/.test(value)) return false; // likely brand/shop name
   return /[\u4e00-\u9fa5]/.test(value);
+}
+
+const FREE_MARKET_REGIONS = {
+  us: { googleGl: "us", googleHl: "en", trendsGeo: "US", etsyShipTo: "US", amazonHost: "www.amazon.com", ebayHost: "www.ebay.com" },
+  uk: { googleGl: "gb", googleHl: "en", trendsGeo: "GB", etsyShipTo: "GB", amazonHost: "www.amazon.co.uk", ebayHost: "www.ebay.co.uk" },
+  de: { googleGl: "de", googleHl: "de", trendsGeo: "DE", etsyShipTo: "DE", amazonHost: "www.amazon.de", ebayHost: "www.ebay.de" },
+  fr: { googleGl: "fr", googleHl: "fr", trendsGeo: "FR", etsyShipTo: "FR", amazonHost: "www.amazon.fr", ebayHost: "www.ebay.fr" },
+  ca: { googleGl: "ca", googleHl: "en", trendsGeo: "CA", etsyShipTo: "CA", amazonHost: "www.amazon.ca", ebayHost: "www.ebay.ca" },
+  au: { googleGl: "au", googleHl: "en", trendsGeo: "AU", etsyShipTo: "AU", amazonHost: "www.amazon.com.au", ebayHost: "www.ebay.com.au" },
+};
+
+function engineFamily(engine = "") {
+  const normalized = String(engine || "").toLowerCase();
+  if (normalized === "google" || /^google_(us|uk|de|fr|ca|au|ru)$/.test(normalized)) return "google_search";
+  if (normalized === "google_news" || /^google_news_(us|uk|de|fr|ca|au)$/.test(normalized)) return "google_news";
+  if (normalized === "google_trends" || /^google_trends_(us|uk|de|fr|ca|au)$/.test(normalized)) return "google_trends";
+  if (normalized === "etsy" || /^etsy_(us|uk|de|fr|ca|au)$/.test(normalized)) return "etsy";
+  if (normalized === "amazon" || /^amazon_(us|uk|de|fr|ca|au)$/.test(normalized)) return "amazon";
+  if (/^ebay_(us|uk|de|fr|ca|au)$/.test(normalized)) return "ebay";
+  return normalized;
+}
+
+function engineRegion(engine = "", fallback = "us") {
+  const normalized = String(engine || "").toLowerCase();
+  const match = normalized.match(/(?:google|google_news|google_trends|etsy|amazon|ebay)_(us|uk|de|fr|ca|au)$/);
+  return match?.[1] || fallback;
+}
+
+function isGoogleTrendsEngine(engine = "") {
+  return engineFamily(engine) === "google_trends";
+}
+
+function isEtsySearchEngine(engine = "") {
+  return engineFamily(engine) === "etsy";
+}
+
+function isFreePublicSearchEngine(engine = "") {
+  const family = engineFamily(engine);
+  return [
+    "amazon",
+    "bing",
+    "ebay",
+    "etsy",
+    "google_search",
+    "google_news",
+    "google_trends",
+    "pinterest",
+    "pinterest_trends",
+    "tiktok",
+    "instagram",
+    "reddit",
+  ].includes(family);
 }
 
 export function hasValidEtsySearchEvidence(result = {}) {
@@ -275,25 +327,25 @@ function getGoogleTrendsEvidenceState(result = {}) {
 
 function withSearchEvidenceStatus(payload, engine) {
   const normalizedEngine = String(engine || "").toLowerCase();
-  if (normalizedEngine !== "etsy" && normalizedEngine !== "google_trends") return payload;
-  const trendsEvidenceState = normalizedEngine === "google_trends"
+  if (!isEtsySearchEngine(normalizedEngine) && !isGoogleTrendsEngine(normalizedEngine)) return payload;
+  const trendsEvidenceState = isGoogleTrendsEngine(normalizedEngine)
     ? getGoogleTrendsEvidenceState(payload)
     : undefined;
-  const evidenceOk = normalizedEngine === "etsy"
+  const evidenceOk = isEtsySearchEngine(normalizedEngine)
     ? hasValidEtsySearchEvidence(payload)
     : hasValidGoogleTrendsEvidence(payload);
   return {
     ...payload,
     ok: evidenceOk,
     evidenceOk,
-    evidenceType: normalizedEngine === "etsy" ? "etsy_search" : "google_trends",
+    evidenceType: isEtsySearchEngine(normalizedEngine) ? "etsy_search" : "google_trends",
     ...(trendsEvidenceState ? { trendsEvidenceState } : {}),
     requestedQuery: payload.queryOriginal || payload.requestedQuery || "",
     queryLocalized: payload.queryUsed || payload.queryLocalized || "",
     evidenceStatus: evidenceOk ? "valid" : "invalid_or_blocked",
     message: evidenceOk
-      ? (payload.message || (normalizedEngine === "etsy" ? "Valid Etsy search evidence captured." : "Valid Google Trends evidence captured."))
-      : (payload.message || (normalizedEngine === "etsy"
+      ? (payload.message || (isEtsySearchEngine(normalizedEngine) ? "Valid Etsy search evidence captured." : "Valid Google Trends evidence captured."))
+      : (payload.message || (isEtsySearchEngine(normalizedEngine)
         ? "Etsy search did not return usable listing/shop evidence; page may be blocked, empty, or unreadable."
         : "Google Trends did not return usable trend evidence; page may still be loading, blocked, or unreadable.")),
   };
@@ -304,20 +356,30 @@ function normalizeSearchEngine(engine = "") {
 }
 
 function buildSearchUrl(engine, targetQuery, searchType = "listing") {
+  const normalizedEngine = normalizeSearchEngine(engine);
   const encodedQuery = encodeURIComponent(targetQuery);
-  const etsyRegionParams = "ship_to=US";
-  const engines = {
-    google: `https://www.google.com/search?q=${encodedQuery}`,
-    google_us: `https://www.google.com/search?q=${encodedQuery}&hl=en&gl=us`,
-    google_ru: `https://www.google.com/search?q=${encodedQuery}&hl=ru&gl=ru`,
-    google_trends: `https://trends.google.com/trends/explore?date=today%2012-m&geo=US&q=${encodedQuery}`,
-    bing: `https://www.bing.com/search?q=${encodedQuery}`,
-    amazon: `https://www.amazon.com/s?k=${encodedQuery}`,
-    etsy: searchType === "shop"
+  const family = engineFamily(normalizedEngine);
+  const regionKey = engineRegion(normalizedEngine);
+  const region = FREE_MARKET_REGIONS[regionKey] || FREE_MARKET_REGIONS.us;
+  const etsyRegionParams = `ship_to=${region.etsyShipTo}`;
+  if (family === "google_search") {
+    if (normalizedEngine === "google") return `https://www.google.com/search?q=${encodedQuery}`;
+    if (normalizedEngine === "google_ru") return `https://www.google.com/search?q=${encodedQuery}&hl=ru&gl=ru`;
+    return `https://www.google.com/search?q=${encodedQuery}&hl=${region.googleHl}&gl=${region.googleGl}`;
+  }
+  if (family === "google_news") return `https://www.google.com/search?q=${encodedQuery}&tbm=nws&hl=${region.googleHl}&gl=${region.googleGl}`;
+  if (family === "google_trends") return `https://trends.google.com/trends/explore?date=today%2012-m&geo=${region.trendsGeo}&q=${encodedQuery}`;
+  if (family === "amazon") return `https://${region.amazonHost}/s?k=${encodedQuery}`;
+  if (family === "ebay") return `https://${region.ebayHost}/sch/i.html?_nkw=${encodedQuery}`;
+  if (family === "etsy") {
+    return searchType === "shop"
       ? `https://www.etsy.com/search/shops?search_query=${encodedQuery}&${etsyRegionParams}`
       : searchType === "market"
       ? `https://www.etsy.com/market/${encodedQuery.replace(/%20/g, "_")}?${etsyRegionParams}`
-      : `https://www.etsy.com/search?q=${encodedQuery}&${etsyRegionParams}`,
+      : `https://www.etsy.com/search?q=${encodedQuery}&${etsyRegionParams}`;
+  }
+  const engines = {
+    bing: `https://www.bing.com/search?q=${encodedQuery}`,
     taobao: `https://s.taobao.com/search?q=${encodedQuery}&_input_charset=utf-8`,
     jd: `https://search.jd.com/Search?keyword=${encodedQuery}&enc=utf-8`,
     pinduoduo: `https://mobile.yangkeduo.com/search_result.html?search_key=${encodedQuery}`,
@@ -328,14 +390,17 @@ function buildSearchUrl(engine, targetQuery, searchType = "listing") {
     reddit: `https://www.reddit.com/search/?q=${encodedQuery}`,
     google_news: `https://www.google.com/search?q=${encodedQuery}&tbm=nws`,
   };
-  return engines[engine] || engines.google;
+  return engines[normalizedEngine] || `https://www.google.com/search?q=${encodedQuery}`;
 }
 
 function buildBrowserSearchAttempts(engine, targetQuery, searchType = "listing") {
   const normalizedEngine = normalizeSearchEngine(engine);
   const encodedQuery = encodeURIComponent(targetQuery);
-  const etsyRegionParams = "ship_to=US";
-  if (normalizedEngine === "etsy") {
+  const family = engineFamily(normalizedEngine);
+  const regionKey = engineRegion(normalizedEngine);
+  const region = FREE_MARKET_REGIONS[regionKey] || FREE_MARKET_REGIONS.us;
+  const etsyRegionParams = `ship_to=${region.etsyShipTo}`;
+  if (family === "etsy") {
     const attempts = [];
     const push = (type, url, reason) => {
       if (!attempts.some((attempt) => attempt.url === url)) attempts.push({ engine: normalizedEngine, searchType: type, url, reason });
@@ -355,19 +420,19 @@ function buildBrowserSearchAttempts(engine, targetQuery, searchType = "listing")
     }
     return attempts;
   }
-  if (normalizedEngine === "google_trends") {
+  if (family === "google_trends") {
     return [
       {
         engine: normalizedEngine,
         searchType,
-        url: `https://trends.google.com/trends/explore?date=today%2012-m&geo=US&q=${encodedQuery}`,
-        reason: "google_trends_12m_us",
+        url: `https://trends.google.com/trends/explore?date=today%2012-m&geo=${region.trendsGeo}&q=${encodedQuery}`,
+        reason: `google_trends_12m_${regionKey}`,
       },
       {
         engine: normalizedEngine,
         searchType,
-        url: `https://trends.google.com/trends/explore?geo=US&q=${encodedQuery}`,
-        reason: "google_trends_us_no_date_fallback",
+        url: `https://trends.google.com/trends/explore?geo=${region.trendsGeo}&q=${encodedQuery}`,
+        reason: `google_trends_${regionKey}_no_date_fallback`,
       },
     ];
   }
@@ -376,8 +441,8 @@ function buildBrowserSearchAttempts(engine, targetQuery, searchType = "listing")
 
 function searchEvidenceSatisfied(payload, engine) {
   const normalizedEngine = normalizeSearchEngine(engine);
-  if (normalizedEngine === "etsy") return hasValidEtsySearchEvidence(payload);
-  if (normalizedEngine === "google_trends") return hasValidGoogleTrendsEvidence(payload);
+  if (isEtsySearchEngine(normalizedEngine)) return hasValidEtsySearchEvidence(payload);
+  if (isGoogleTrendsEngine(normalizedEngine)) return hasValidGoogleTrendsEvidence(payload);
   const pageData = payload?.pageData || {};
   const hasProducts = (Array.isArray(pageData.productLinks) && pageData.productLinks.length > 0) ||
     (Array.isArray(pageData.productCards) && pageData.productCards.length > 0);
@@ -2565,17 +2630,20 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
 
     const normalizedEngine = normalizeSearchEngine(engine);
     const searchAttempts = buildBrowserSearchAttempts(normalizedEngine, targetQuery, searchType);
-    const searchActionLabel = normalizedEngine === "google_trends"
+    const normalizedEngineFamily = engineFamily(normalizedEngine);
+    const searchActionLabel = normalizedEngineFamily === "google_trends"
       ? "Google Trends 趋势图取证"
-      : normalizedEngine === "etsy"
+      : normalizedEngineFamily === "etsy"
       ? "Etsy 搜索结果页取证"
+      : normalizedEngineFamily === "amazon" || normalizedEngineFamily === "ebay"
+      ? "购买意图搜索结果页取证"
       : "Google Search 结果页取证";
-    const shouldAutoCloseSearchTab = !keepTab && ["google", "google_us", "google_ru", "google_trends", "bing", "etsy", "pinterest", "pinterest_trends", "tiktok", "instagram", "reddit", "google_news"].includes(normalizedEngine);
-    const maxPollAttempts = normalizedEngine === "google_trends" ? 44 : normalizedEngine === "etsy" ? 30 : 20;
-    const minStablePollAttempts = normalizedEngine === "google_trends" ? 8 : 1;
+    const shouldAutoCloseSearchTab = !keepTab && isFreePublicSearchEngine(normalizedEngine);
+    const maxPollAttempts = normalizedEngineFamily === "google_trends" ? 44 : normalizedEngineFamily === "etsy" ? 30 : 20;
+    const minStablePollAttempts = normalizedEngineFamily === "google_trends" ? 8 : 1;
     const pollDelayMs = 500;
     const attachSearchScreenshotArtifact = async (tabId, payload = {}) => {
-      if (!["google", "google_us", "google_trends", "etsy", "pinterest", "pinterest_trends", "tiktok", "instagram", "reddit", "google_news"].includes(normalizedEngine)) return payload;
+      if (!isFreePublicSearchEngine(normalizedEngine)) return payload;
       if (payload.screenshotRef || payload.screenshotCaptured) return payload;
       try {
         emitSearchProgress("search_screenshot_started", `${searchActionLabel} 正在保存搜索页截图证据。`, { tabId, searchUrl: payload.searchUrl });
@@ -2665,7 +2733,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
         emitSearchProgress("search_tab_opened", `${searchActionLabel} 已打开临时标签页 tabId=${newTab.id}，开始等待页面可读。`, { tabId: newTab.id, searchUrl: attempt.url });
         const attemptStartedAt = Date.now();
         const readinessProfile = getReadinessProfile(attempt.url, searchActionLabel);
-        const minimumTabResidencyMs = Math.max(readinessProfile.minWaitMs, normalizedEngine === "google_trends" ? 2500 : normalizedEngine === "etsy" ? 1600 : 1200);
+        const minimumTabResidencyMs = Math.max(readinessProfile.minWaitMs, normalizedEngineFamily === "google_trends" ? 2500 : normalizedEngineFamily === "etsy" ? 1600 : 1200);
         const requiredStableReads = Math.max(1, Number(readinessProfile.minStableReads) || 1);
         let settled = false;
         let readInFlight = false;
@@ -2721,7 +2789,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
           pollCount++;
           try {
             if (pollCount === 1 || pollCount % 8 === 0) {
-              const trendHint = normalizedEngine === "google_trends" ? "，正在等待 Interest over time 与 Related queries/topics 模块" : "";
+              const trendHint = normalizedEngineFamily === "google_trends" ? "，正在等待 Interest over time 与 Related queries/topics 模块" : "";
               emitSearchProgress("search_page_reading", `${searchActionLabel} 正在读取页面 DOM${trendHint}（轮询 ${pollCount}/${maxPollAttempts}）。`, { tabId: newTab.id, searchUrl: attempt.url });
             }
             const data = await readCompletePageData(newTab.id, { type: "READ_CURRENT_PAGE" });
@@ -2743,7 +2811,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
             }, normalizedEngine);
 
             const evidenceSatisfied = searchEvidenceSatisfied(payload, normalizedEngine);
-            const stableWindowSatisfied = normalizedEngine !== "google_trends" || pollCount >= minStablePollAttempts;
+            const stableWindowSatisfied = normalizedEngineFamily !== "google_trends" || pollCount >= minStablePollAttempts;
             const residencySatisfied = Date.now() - attemptStartedAt >= minimumTabResidencyMs;
             const contentStable = stableReads >= requiredStableReads;
             if ((evidenceSatisfied && stableWindowSatisfied && residencySatisfied && contentStable) || pollCount >= maxPollAttempts) {

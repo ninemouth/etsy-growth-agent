@@ -68,7 +68,7 @@ const mockValidShopOptimizerReport = {
   type: "final",
   output: {
     overview: "## Etsy 店铺诊断\n目标市场为Etsy 主要欧美礼品市场，本轮判定为 B 级系统化整改。",
-    analysis: "以 Etsy 页面文本、店铺截图、Seller API 流量、Etsy 站内高排名竞品店铺、Google Search US 与 Google Trends US 真实搜索证据为基础，输出 ABC 分级优化候选方案，所有金额均以 $ / USD 表示。配送时效需要按目的地和承运商做实时搜索确认。",
+    analysis: "以 Etsy 页面文本、店铺截图、Seller API 流量、Etsy 站内高排名竞品店铺、Google Search 与 Google Trends 地区真实搜索证据为基础，输出 ABC 分级优化候选方案；前台对标金额优先使用页面显示币种，只有财务账本才统一换算为 $ / USD。配送时效需要按目的地和承运商做实时搜索确认。",
     summary: "第一优先级执行 B-1 主图英文卖点改版；如需更新配送文案，必须先完成国际物流实时研究和承运商确认。",
     data: [
       {
@@ -273,7 +273,7 @@ function runShopOptimizerValidation(report) {
   if (!hasType("page_dom")) errors.push("店铺优化报告必须包含 page_dom 页面文本证据，不能只凭截图。");
   if (!hasType("screenshot_visual")) errors.push("店铺优化报告必须包含 screenshot_visual 视觉截图证据。");
   if (!hasType("etsy_search")) errors.push("店铺优化报告必须包含真实 Etsy 站内搜索/热卖榜/高排名竞品证据，不能降级为 assumption。");
-  if (!hasType("google_search") && !hasType("google_trends")) errors.push("店铺优化报告必须包含真实 Google Search US 或 Google Trends US 证据，不能降级为 assumption。");
+  if (!hasType("google_search") && !hasType("google_trends")) errors.push("店铺优化报告必须包含真实 Google Search 或 Google Trends 地区证据，不能降级为 assumption。");
   if (/配送|物流|时效|工作日|shipping|delivery/i.test(combinedText) && !hasTopic("google_search", /配送|物流|时效|shipping|delivery|transit|fulfillment|承运商/i)) {
     errors.push("涉及配送/物流/时效的店铺优化报告必须包含物流主题 google_search 实时证据。");
   }

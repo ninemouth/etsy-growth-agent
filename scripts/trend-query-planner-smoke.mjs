@@ -74,6 +74,14 @@ const shopDuplicateGuard = getTrendQueryGuardError({
 assert.ok(shopDuplicateGuard, "shop optimizer should not reopen the same Google Trends keyword");
 assert.match(shopDuplicateGuard.error, /已经查询过/);
 
+const regionalDuplicateGuard = getTrendQueryGuardError({
+  skillId: "skills/etsy_global_shop_optimizer.skill.md",
+  toolName: "search_in_browser",
+  toolArgs: { engine: "google_trends_uk", query: "PERSONALIZED WEDDING CLUTCH FOR BRIDE" },
+  toolHistory: firstHistory,
+});
+assert.ok(regionalDuplicateGuard, "regional Google Trends engines should share duplicate-query protection");
+
 const secondHistory = [
   ...firstHistory,
   entry("wedding clutch", invalidResult("wedding clutch")),

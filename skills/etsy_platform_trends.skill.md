@@ -42,7 +42,7 @@
 ## 标签页安全边界
 
 - 平台趋势任务严禁主动关闭任何 Etsy 页面，包括用户发起任务的店铺首页、Etsy 搜索页、类目页、商品页或店铺页。
-- `google_us`、`google_uk`、`google_eu`、`google_trends` 等外部搜索页由运行时在保存证据后自动处理；不要为了“清理标签页”调用 `close_tab`。
+- `google_us`、`google_uk`、`google_de`、`google_fr`、`google_ca`、`google_au`、`google_trends_us`、`google_trends_uk`、`google_trends_de`、`google_trends_fr`、`google_trends_ca`、`google_trends_au` 等免费公开外部搜索页由运行时在保存证据后自动处理；不要为了“清理标签页”调用 `close_tab`。不得把付费/后台/账号型工具作为必需证据。
 - 如果某个 Etsy 证据页已完成读取，只需在报告中引用其 URL、tabId 或截图证据，不要调用 `close_tab` 关闭它。
 - 若运行时拒绝关闭 Etsy 页面并返回 `protectedEtsyTrendTab` 或 `protectedSourceTab`，这是正确的安全保护，不是工具失败；继续基于已采集证据输出报告。
 
@@ -71,7 +71,7 @@
    - 判断趋势所处的生命周期：`dormant` (潜伏期：打样设计)、`sprouting` (萌芽期：上架曝光黄金期)、`surging` (爆发期：备货热卖)、`peaked` (衰退期：降价清仓)。
 2. **意图拆解与多源发现**：把用户意图拆成 3 个以上的维度（如场景、人群、用途、材质、情感价值、价格带）。
 3. **发现词族**：从 Etsy 搜索、Google Search 以及外围社交/新闻平台中生成至少 6 个候选查询词。
-   - **社交舆情审计 (Social Buzz Audit)**：调用 `search_in_browser` 查询社交平台（`pinterest`, `pinterest_trends`, `tiktok`, `instagram`, `reddit`）或新闻（`google_news`），捕获非周期性潮流 Meme、小众审美、社媒种草、合规新闻等外围舆情。
+   - **社交舆情审计 (Social Buzz Audit)**：调用 `search_in_browser` 查询免费公开社交平台（`pinterest`, `pinterest_trends`, `tiktok`, `instagram`, `reddit`）、新闻（`google_news` / 地区 Google News）或购买意图辅助页（Amazon/eBay 本地公开搜索页），捕获非周期性潮流 Meme、小众审美、社媒种草、合规新闻和价格带表达等外围舆情；这些辅助源不能替代 Etsy/Google/Trends 主证据链。
    - 候选词覆盖 exact（精确长尾）、parent_proxy（上位品类头词）、adjacent_proxy（相邻需求表达）。
 4. **打分筛选**：对每个候选词从以下 5 个维度打分（满分 8 分，以评估周期规律和外围事件的组合驱动力）：
    - `seasonal_cyclicality`：周期时令评分（0–2，根据历史循环确定性）
@@ -217,7 +217,7 @@
         },
         "evidence_ledger": [
           {
-            "source_type": "etsy_search|google_search|google_trends|pinterest_social|tiktok_social|reddit_social|google_news|page_dom|screenshot_visual|official_policy|assumption|blocked",
+            "source_type": "etsy_search|google_search|google_trends|pinterest_social|tiktok_social|instagram_social|reddit_social|google_news|amazon_search|ebay_search|page_dom|screenshot_visual|official_policy|assumption|blocked",
             "source_ref": "",
             "observed_value": "",
             "used_for": "",
