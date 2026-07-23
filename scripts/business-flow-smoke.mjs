@@ -195,6 +195,12 @@ assert.match(contentSource, /activeOverlayToolRunId[\s\S]*data\.type === "tool_h
 assert.match(backgroundSource, /buildResearchScope[\s\S]*pageContext\.research_scope[\s\S]*shouldClarifyResearchScope/, "background should build research_scope before running Etsy workflows and block weak trend scope");
 assert.match(agentLoopSource, /当前研究范围与页面角色[\s\S]*source_page_role 是 competitor_reference[\s\S]*entry_page_type 是 etsy_home/, "agent loop prompt should make research_scope a first-class execution constraint");
 assert.match(agentLoopSource, /currency_rates[\s\S]*价格与区域口径硬约束[\s\S]*ship_to=US\/GB\/DE\/FR\/CA\/AU[\s\S]*不要为了前台对标把 Etsy 页面显示价格二次换算成 USD[\s\S]*付费、后台或账号型工具不得作为必需证据/, "agent loop prompt should use free regional frontend prices and reserve FX conversion for financial ledgers");
+assert.match(contentSource, /function extractEtsyMarketContext[\s\S]*displayCurrencyCode[\s\S]*urlLocalePath[\s\S]*overrides URL locale path/, "content script should extract visible Etsy market and currency context");
+assert.match(contentSource, /extractEtsySearchCards\(etsyMarketContext[\s\S]*displayCurrencyCode[\s\S]*marketContext/, "Etsy product cards should carry the visible market currency context");
+assert.match(toolRegistrySource, /etsyMarketContext[\s\S]*displayCurrencyCode[\s\S]*displayCurrencyBasis/, "DOM fallback and page evidence should preserve Etsy display currency context");
+assert.match(agentLoopSource, /displayCurrencyCode[\s\S]*最高优先级证据[\s\S]*严禁写成 AUD/, "agent prompt should prevent URL-locale based currency hallucination");
+assert.match(agentLoopSource, /price_distribution[\s\S]*currency_code[\s\S]*basis[\s\S]*Visible Etsy currency selector overrides/, "shop optimizer benchmarks should include price currency code and basis");
+assert.match(shopOptimizerSkillSource, /displayCurrencyCode[\s\S]*\/au\/[\s\S]*USD[\s\S]*不得因为 URL locale 推断为 AUD[\s\S]*price_distribution[\s\S]*currency_code/, "shop optimizer skill should require visible Etsy currency over URL locale");
 assert.match(agentLoopSource, /店铺体检生产骨架（必须逐槽生产）[\s\S]*不得等最终报告阶段才临时补结构/, "shop optimizer production process should be driven by the same report skeleton before final delivery");
 assert.match(agentLoopSource, /report_skeleton_state[\s\S]*nextMissingSlot[\s\S]*推进店铺体检生产骨架/, "tool-result context should carry report skeleton state into the next LLM planning turn");
 assert.match(agentLoopSource, /shop_report_skeleton_progress[\s\S]*filledCount[\s\S]*nextMissingSlot/, "workflow runtime should emit durable shop report skeleton progress events");
@@ -896,6 +902,16 @@ const shopOptimizerReportWithEtsyEvidence = {
     overview: "## Etsy 店铺优化诊断\n目标市场为Etsy 主要欧美礼品市场，当前为 B 级低评价成长店，需要补齐信任资产。",
     analysis: "已读取当前店铺页面文本和截图，并对标同类高排名竞品店铺。竞品店铺商品结构解析：TopBridalStudio 可见 12+ SKU，主价格带 $49-$89；BellaOliviaGifts 可见 16+ SKU，主价格带 $24.99-$79.98。Google Search US 已验证 wedding clutch 站外表达。",
     summary: "优先执行 B-1 婚礼场景首图与标题改版，7 天后复盘点击和加购。",
+    priority_sku_actions: [
+      { sku_or_line: "Personalized Bridal Clutch", why_priority: "主推婚礼礼品场景，当前搜索和竞品样本均显示强相关需求。", first_7_days_action: "重拍首图并强化 bride / bridesmaid 场景文案。", success_metric: "7 天内收藏和点击率提升。", evidence_refs: ["page_dom", "etsy_search", "screenshot_visual"] },
+      { sku_or_line: "Pearl Wedding Purse", why_priority: "中价利润款，可承接 wedding guest 和 mother gift 场景。", first_7_days_action: "补充尺寸、包装和手持图。", success_metric: "加购率和详情页停留提升。", evidence_refs: ["competitor_benchmarks", "google_search"] },
+      { sku_or_line: "Custom Bridesmaid Clutch", why_priority: "适合做个性化高客单与批量伴娘礼品。", first_7_days_action: "重写标题前 60 字并补 attributes。", success_metric: "长尾搜索曝光和询盘提升。", evidence_refs: ["google_trends", "etsy_search"] },
+    ],
+    thirty_day_roadmap: [
+      { period: "0-7天", goal: "完成主推 SKU 首图和标题第一轮改版。", actions: ["重拍 3 款首图", "重写标题前 60 字", "补尺寸/包装图"], owner_check: "确认图片和标题已发布", metric: "点击率/收藏数" },
+      { period: "8-14天", goal: "补齐信任资产和 FAQ/Shipping Profile。", actions: ["完善 About/FAQ", "补发货地和时效说明", "添加礼品包装承诺"], owner_check: "检查每个主推 listing 是否有信任模块", metric: "加购率/消息咨询数" },
+      { period: "15-30天", goal: "基于早期数据复盘并扩展组合包。", actions: ["复盘主推 SKU 表现", "测试 gift set", "决定是否小额广告"], owner_check: "只放量表现最好的 1-2 个 SKU", metric: "订单/收藏/转化趋势" },
+    ],
     diagnostic_depth_matrix: [
       { dimension: "店铺定位与经营阶段", finding: "低评价成长店，主营婚礼手拿包与伴娘礼品", evidence: "当前店铺页文本与 Etsy 店铺上下文", gap: "信任资产与垂直定位仍需强化", action: "先补 About、政策、FAQ 和婚礼场景定位" },
       { dimension: "视觉首图与画廊", finding: "当前视觉统一但缺少尺寸、包装和婚礼场景信号", evidence: "当前店铺截图与竞品截图", gap: "首图点击理由不足", action: "重做首图、模特手持图和包装/尺寸图" },
@@ -942,7 +958,8 @@ const shopOptimizerReportWithEtsyEvidence = {
           { title: "Pearl Wedding Purse", price: "$68.00", category_or_scenario: "wedding guest bag", promotion_signal: "star seller", visible_order_rank: 2 },
           { title: "Custom Bridesmaid Clutch", price: "$88.00", category_or_scenario: "bridesmaid gift", promotion_signal: "sale", visible_order_rank: 3 },
         ],
-        price_distribution: { min: "$42.00", max: "$185.00", main_band: "$49-$89", premium_band: "$140+" },
+        price_distribution: { min: "$42.00", max: "$185.00", main_band: "$49-$89", premium_band: "$140+", currency_code: "USD", basis: "Etsy visible market selector: United States | English (US) | $ (USD)" },
+        currency_context: { display_currency_code: "USD", evidence_text: "United States | English (US) | $ (USD)" },
         promotion_signals: ["free shipping", "star seller", "sale"],
         shop_review_signal: { rating: "4.9", review_count: "174 reviews", scope: "visible shop/search signal" },
         listing_order_insight: {
@@ -967,7 +984,8 @@ const shopOptimizerReportWithEtsyEvidence = {
           { title: "Mother of Groom Clutch", price: "$39.99", category_or_scenario: "mother gift", promotion_signal: "free shipping", visible_order_rank: 2 },
           { title: "Custom Wedding Clutch", price: "$79.98", category_or_scenario: "wedding party gift", promotion_signal: "coupon", visible_order_rank: 3 },
         ],
-        price_distribution: { min: "$24.99", max: "$79.98", main_band: "$24.99-$49.99", premium_band: "$79.98" },
+        price_distribution: { min: "$24.99", max: "$79.98", main_band: "$24.99-$49.99", premium_band: "$79.98", currency_code: "USD", basis: "Etsy visible market selector: United States | English (US) | $ (USD)" },
+        currency_context: { display_currency_code: "USD", evidence_text: "United States | English (US) | $ (USD)" },
         promotion_signals: ["sale", "free shipping", "coupon"],
         shop_review_signal: { rating: "4.8", review_count: "245 reviews", scope: "visible shop/search signal" },
         listing_order_insight: {
@@ -988,6 +1006,14 @@ const meaningfulPageContext = {
   title: "MidnightReveriee - Etsy",
   visibleText: "MidnightReveriee wedding clutch bridesmaid gifts",
   screenshot: "data:image/jpeg;base64,mock",
+  etsyMarketContext: {
+    displayCurrencyCode: "USD",
+    displayCurrencyLabel: "$ (USD)",
+    countryLabel: "United States",
+    evidenceText: "United States | English (US) | $ (USD)",
+    urlLocalePath: "au",
+  },
+  priceCurrencyCode: "USD",
   pageHealth: { hasMeaningfulDom: true, isLikelyBlocked: false },
   etsyShopProductContext: {
     sortLabel: "Most Recent",
@@ -1342,6 +1368,20 @@ assert.deepEqual(
   ], meaningfulPageContext),
   [],
   "shop optimizer critic should accept valid Etsy listing/search evidence"
+);
+const wrongCurrencyShopReport = globalThis.structuredClone(shopOptimizerReportWithEtsyEvidence);
+wrongCurrencyShopReport.output.analysis += " 当前主价格带为 $24.99-$89 AUD。";
+wrongCurrencyShopReport.output.competitor_benchmarks[0].price_distribution.currency_code = "AUD";
+assert.notDeepEqual(
+  validateReport(wrongCurrencyShopReport, "", "skills/etsy_global_shop_optimizer.skill.md", [
+    { tool: "search_in_browser", arguments: { engine: "etsy", query: "wedding clutch" }, result: validEtsySearchResult },
+    googleSearchHistory,
+    googleTrendsHistory,
+    competitorOpenHistory,
+    competitorOpenHistory2,
+  ], meaningfulPageContext),
+  [],
+  "shop optimizer critic should reject AUD when the visible Etsy market selector says USD"
 );
 assert.notDeepEqual(
   validateReport(shopOptimizerReportWithEtsyEvidence, "", "skills/etsy_global_shop_optimizer.skill.md", [

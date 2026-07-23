@@ -533,6 +533,15 @@ async function executeGenericDomSnapshot(tabId) {
           value.match(/(?:reviews?|ratings?)\s*(\d[\d,]*)/i);
         return match ? normalizeText(match[0], 40) : "";
       };
+      const inferCurrencyFromText = (text = "") => {
+        const value = String(text || "");
+        if (/\bAUD\b|\bAU\$/i.test(value)) return { code: "AUD", symbol: "AU$", label: "$ (AUD)" };
+        if (/\bUSD\b|\bUS\$|\$ \(USD\)/i.test(value)) return { code: "USD", symbol: "$", label: "$ (USD)" };
+        if (/\bGBP\b|£|£ \(GBP\)/i.test(value)) return { code: "GBP", symbol: "£", label: "£ (GBP)" };
+        if (/\bEUR\b|€|€ \(EUR\)/i.test(value)) return { code: "EUR", symbol: "€", label: "€ (EUR)" };
+        if (/\bCAD\b|\bCA\$/i.test(value)) return { code: "CAD", symbol: "CA$", label: "$ (CAD)" };
+        return { code: "", symbol: "", label: "" };
+      };
       const bodyText = document.body?.innerText || "";
       const links = Array.from(document.querySelectorAll("a[href]"))
         .map((anchor) => ({ href: anchor.href, text: (anchor.innerText || anchor.getAttribute("aria-label") || "").trim().slice(0, 240) }))
@@ -569,6 +578,32 @@ async function executeGenericDomSnapshot(tabId) {
       const h1 = document.querySelector("h1")?.innerText?.trim() || "";
       const metaDescription = document.querySelector('meta[name="description"]')?.content || "";
       const text = normalizeText(`${title}\n${h1}\n${metaDescription}\n${bodyText}`, 12000);
+      const etsyLocaleMatch = location.hostname.includes("etsy.com")
+        ? text.match(/(United States|United Kingdom|Australia|Canada|Germany|France)\s*\|\s*([^|]{2,40})\s*\|\s*([^\n\r]{1,20}\([A-Z]{3}\))/i)
+        : null;
+      const etsyCurrency = inferCurrencyFromText(etsyLocaleMatch?.[3] || text);
+      const countryToCode = {
+        "united states": "US",
+        "united kingdom": "GB",
+        australia: "AU",
+        canada: "CA",
+        germany: "DE",
+        france: "FR",
+      };
+      const etsyMarketContext = location.hostname.includes("etsy.com")
+        ? {
+            platform: "etsy",
+            countryLabel: normalizeText(etsyLocaleMatch?.[1] || "", 80),
+            countryCode: new URL(location.href).searchParams.get("ship_to") || countryToCode[normalizeText(etsyLocaleMatch?.[1] || "", 80).toLowerCase()] || "",
+            languageLabel: normalizeText(etsyLocaleMatch?.[2] || "", 80),
+            displayCurrencyCode: etsyCurrency.code,
+            displayCurrencySymbol: etsyCurrency.symbol,
+            displayCurrencyLabel: etsyCurrency.label || normalizeText(etsyLocaleMatch?.[3] || "", 40),
+            evidenceText: etsyLocaleMatch?.[0] || "",
+            urlLocalePath: location.pathname.match(/^\/([a-z]{2})(?:\/|$)/i)?.[1] || "",
+            precedence: "Etsy visible locale/currency selector overrides URL locale path for price currency interpretation.",
+          }
+        : null;
       const ldTypeText = structuredDataTypes.join(" ");
       let objectType = "website";
       if ((/Product|Offer|AggregateRating/i.test(ldTypeText) ? 1 : 0) + (extractPriceFromText(text) ? 1 : 0) + (/add to cart|buy now|in stock|sku|加入购物车|立即购买|库存|规格/i.test(text) ? 1 : 0) >= 2) {
@@ -602,6 +637,7 @@ async function executeGenericDomSnapshot(tabId) {
         visible_fields: {
           title: normalizeText(h1 || title, 180),
           price: extractPriceFromText(text),
+          priceCurrencyCode: etsyMarketContext?.displayCurrencyCode || inferCurrencyFromText(text).code || "",
           rating: extractRatingFromText(text),
           reviewCount: extractReviewCountFromText(text),
           metaDescription: normalizeText(metaDescription, 260),
@@ -638,6 +674,8 @@ async function executeGenericDomSnapshot(tabId) {
         h1,
         visibleText: bodyText.slice(0, 30000),
         metaDescription,
+        priceCurrencyCode: etsyMarketContext?.displayCurrencyCode || inferCurrencyFromText(text).code || "",
+        etsyMarketContext,
         productLinks,
         links,
         images,
@@ -708,6 +746,8 @@ async function readCompletePageData(tabId, message = {}) {
         productLinks: (contentData.productLinks?.length ? contentData.productLinks : fallback.productLinks) || [],
         images: (contentData.images?.length ? contentData.images : fallback.images) || [],
         objectProfile: contentData.objectProfile || fallback.objectProfile || null,
+        etsyMarketContext: contentData.etsyMarketContext || fallback.etsyMarketContext || null,
+        priceCurrencyCode: contentData.priceCurrencyCode || fallback.priceCurrencyCode || "",
         pageHealth: {
           ...(fallback.pageHealth || {}),
           ...(contentData.pageHealth || {}),
@@ -756,6 +796,8 @@ function buildPageEvidence(pageData = {}) {
     objectType: pageData.objectProfile?.object_type || "unknown",
     objectConfidence: pageData.objectProfile?.confidence || "low",
     objectCollectionStrategy: pageData.objectProfile?.collection_strategy || "",
+    displayCurrencyCode: pageData.etsyMarketContext?.displayCurrencyCode || pageData.priceCurrencyCode || "",
+    displayCurrencyBasis: pageData.etsyMarketContext?.evidenceText || "",
     hasStructuredData: Boolean(pageData.structuredData || pageData.structuredDataRaw?.length),
     hasMeaningfulDom: Boolean(health.hasMeaningfulDom),
     isLikelyBlocked: Boolean(health.isLikelyBlocked),

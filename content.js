@@ -445,6 +445,46 @@
     return match ? normalizeText(match[0], 40) : "";
   }
 
+  function inferCurrencyFromText(text = "") {
+    const value = String(text || "");
+    if (/\bAUD\b|\bAU\$/i.test(value)) return { code: "AUD", symbol: "AU$", label: "$ (AUD)" };
+    if (/\bUSD\b|\bUS\$|\$ \(USD\)/i.test(value)) return { code: "USD", symbol: "$", label: "$ (USD)" };
+    if (/\bGBP\b|£|£ \(GBP\)/i.test(value)) return { code: "GBP", symbol: "£", label: "£ (GBP)" };
+    if (/\bEUR\b|€|€ \(EUR\)/i.test(value)) return { code: "EUR", symbol: "€", label: "€ (EUR)" };
+    if (/\bCAD\b|\bCA\$/i.test(value)) return { code: "CAD", symbol: "CA$", label: "$ (CAD)" };
+    return { code: "", symbol: "", label: "" };
+  }
+
+  function extractEtsyMarketContext(visibleText = "") {
+    if (!window.location.hostname.includes("etsy.com")) return null;
+    const text = normalizeText(visibleText || document.body?.innerText || "", 20000);
+    const localeMatch = text.match(/(United States|United Kingdom|Australia|Canada|Germany|France)\s*\|\s*([^|]{2,40})\s*\|\s*([^\n\r]{1,20}\([A-Z]{3}\))/i);
+    const currency = inferCurrencyFromText(localeMatch?.[3] || text);
+    const url = new URL(window.location.href);
+    const shipTo = url.searchParams.get("ship_to") || "";
+    const countryToCode = {
+      "united states": "US",
+      "united kingdom": "GB",
+      australia: "AU",
+      canada: "CA",
+      germany: "DE",
+      france: "FR",
+    };
+    const countryLabel = normalizeText(localeMatch?.[1] || "", 80);
+    return {
+      platform: "etsy",
+      countryLabel,
+      countryCode: shipTo || countryToCode[countryLabel.toLowerCase()] || "",
+      languageLabel: normalizeText(localeMatch?.[2] || "", 80),
+      displayCurrencyCode: currency.code,
+      displayCurrencySymbol: currency.symbol,
+      displayCurrencyLabel: currency.label || normalizeText(localeMatch?.[3] || "", 40),
+      evidenceText: localeMatch?.[0] || "",
+      urlLocalePath: window.location.pathname.match(/^\/([a-z]{2})(?:\/|$)/i)?.[1] || "",
+      precedence: "Etsy visible locale/currency selector overrides URL locale path for price currency interpretation.",
+    };
+  }
+
   function classifyPageHealth({ url = "", title = "", visibleText = "", productCards = [], productLinks = [] } = {}) {
     const text = String(visibleText || "");
     const blockSignals = [];
@@ -640,7 +680,7 @@
     };
   }
 
-  function extractEtsySearchCards() {
+  function extractEtsySearchCards(etsyMarketContext = null) {
     if (!window.location.hostname.includes("etsy.com")) return [];
     const cards = [];
     const processed = new Set();
@@ -673,7 +713,9 @@
         shopName,
         shopUrl,
         price: extractPriceFromText(text),
-        currency: /\$|USD/i.test(text) ? "USD" : "",
+        currency: etsyMarketContext?.displayCurrencyCode || inferCurrencyFromText(text).code || "",
+        displayCurrencyCode: etsyMarketContext?.displayCurrencyCode || inferCurrencyFromText(text).code || "",
+        marketContext: etsyMarketContext || null,
         rating: extractRatingFromText(text),
         reviewCount: extractReviewCountFromText(text),
         badges,
@@ -707,6 +749,8 @@
           title: shopName,
           price: "",
           currency: "",
+          displayCurrencyCode: etsyMarketContext?.displayCurrencyCode || "",
+          marketContext: etsyMarketContext || null,
           rating: extractRatingFromText(text),
           reviewCount: extractReviewCountFromText(text),
           badges: /star seller/i.test(text) ? ["star_seller"] : [],
@@ -1440,9 +1484,19 @@
       detailCreators = extractTikTokDetailCreators();
     }
 
+    const etsyMarketContext = extractEtsyMarketContext(visibleText);
+
     if (window.location.hostname.includes("etsy.com")) {
-      const etsyCards = extractEtsySearchCards();
+      const etsyCards = extractEtsySearchCards(etsyMarketContext);
       productCards = etsyCards.length > 0 ? etsyCards : extractProductCards();
+      if (etsyMarketContext?.displayCurrencyCode) {
+        productCards = productCards.map((card) => ({
+          ...card,
+          currency: card.currency || etsyMarketContext.displayCurrencyCode,
+          displayCurrencyCode: card.displayCurrencyCode || etsyMarketContext.displayCurrencyCode,
+          marketContext: card.marketContext || etsyMarketContext,
+        }));
+      }
     } else if (cachedSelectors && (cachedSelectors.product_card || cachedSelectors.card)) {
       productCards = extractProductCardsWithMemory(cachedSelectors);
     } else if (window.location.hostname.includes("tiktok.com")) {
@@ -1482,6 +1536,8 @@
       h1,
       h2s,
       price,
+      priceCurrencyCode: etsyMarketContext?.displayCurrencyCode || inferCurrencyFromText(price).code || "",
+      etsyMarketContext,
       rating,
       reviewCount,
       description,

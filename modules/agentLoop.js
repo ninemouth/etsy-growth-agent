@@ -2600,6 +2600,8 @@ function getShopOptimizerCompetitorGroups(toolHistory = [], pageContext = {}) {
 
 function buildShopOptimizerCompetitorBenchmarks(toolHistory = [], pageContext = {}, limit = 3) {
   const groups = getShopOptimizerCompetitorGroups(toolHistory, pageContext);
+  const currencyContext = pageContext?.etsyMarketContext || {};
+  const displayCurrencyCode = currencyContext.displayCurrencyCode || pageContext?.priceCurrencyCode || "";
   return groups.slice(0, Math.max(1, Number(limit) || 3)).map((group) => {
     const cards = group.productCards.filter(Boolean);
     const text = group.visibleTexts.join(" ");
@@ -2642,6 +2644,17 @@ function buildShopOptimizerCompetitorBenchmarks(toolHistory = [], pageContext = 
         min: prices[0] || "price_not_visible_in_sample",
         max: prices[prices.length - 1] || prices[0] || "price_not_visible_in_sample",
         main_band: prices.length ? prices.slice(0, 4).join(" / ") : "visible prices not captured in this sample",
+        currency_code: displayCurrencyCode || cards.find((card) => card.displayCurrencyCode || card.currency)?.displayCurrencyCode || cards.find((card) => card.currency)?.currency || "page_display_currency_not_detected",
+        basis: currencyContext.evidenceText
+          ? `Etsy visible market selector: ${currencyContext.evidenceText}`
+          : "Public visible page sample; use the page displayed currency and do not infer currency from URL locale path.",
+      },
+      currency_context: {
+        display_currency_code: displayCurrencyCode || "not_detected",
+        display_currency_label: currencyContext.displayCurrencyLabel || "",
+        market_country: currencyContext.countryLabel || "",
+        evidence_text: currencyContext.evidenceText || "",
+        interpretation_rule: "Visible Etsy currency selector overrides /au or other URL locale path when interpreting bare $ prices.",
       },
       promotion_signals: promotions.length ? promotions : ["none_visible"],
       shop_review_signal: {
@@ -2773,6 +2786,90 @@ function buildShopOptimizerDepthMatrixSkeleton(out = {}, evidence = {}) {
   ];
 }
 
+function buildShopOptimizerPrioritySkuActions(out = {}, competitorBenchmarks = [], pageContext = {}) {
+  const dataItems = Array.isArray(out.data) ? out.data : [];
+  const competitorSamples = competitorBenchmarks
+    .flatMap((benchmark) => Array.isArray(benchmark?.product_samples) ? benchmark.product_samples : [])
+    .filter(Boolean);
+  const displayCurrencyCode = pageContext?.etsyMarketContext?.displayCurrencyCode || pageContext?.priceCurrencyCode || "";
+  const visibleCurrencyBasis = pageContext?.etsyMarketContext?.evidenceText
+    ? `页面可见货币选择器为 ${pageContext.etsyMarketContext.evidenceText}，裸 $ 价格按 ${displayCurrencyCode || "页面显示货币"} 解读。`
+    : "价格只引用本轮页面可见口径，不从 URL 地区路径推断货币。";
+  const seedLines = [
+    {
+      sku_or_line: dataItems[0]?.title || pageContext?.h1 || "主推相机木质手柄 / 拇指托商品线",
+      why_priority: "承接店铺当前最核心的垂直定位，直接影响搜索页首图点击、买家对适配机型的理解和高客单价信任。",
+      first_7_days_action: "重做首图与画廊前 3 张：首图加入英文核心卖点、适配机型、轻薄/重量/材质信息；第 2-3 张补尺寸参照、手持场景和安装后效果。",
+      success_metric: "7 天内记录 Etsy 搜索曝光后的点击率、收藏率和加购反馈；若无后台数据，则人工对比改版前后首图点击/询盘变化。",
+      evidence_refs: ["page_dom:current_shop", "screenshot_visual:current_shop", "competitor_benchmarks.product_samples"],
+    },
+    {
+      sku_or_line: competitorSamples[0]?.title || "高意图相机型号适配 SKU",
+      why_priority: "买家通常按具体相机型号、材质和握持场景检索；该商品线适合用更清晰的标题前 60 字和 attributes 抢占精准搜索。",
+      first_7_days_action: "把标题拆成核心品类词、相机型号、wood/wooden grip、street photography、travel photographer、gift 等场景词；同步补齐 13 个 tags 与材质/适配属性。",
+      success_metric: "核心关键词排名页可见性、搜索点击率、收藏率或自然询盘数提升；标题不得出现无证据堆词。",
+      evidence_refs: ["etsy_search:public_results", "google_search:public_results", "page_dom:listing_titles"],
+    },
+    {
+      sku_or_line: competitorSamples[1]?.title || "低门槛引流款与礼品组合商品线",
+      why_priority: "引流款可以降低冷启动店铺的首次购买门槛，礼品组合能服务北美/欧洲摄影爱好者礼品场景，并带动高价手柄款浏览。",
+      first_7_days_action: `按页面可见价格口径复核引流款、主推款、利润款分层；为组合款补包装、送礼对象、交付时效和退换货说明。${visibleCurrencyBasis}`,
+      success_metric: "组合款点击/收藏、购物车加入率、客单价和买家关于适配/发货问题的咨询量变化。",
+      evidence_refs: ["competitor_benchmarks.price_distribution", "page_dom:shipping_policy", "screenshot_visual:shop_grid"],
+    },
+  ];
+
+  return seedLines.slice(0, 3).map((item) => ({
+    sku_or_line: truncateText(item.sku_or_line, 120),
+    why_priority: item.why_priority,
+    first_7_days_action: item.first_7_days_action,
+    success_metric: item.success_metric,
+    evidence_refs: item.evidence_refs,
+  }));
+}
+
+function buildShopOptimizerThirtyDayRoadmap(pageContext = {}) {
+  const displayCurrencyCode = pageContext?.etsyMarketContext?.displayCurrencyCode || pageContext?.priceCurrencyCode || "";
+  const currencyCheck = displayCurrencyCode
+    ? `价格复核统一使用页面可见 ${displayCurrencyCode} 口径。`
+    : "价格复核统一使用页面可见货币口径。";
+  return [
+    {
+      period: "0-7天",
+      goal: "先修复最影响点击和信任的主推款表达。",
+      actions: [
+        "选定 3 个主推 SKU，重做首图、画廊前 3 张、标题前 60 字和 tags。",
+        "每个 SKU 明确适配机型、材质、尺寸/重量、使用场景和礼品对象。",
+        currencyCheck,
+      ],
+      owner_check: "运营者人工确认图片文案不遮挡产品、标题不堆词、所有尺寸/重量都有商品页或实物依据。",
+      metric: "搜索页点击率、收藏率、加购或询盘量；无后台数据时记录改版前后 7 天可见反馈。",
+    },
+    {
+      period: "8-14天",
+      goal: "补齐信任资产、履约说明和竞品差异化。",
+      actions: [
+        "完善 About、FAQ、材质来源、安装方式、兼容性边界、退换货说明。",
+        "对照 2-3 个竞品样本整理价格带、促销、评价信号和首图方法。",
+        "复核发货地、处理时间和美国/欧洲主要目的地的承运商时效，不写未确认承诺。",
+      ],
+      owner_check: "人工检查所有物流天数、材质描述和适配型号是否可证明；无法确认的写成待确认。",
+      metric: "买家关于适配、材质和物流的重复咨询减少；商品页收藏/加购质量提升。",
+    },
+    {
+      period: "15-30天",
+      goal: "用小流量实验决定 SKU 取舍和下一轮放量。",
+      actions: [
+        "按引流款、主推款、利润款复盘曝光、点击、收藏、加购和订单。",
+        "保留表现最好的首图/标题组合，淘汰无点击或无收藏的弱 SKU 表达。",
+        "规划礼品组合、节庆场景图或轻量广告测试，但只基于已验证 SKU 放量。",
+      ],
+      owner_check: "复盘必须区分公开页面证据、后台数据和人工假设；不要把 Google Trends 相对热度写成 Etsy 订单量。",
+      metric: "Top 3 SKU 的点击率、收藏率、加购率、订单/询盘趋势，以及高价款带动的客单价变化。",
+    },
+  ];
+}
+
 function ensureShopOptimizerReportSkeleton(repaired, {
   toolHistory = [],
   pageContext = {},
@@ -2811,6 +2908,16 @@ function ensureShopOptimizerReportSkeleton(repaired, {
     const names = out.competitor_benchmarks.map((item) => item.competitor_name || item.shop_name || item.name).filter(Boolean).slice(0, 3).join(" / ");
     out.analysis = `${out.analysis || ""}\n\n竞品店铺商品结构解析：本轮已打开同类高排名竞品店铺/商品详情页 ${names || "可见样本"}，并按公开页面样本拆分 product_samples、price_distribution、promotion_signals、shop_review_signal 与 listing_order_insight；所有排序和价格结论仅代表本轮可见样本。`.trim();
     reasons.push("已补入竞品店铺反向学习结论段，避免报告只停留在单薄概述");
+  }
+
+  if (!Array.isArray(out.priority_sku_actions) || out.priority_sku_actions.length < 3) {
+    out.priority_sku_actions = buildShopOptimizerPrioritySkuActions(out, out.competitor_benchmarks || competitorBenchmarks, pageContext);
+    reasons.push("已生成 priority_sku_actions，补齐 3 个 SKU/商品线优先级动作");
+  }
+
+  if (!Array.isArray(out.thirty_day_roadmap) || out.thirty_day_roadmap.length < 3) {
+    out.thirty_day_roadmap = buildShopOptimizerThirtyDayRoadmap(pageContext);
+    reasons.push("已生成 thirty_day_roadmap，补齐 0-30 天运营执行路线图");
   }
 
   out.data.forEach((item, idx) => {
@@ -2892,7 +2999,7 @@ const SHOP_OPTIMIZER_PRODUCTION_SLOTS = [
     title: "商品矩阵、SKU 结构与价格带",
     finalFields: ["diagnostic_depth_matrix[商品矩阵]", "competitor_benchmarks[].price_distribution"],
     requiredEvidence: "当前店铺可见商品卡片、竞品可见商品样本和页面显示币种价格",
-    nextAction: "按页面显示币种记录可见样本价格，拆分引流款/主推款/利润款；不要前台二次换算 USD。",
+    nextAction: "按 Etsy 页面可见地区/币种选择器记录价格；页脚显示 $ (USD) 时裸 $ 必须写 USD，不能因 /au 路径误写 AUD；拆分引流款/主推款/利润款。",
   },
   {
     id: "competitor_benchmarks",
@@ -2989,7 +3096,7 @@ function buildShopOptimizerProductionSkeletonState(toolHistory = [], pageContext
       competitorBenchmarks.some((item) => hasValue(item.price_distribution) && hasValue(item.product_samples)) ? "filled" : pageDomEvidence || competitorBenchmarks.length ? "partial" : "missing",
       competitorBenchmarks.map((item) => `${item.competitor_name}:${item.visible_sku_count_estimate}`),
       competitorBenchmarks.length
-        ? "用页面显示币种记录可见样本价格，输出 SKU 角色和价格层级；不要前台二次换算 USD。"
+        ? "用页面显示币种记录可见样本价格，输出 SKU 角色和价格层级；页脚/地区选择器币种优先于 URL locale，不要前台二次换算 USD。"
         : "需要当前/竞品商品卡片或分页采集样本，才能写商品矩阵和价格带。"
     ),
     competitor_benchmarks: productionSlot(
@@ -3753,6 +3860,25 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
   if (isShopOptimizerOnly(skillId)) {
     const combinedReportText = `${out.overview || ""}\n${out.analysis || ""}\n${out.summary || ""}`;
     const fullReportText = `${combinedReportText}\n${JSON.stringify(out.data || [])}`;
+    const displayCurrencyCode = String(pageContext?.etsyMarketContext?.displayCurrencyCode || pageContext?.priceCurrencyCode || "").toUpperCase();
+    if (displayCurrencyCode === "USD" && /\bAUD\b|AU\$/i.test(fullReportText)) {
+      errors.push("当前 Etsy 页面地区/币种选择器显示为 USD，但报告将裸 $ 价格写成 AUD。必须以 pageContext.etsyMarketContext.displayCurrencyCode 为准，不能根据 /au URL 路径推断币种。");
+    }
+    if (displayCurrencyCode && Array.isArray(out.competitor_benchmarks)) {
+      out.competitor_benchmarks.forEach((benchmark, idx) => {
+        const priceDistribution = benchmark?.price_distribution || benchmark?.price_range;
+        const currencyCode = String(priceDistribution?.currency_code || benchmark?.currency_context?.display_currency_code || "").toUpperCase();
+        if (priceDistribution && (!currencyCode || currencyCode === "NOT_DETECTED")) {
+          errors.push(`竞品深度分析第 ${idx + 1} 项的 price_distribution 缺少 currency_code；必须写明页面显示币种 ${displayCurrencyCode} 及口径。`);
+        }
+        if (priceDistribution && displayCurrencyCode && currencyCode && currencyCode !== displayCurrencyCode) {
+          errors.push(`竞品深度分析第 ${idx + 1} 项 price_distribution.currency_code=${currencyCode} 与当前页面显示币种 ${displayCurrencyCode} 不一致；必须按页面地区/币种选择器修正。`);
+        }
+        if (priceDistribution && !hasValue(priceDistribution.basis)) {
+          errors.push(`竞品深度分析第 ${idx + 1} 项 price_distribution 缺少 basis，必须说明价格来自 Etsy 公开可见页面样本和当前地区/币种选择器。`);
+        }
+      });
+    }
     if (/货源\s*#|推荐对齐货源|采购直达|1688\s*采购直达链接|detail\.1688\.com|s\.1688\.com/i.test(combinedReportText)) {
       errors.push("店铺优化报告不得输出货源编号、采购直达链接或 1688 推荐清单。请改为店铺健康评级、ABC 分级优化候选方案与执行任务。");
     }
@@ -3776,6 +3902,24 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
     });
     if (!hasClassifiedPlan) {
       errors.push("店铺优化报告的 data 数组必须包含 A/B/C 分级优化候选方案或诊断任务，而不是商品/货源清单。");
+    }
+    if (!Array.isArray(out.priority_sku_actions) || out.priority_sku_actions.length < 3) {
+      errors.push("店铺优化报告缺少 priority_sku_actions。必须至少给出 3 个主推 SKU/商品线优先级建议，并说明 why_priority、first_7_days_action、success_metric 和 evidence_refs。");
+    } else {
+      out.priority_sku_actions.slice(0, 3).forEach((item, idx) => {
+        if (!hasValue(item?.sku_or_line) || !hasValue(item?.why_priority) || !hasValue(item?.first_7_days_action) || !hasValue(item?.success_metric)) {
+          errors.push(`priority_sku_actions 第 ${idx + 1} 项不完整，必须包含 sku_or_line、why_priority、first_7_days_action、success_metric。`);
+        }
+      });
+    }
+    if (!Array.isArray(out.thirty_day_roadmap) || out.thirty_day_roadmap.length < 3) {
+      errors.push("店铺优化报告缺少 thirty_day_roadmap。必须按 0-7天、8-14天、15-30天等阶段输出可执行目标、动作、人工检查点和指标。");
+    } else {
+      out.thirty_day_roadmap.slice(0, 3).forEach((item, idx) => {
+        if (!hasValue(item?.period || item?.phase) || !hasValue(item?.goal) || !hasValue(item?.actions) || !hasValue(item?.metric)) {
+          errors.push(`thirty_day_roadmap 第 ${idx + 1} 项不完整，必须包含 period/phase、goal、actions、metric。`);
+        }
+      });
     }
 
     out.data.forEach((item, idx) => {
@@ -4224,6 +4368,8 @@ ${isShopOptimizerOnly(skillId) ? formatShopOptimizerProductionSkeletonPrompt(too
     "overview": "全局概述（使用Markdown，简述你在本页面的核心发现）",
     "analysis": "深度分析过程与推演逻辑（使用Markdown，展示你的多维博弈和决策依据）",
     "summary": "最终核心结论（使用Markdown，提炼出最关键的建议或结论）",
+    "priority_sku_actions": [],
+    "thirty_day_roadmap": [],
     "data": [ ... ] // 具体的结构化数据（如具体的商品蓝图、筛选出的列表等，必须是数组）
   }
 }
@@ -4238,6 +4384,7 @@ ${JSON.stringify(ctxForPrompt.currency_rates, null, 2)}
 
 价格与区域口径硬约束：
 - 浏览器取证工具会优先访问免费公开的 Etsy/Google 地区页面（例如 Etsy 搜索带 ship_to=US/GB/DE/FR/CA/AU，Google Search 带 gl/hl，Google Trends 带 geo）。店铺体检、关键词分析和机会分析应优先使用页面实际显示的币种/区域口径，并在证据账本中写明“免费公开页面、页面显示币种/区域”；不要为了前台对标把 Etsy 页面显示价格二次换算成 USD。付费、后台或账号型工具不得作为必需证据。
+- 如果 pageContext.etsyMarketContext.displayCurrencyCode 存在，它是当前页面价格币种的最高优先级证据；例如 URL 为 /au/ 但页脚/地区选择器显示 “United States | English (US) | $ (USD)” 时，所有裸美元符号价格必须解释为 USD，严禁写成 AUD。
 - 只有进入国内寻源、采购成本、物流成本、平台扣款、关税或净利润测算时，才使用上方汇率参数把 CNY/RUB/EUR 成本统一换算进 USD 财务账本；不得把不同币种数值直接相减。
 - 如果页面仍显示 AUD/EUR/GBP 等非 USD 价格，按原样引用并标明页面显示币种；需要可比利润测算时再单独列“待统一币种复核”，不要把它包装成已验证 USD 利润。
 

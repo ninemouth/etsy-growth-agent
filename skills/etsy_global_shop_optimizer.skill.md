@@ -249,6 +249,13 @@
    - `data` 中每个整改方案至少包含 `plan_id`、`title`、`diagnosis_level`、`direction`、`evidence`、`stage_fit`、`buyer_scenario`、`evidence_ledger`、`first_actions`、`review_window`、`risk_guard`。
    - 如果某一项缺少真实工具证据，不要伪造；写成 `assumption` 或 `blocking_gaps`，明确人工确认点。但只要 Etsy 搜索、Google Search/Trends、竞品页和截图证据已经存在，就必须把这些证据落到结构化字段，不能让最终报告显得单薄。
    - 前台价格按本轮访问页面显示币种记录，并在证据账本写明区域/币种口径；店铺体检、关键词和机会对标不要为了展示而二次换算 USD。只有进入采购成本、物流、关税、平台扣费或利润率测算时，才统一到 USD 财务口径。
+   - `pageContext.etsyMarketContext.displayCurrencyCode` 是价格币种最高优先级证据；如果 URL 是 `/au/` 但页面地区/币种选择器显示 `United States | English (US) | $ (USD)`，报告中的裸 `$` 价格必须标注为 USD，不得因为 URL locale 推断为 AUD。`price_distribution` 必须包含 `currency_code` 与 `basis`，说明页面显示币种来源。
+
+8. **运营者可执行价值不得缺失**：
+   - `overview` 或 `analysis` 必须明确写出本店的目标客群定位，不能只写“欧美礼品市场”；必须结合当前店铺商品线判断具体买家，例如摄影爱好者、复古相机玩家、特定机型用户、摄影礼品买家等。
+   - 顶层必须输出 `priority_sku_actions` 数组，至少 3 个主推 SKU/商品线优先级建议；每项必须包含 `sku_or_line`、`why_priority`、`first_7_days_action`、`success_metric`、`evidence_refs`。没有 SKU 级优先级的报告会显得泛泛，不能通过店铺体检。
+   - 顶层必须输出 `thirty_day_roadmap` 数组，按 `0-7天`、`8-14天`、`15-30天` 或类似阶段拆分；每阶段必须有 `goal`、`actions`、`owner_check`、`metric`。这部分要让运营者能直接执行，而不是只停留在“优化首图/SEO/物流”。
+   - `summary` 必须把第一优先动作压缩成 3 条以内，明确先做哪几个 SKU、哪张图、哪个标题/属性/FAQ，不得只写抽象方向。
 
 ## 🔐 结构化证据账本硬规则
 
