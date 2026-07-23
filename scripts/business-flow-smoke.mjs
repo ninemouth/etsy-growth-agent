@@ -93,6 +93,12 @@ assert.doesNotMatch(agentLoopSource, /MAX_CONTINUOUS_RUNTIME_MS\s*=\s*15 \* 60 \
 assert.doesNotMatch(agentLoopSource, /工作流已达到本次连续运行预算/, "normal workflow delivery must not stop at a fixed continuous runtime budget");
 assert.match(backgroundSource, /type:\s*"INTERRUPTED"[\s\S]*不.*saved|type:\s*"INTERRUPTED"/, "interrupted workflows must be delivered as resumable state, not success reports");
 assert.match(js, /isInterruptedSavedResult[\s\S]*filter\(\(entry\) => !isInterruptedSavedResult/, "legacy interrupted pseudo-reports must not appear in the report center");
+assert.match(js, /function hasObjectObjectLeak[\s\S]*\\\[object Object\\\]/, "report center should detect object-string leakage before rendering");
+assert.match(js, /function reportContentFromResult[\s\S]*resultToReportMarkdown[\s\S]*!hasObjectObjectLeak/, "report center should regenerate markdown from structured results when content is polluted");
+assert.match(js, /function renderSafeMarkdown[\s\S]*typeof markdown === "object"[\s\S]*valueToReadableMarkdown\(markdown\)/, "dashboard markdown renderer should format object inputs before rendering");
+assert.match(sidepanelSource, /function renderMarkdown[\s\S]*typeof text === "object"[\s\S]*valueToReadableMarkdown\(text\)/, "sidepanel markdown renderer should format object inputs before rendering");
+assert.match(js, /renderSafeMarkdown\(hasObjectObjectLeak\(rep\.content\)[\s\S]*reportContentFromResult\(rep\.raw\.result/, "report viewer should not render literal [object Object] when raw structured result is available");
+assert.match(sidepanelSource, /renderSection[\s\S]*renderMarkdown\(valueToReadableMarkdown\(val\)\)/, "sidepanel report sections should render object-valued overview, analysis and summary through readable markdown");
 assert.match(backgroundSource, /etsy_platform_trends\.skill\.md/, "platform trend action must use a dedicated trend skill");
 assert.match(js, /explore_platform_trends[\s\S]*etsy_platform_trends\.skill\.md/, "dashboard platform trend action must route to dedicated trend skill");
 assert.match(sidepanelSource, /explore_platform_trends[\s\S]*skillId:\s*"etsy_platform_trends"/, "sidepanel platform trend action must route to the dedicated trend skill");

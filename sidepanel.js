@@ -1093,6 +1093,9 @@ function normalizeFinalOutput(value) {
 
 function renderMarkdown(text) {
   if (!text) return "";
+  if (typeof text === "object") {
+    return renderMarkdown(valueToReadableMarkdown(text));
+  }
   if (typeof marked !== 'undefined') {
     return marked.parse(String(text));
   }

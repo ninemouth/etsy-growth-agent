@@ -2196,8 +2196,24 @@ function resultToReportMarkdown(result = {}) {
   return lines.filter(Boolean).join("\n\n") || "```json\n" + JSON.stringify(data, null, 2) + "\n```";
 }
 
+function hasObjectObjectLeak(value = "") {
+  return /\[object Object\]/.test(String(value || ""));
+}
+
+function reportContentFromResult(result = {}, fallbackContent = "") {
+  const normalized = normalizeFinalOutput(result);
+  if (normalized && (normalized.overview || normalized.analysis || normalized.summary || normalized.data)) {
+    const regenerated = resultToReportMarkdown(normalized);
+    if (regenerated && !hasObjectObjectLeak(regenerated)) return regenerated;
+  }
+  if (fallbackContent && !hasObjectObjectLeak(fallbackContent)) return String(fallbackContent);
+  return typeof result === "string" ? result : JSON.stringify(normalized || result, null, 2);
+}
+
 function renderSafeMarkdown(markdown = "") {
-  const source = String(markdown || "");
+  const source = markdown && typeof markdown === "object"
+    ? valueToReadableMarkdown(markdown)
+    : String(markdown || "");
   if (window.marked?.parse) {
     const rendered = window.marked.parse(source);
     return window.DOMPurify?.sanitize ? window.DOMPurify.sanitize(rendered) : rendered;
@@ -3983,9 +3999,9 @@ function renderReportsList(monitorReports = [], savedResults = []) {
     let text = '';
     const normalizedResult = normalizeFinalOutput(r.result);
     if (normalizedResult && (normalizedResult.overview || normalizedResult.analysis || normalizedResult.summary || normalizedResult.data)) {
-      text = resultToReportMarkdown(normalizedResult);
+      text = reportContentFromResult(normalizedResult, r.content || r.markdown || "");
     } else {
-      text = typeof r.result === "string" ? r.result : JSON.stringify(r.result, null, 2);
+      text = reportContentFromResult(r.result, r.content || r.markdown || "");
     }
     
     const followUpTasks = Array.isArray(normalizedResult?.follow_up_tasks) ? normalizedResult.follow_up_tasks : [];
@@ -4066,7 +4082,7 @@ function renderReportsList(monitorReports = [], savedResults = []) {
       ` : ""}
       ${followUpHtml}
       <div class="md-report">
-        ${renderSafeMarkdown(rep.content)}
+        ${renderSafeMarkdown(hasObjectObjectLeak(rep.content) && rep.raw?.result ? reportContentFromResult(rep.raw.result, "") : rep.content)}
       </div>
     `;
     viewer.querySelector(".report-copy-current")?.addEventListener("click", () => copyReportContent(rep));
