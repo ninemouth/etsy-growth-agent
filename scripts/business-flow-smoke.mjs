@@ -73,6 +73,9 @@ assert.match(agentLoopSource, /type:\s*"tool_stage"/, "browser tools should emit
 assert.match(agentLoopSource, /createToolRunId[\s\S]*toolRunId[\s\S]*type:\s*"tool_heartbeat"[\s\S]*type:\s*"tool_result"/, "tool progress events should carry a per-tool-run id so stale heartbeats cannot appear after a completed action");
 assert.match(agentLoopSource, /type:\s*"llm_heartbeat"/, "long-running LLM planning calls should emit heartbeat progress between tool calls");
 assert.match(agentLoopSource, /LLM_RECOVERY_RETRIES/, "transient LLM network failures should have a bounded recovery retry");
+assert.match(agentLoopSource, /LLM_PLANNING_TIMEOUT_MS\s*=\s*4 \* 60 \* 1000/, "LLM planning calls should have a hard per-turn timeout");
+assert.match(agentLoopSource, /callLLMWithPlanningTimeout[\s\S]*Promise\.race[\s\S]*LLM 规划请求超过/, "agent loop should interrupt stalled LLM planning requests instead of emitting endless heartbeats");
+assert.match(agentLoopSource, /type:\s*"llm_started"[\s\S]*timeoutSeconds[\s\S]*type:\s*"llm_heartbeat"[\s\S]*最长等待/, "LLM progress should expose the maximum planning wait to the UI");
 assert.match(agentLoopSource, /type:\s*"llm_error"[\s\S]*type:\s*"interrupted"/, "final LLM network failures should preserve the checkpoint instead of becoming a fake report");
 assert.match(agentLoopSource, /QUALITY_RETRY_LIMIT\s*=\s*2/, "quality repair must have a bounded retry window");
 assert.match(agentLoopSource, /inFlightToolRuns[\s\S]*toolRunKey[\s\S]*timed out after/, "tool work must be deduplicated and bounded by a tool-level timeout");
@@ -168,6 +171,7 @@ assert.match(agentLoopSource, /currency_rates[\s\S]*价格与区域口径硬约�
 assert.match(agentLoopSource, /店铺体检生产骨架（必须逐槽生产）[\s\S]*不得等最终报告阶段才临时补结构/, "shop optimizer production process should be driven by the same report skeleton before final delivery");
 assert.match(agentLoopSource, /report_skeleton_state[\s\S]*nextMissingSlot[\s\S]*推进店铺体检生产骨架/, "tool-result context should carry report skeleton state into the next LLM planning turn");
 assert.match(agentLoopSource, /shop_report_skeleton_progress[\s\S]*filledCount[\s\S]*nextMissingSlot/, "workflow runtime should emit durable shop report skeleton progress events");
+assert.match(agentLoopSource, /readyForFinal[\s\S]*禁止继续搜索、开页或泛规划[\s\S]*唯一合法 final JSON/, "completed shop-health skeletons should force final delivery instead of another planning/search loop");
 assert.match(toolRegistrySource, /ship_to=\$\{region\.etsyShipTo\}|ship_to=US/, "Etsy browser evidence URLs should request regional storefronts instead of relying on post-hoc currency conversion");
 assert.match(toolRegistrySource, /FREE_MARKET_REGIONS[\s\S]*etsyShipTo: "GB"[\s\S]*amazonHost: "www\.amazon\.de"[\s\S]*ebayHost: "www\.ebay\.com\.au"/, "free public regional sources should cover Etsy, Amazon and eBay market pages");
 assert.match(toolRegistrySource, /google_trends_12m_\$\{regionKey\}[\s\S]*google_trends_\$\{regionKey\}_no_date_fallback/, "regional Google Trends engines should share screenshot-friendly fallback attempts");
@@ -290,7 +294,7 @@ assert.match(agentLoopSource, /CHECKPOINT_IMAGE_PLACEHOLDER/, "persisted checkpo
 assert.match(agentLoopSource, /type:\s*"checkpoint_restored"/, "agent loop should notify the UI when a checkpoint is restored");
 assert.match(agentLoopSource, /stripCheckpointDataUrls[\s\S]*CHECKPOINT_IMAGE_PLACEHOLDER[\s\S]*serializeToolHistoryForCheckpoint/, "persisted tool history should omit raw data-image payloads");
 assert.match(agentLoopSource, /compactToolResultForLLM[\s\S]*MAX_LLM_PRODUCT_CARDS[\s\S]*visibleTextSnippet/, "tool results sent back to the LLM should be compressed before the next reasoning turn");
-assert.match(agentLoopSource, /compactMessagesForLLM\(messages\)[\s\S]*callLLM\(llmMessages/, "agent loop should compact message history before every LLM request");
+assert.match(agentLoopSource, /compactMessagesForLLM\(messages\)[\s\S]*callLLMWithPlanningTimeout\(llmMessages/, "agent loop should compact message history before every bounded LLM request");
 assert.match(agentLoopSource, /rawResultPreservedInToolHistory:\s*true/, "compressed LLM payloads should preserve raw evidence in tool history for validators");
 assert.match(agentLoopSource, /productCardsCount[\s\S]*truncateText\(ctx\.visibleText/, "initial page context should be summarized before entering the prompt");
 assert.match(agentLoopSource, /lastNode:\s*"llm_response_received"/, "agent loop should checkpoint after receiving an LLM response");

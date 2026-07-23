@@ -4134,9 +4134,30 @@ function buildPromptContext(pageContext = {}) {
 
 const INTERNAL_RUNAWAY_GUARD_STEPS = 200;
 const LLM_RECOVERY_RETRIES = 1;
+const LLM_PLANNING_TIMEOUT_MS = 4 * 60 * 1000;
 
 function isRetryableLLMError(error) {
   return /network|fetch failed|请求.*失败|请求.*超时|timeout|timed out|502|503|504|429|连接|socket|ECONN|ENET|EAI_AGAIN/i.test(String(error?.message || error || ""));
+}
+
+async function callLLMWithPlanningTimeout(llmMessages, streamCallback, highRandomness = false, timeoutMs = LLM_PLANNING_TIMEOUT_MS) {
+  let timeoutId = null;
+  let timedOut = false;
+  try {
+    return await Promise.race([
+      callLLM(llmMessages, (event) => {
+        if (!timedOut && typeof streamCallback === "function") streamCallback(event);
+      }, highRandomness),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          timedOut = true;
+          reject(new Error(`LLM 规划请求超过 ${Math.round(timeoutMs / 1000)} 秒未完成`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }
 
 export async function runAgentLoop({ tabId, skillId, skillMarkdown, userInstruction, pageContext, sendProgress, continueSession, highRandomness, negativeFilter, resumeState = null, onCheckpoint = null, workflowId = "", workflowGeneration = "" }) {
@@ -4431,7 +4452,8 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       messageCount: llmMessages.length,
       payloadChars: llmPayloadChars,
       estimatedTokens: Math.ceil(llmPayloadChars / 4),
-      message: `正在请求 AI（${llmMessages.length} 条消息，约 ${Math.ceil(llmPayloadChars / 4)} tokens）...`,
+      timeoutSeconds: Math.round(LLM_PLANNING_TIMEOUT_MS / 1000),
+      message: `正在请求 AI（${llmMessages.length} 条消息，约 ${Math.ceil(llmPayloadChars / 4)} tokens，最长等待 ${Math.round(LLM_PLANNING_TIMEOUT_MS / 1000)} 秒）...`,
     });
     const llmStartedAt = Date.now();
     let llmHeartbeatTimer = null;
@@ -4442,13 +4464,14 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
           type: "llm_heartbeat",
           step,
           elapsedSeconds,
-          message: `AI 正在基于已采集证据规划下一步，已运行 ${elapsedSeconds} 秒。`,
+          timeoutSeconds: Math.round(LLM_PLANNING_TIMEOUT_MS / 1000),
+          message: `AI 正在基于已采集证据规划下一步，已运行 ${elapsedSeconds} 秒，最长等待 ${Math.round(LLM_PLANNING_TIMEOUT_MS / 1000)} 秒。`,
         });
       }, 30000);
       let recoveryAttempt = 0;
       while (true) {
         try {
-          assistantContent = await callLLM(llmMessages, ({ chunk, fullText, isReasoning }) => {
+          assistantContent = await callLLMWithPlanningTimeout(llmMessages, ({ chunk, fullText, isReasoning }) => {
             sendProgress({ type: "streaming", step, chunk, fullText, isReasoning });
           }, highRandomness);
           break;
@@ -5262,7 +5285,9 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
       };
       if (shopProductionSkeletonState) {
         userResultObj.report_skeleton_state = shopProductionSkeletonState;
-        userResultObj.next_step_instruction = `请先按 report_skeleton_state.nextMissingSlot=${shopProductionSkeletonState.nextMissingSlot || "none"} 推进店铺体检生产骨架。${shopProductionSkeletonState.nextAction}`;
+        userResultObj.next_step_instruction = shopProductionSkeletonState.readyForFinal
+          ? "report_skeleton_state.readyForFinal=true，店铺体检骨架已覆盖 7/7 且 nextMissingSlot=none。下一步禁止继续搜索、开页或泛规划；必须立即输出唯一合法 final JSON，并把已采集证据消费到 overview/analysis/summary/data/competitor_benchmarks/diagnostic_depth_matrix/evidence_ledger。"
+          : `请先按 report_skeleton_state.nextMissingSlot=${shopProductionSkeletonState.nextMissingSlot || "none"} 推进店铺体检生产骨架。${shopProductionSkeletonState.nextAction}`;
       }
       const productCards = toolResult?.pageData?.productCards || [];
       if (Array.isArray(productCards) && productCards.length > 0) {
