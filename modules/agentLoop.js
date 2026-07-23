@@ -484,6 +484,8 @@ export const __testInternals = {
   checkpointSkillMatches,
   hasEvidenceSource,
   validateEvidenceLedgerEntries,
+  buildShopOptimizerProductionSkeletonState,
+  formatShopOptimizerProductionSkeletonPrompt,
 };
 
 async function saveAgentCheckpoint(sessionKey, checkpoint = {}) {
@@ -2793,6 +2795,189 @@ function ensureShopOptimizerReportSkeleton(repaired, {
   return reasons;
 }
 
+const SHOP_OPTIMIZER_PRODUCTION_SLOTS = [
+  {
+    id: "shop_stage_positioning",
+    title: "店铺定位与经营阶段",
+    finalFields: ["overview", "diagnostic_depth_matrix[定位/阶段]", "data[].stage_fit"],
+    requiredEvidence: "当前自营店铺/商品页面文本、页面角色和 API 可用性边界",
+    nextAction: "先读取当前店铺/商品页并确认 own_shop/own_listing；无 API 时把后台指标降级为 assumption。",
+  },
+  {
+    id: "visual_gallery",
+    title: "视觉首图与画廊",
+    finalFields: ["diagnostic_depth_matrix[视觉]", "data[].evidence_ledger(screenshot_visual)"],
+    requiredEvidence: "当前店铺截图、竞品店铺/商品详情截图和独立截图解读",
+    nextAction: "采集截图后调用 analyze_etsy_shop_crawl_screenshots，把 stage_report_inputs 写入报告。",
+  },
+  {
+    id: "seo_text_attributes",
+    title: "SEO 标题、描述与 Attributes",
+    finalFields: ["diagnostic_depth_matrix[SEO]", "data[].buyer_scenario", "data[].first_actions"],
+    requiredEvidence: "Etsy 搜索可见标题词、Google Search 站外表达和当前页面标题/属性文本",
+    nextAction: "完成 Etsy Search 与 Google Search US 后，再重构标题前 60 字、tags 和 attributes。",
+  },
+  {
+    id: "product_matrix_price",
+    title: "商品矩阵、SKU 结构与价格带",
+    finalFields: ["diagnostic_depth_matrix[商品矩阵]", "competitor_benchmarks[].price_distribution"],
+    requiredEvidence: "当前店铺可见商品卡片、竞品可见商品样本和页面显示币种价格",
+    nextAction: "按页面显示币种记录可见样本价格，拆分引流款/主推款/利润款；不要前台二次换算 USD。",
+  },
+  {
+    id: "competitor_benchmarks",
+    title: "竞品店铺商品结构解析",
+    finalFields: ["competitor_benchmarks", "analysis 竞品店铺商品结构解析小节"],
+    requiredEvidence: "至少 2 个已打开 Etsy 竞品店铺/商品详情页、商品样本、评价/促销和可见排序口径",
+    nextAction: "打开或批量采集 2-3 个竞品，再逐店输出 product_samples、price_distribution 和 listing_order_insight。",
+  },
+  {
+    id: "external_demand",
+    title: "Etsy 站内搜索与 Google/Trends 站外需求",
+    finalFields: ["diagnostic_depth_matrix[站外需求]", "data[].evidence_ledger(etsy_search/google_search/google_trends)"],
+    requiredEvidence: "Etsy Search、Google Search US、Google Trends US 和 Trends 截图视觉解读",
+    nextAction: "先补齐 Etsy/Search/Trends 证据；趋势图只能写相对热度、地区、时间范围和截图局限。",
+  },
+  {
+    id: "trust_fulfillment",
+    title: "信任资产、评价、政策与履约",
+    finalFields: ["diagnostic_depth_matrix[信任/履约]", "data[].risk_guard"],
+    requiredEvidence: "公开评价/政策/履约文本、竞品信任信号；具体物流时效需要实时物流 Google Search",
+    nextAction: "没有实时物流搜索时只写承运商/时效待确认，禁止承诺具体工作日。",
+  },
+];
+
+function productionSlot(status, evidenceRefs = [], nextAction = "") {
+  return {
+    status,
+    evidenceRefs: evidenceRefs.filter(Boolean).slice(0, 6),
+    nextAction,
+  };
+}
+
+function hasShopOptimizerShippingSearchEvidence(toolHistory = []) {
+  return toolHistory.some((entry) => {
+    if (entry?.tool !== "search_in_browser") return false;
+    const engine = String(entry.arguments?.engine || "").toLowerCase();
+    if (!["google", "google_us"].includes(engine)) return false;
+    const text = [
+      entry.arguments?.query,
+      entry.arguments?.keyword,
+      entry.result?.searchUrl,
+      entry.result?.pageData?.title,
+      entry.result?.pageData?.visibleText,
+    ].filter(Boolean).join(" ");
+    return /配送|物流|发货|运输|时效|delivery|shipping|transit|fulfillment|carrier|USPS|DHL|FedEx|UPS|postal/i.test(text);
+  });
+}
+
+function buildShopOptimizerProductionSkeletonState(toolHistory = [], pageContext = {}) {
+  const pageDomEvidence = getBestPageDomEvidence(toolHistory, pageContext);
+  const etsySearchEvidence = getEtsySearchEvidence(toolHistory);
+  const googleSearchEvidence = getGoogleSearchEvidence(toolHistory);
+  const trendsToolEvidence = getGoogleTrendsToolEvidence(toolHistory);
+  const trendsScreenshotEvidence = getGoogleTrendsScreenshotEvidence(toolHistory);
+  const screenshotLedgerEntries = getShopOptimizerScreenshotLedgerEntries(toolHistory, pageContext, 8);
+  const competitorBenchmarks = buildShopOptimizerCompetitorBenchmarks(toolHistory, pageContext);
+  const openedCompetitorCount = getOpenedEtsyCompetitorUrls(toolHistory, pageContext?.url).size;
+  const unanalyzedScreenshots = getUnanalyzedEtsyShopCrawlScreenshotRefs(toolHistory);
+  const hasApiEvidence = hasEvidenceSource(toolHistory, pageContext, "etsy_api");
+  const hasShippingSearch = hasShopOptimizerShippingSearchEvidence(toolHistory);
+  const currentPageRole = pageContext?.research_scope?.entry_page_type || pageContext?.pageType || pageContext?.pageHealth?.pageType || "unknown";
+  const slots = {
+    shop_stage_positioning: productionSlot(
+      pageDomEvidence ? "filled" : pageContext?.screenshot ? "partial" : "missing",
+      [
+        pageDomEvidence?.sourceRef,
+        currentPageRole ? `page_role:${currentPageRole}` : "",
+        hasApiEvidence ? "etsy_api:available" : "etsy_api:missing_or_not_configured",
+      ],
+      pageDomEvidence
+        ? "把当前店铺定位、经营阶段和 API 边界写入 overview / stage_fit。"
+        : "先读取当前自营店铺/商品页面文本；若只是竞品/弱上下文，必须声明范围或要求切换到自营页。"
+    ),
+    visual_gallery: productionSlot(
+      screenshotLedgerEntries.length >= 2 && unanalyzedScreenshots.length === 0 ? "filled" : screenshotLedgerEntries.length > 0 ? "partial" : "missing",
+      [
+        ...screenshotLedgerEntries.map((entry) => entry.source_ref),
+        unanalyzedScreenshots.length ? `unanalyzed_screenshots:${unanalyzedScreenshots.length}` : "",
+      ],
+      unanalyzedScreenshots.length
+        ? "已有店铺分页截图尚未独立解读；下一步调用 analyze_etsy_shop_crawl_screenshots。"
+        : screenshotLedgerEntries.length
+          ? "把截图观察写入 screenshot_visual ledger、视觉维度和首图/画廊行动项。"
+          : "采集当前店铺和竞品截图，不能只凭文本判断视觉。"
+    ),
+    seo_text_attributes: productionSlot(
+      etsySearchEvidence && googleSearchEvidence && pageDomEvidence ? "filled" : etsySearchEvidence || googleSearchEvidence || pageDomEvidence ? "partial" : "missing",
+      [pageDomEvidence?.sourceRef, etsySearchEvidence?.sourceRef, googleSearchEvidence?.sourceRef],
+      etsySearchEvidence && googleSearchEvidence
+        ? "围绕 Etsy 可见标题词和 Google 站外表达输出标题/tags/attributes 动作。"
+        : "补齐 Etsy Search 与 Google Search US，再写 SEO/Attributes 结论。"
+    ),
+    product_matrix_price: productionSlot(
+      competitorBenchmarks.some((item) => hasValue(item.price_distribution) && hasValue(item.product_samples)) ? "filled" : pageDomEvidence || competitorBenchmarks.length ? "partial" : "missing",
+      competitorBenchmarks.map((item) => `${item.competitor_name}:${item.visible_sku_count_estimate}`),
+      competitorBenchmarks.length
+        ? "用页面显示币种记录可见样本价格，输出 SKU 角色和价格层级；不要前台二次换算 USD。"
+        : "需要当前/竞品商品卡片或分页采集样本，才能写商品矩阵和价格带。"
+    ),
+    competitor_benchmarks: productionSlot(
+      competitorBenchmarks.length >= 2 && openedCompetitorCount >= 2 ? "filled" : competitorBenchmarks.length > 0 || openedCompetitorCount > 0 ? "partial" : "missing",
+      [
+        `opened_competitors:${openedCompetitorCount}`,
+        ...competitorBenchmarks.map((item) => item.competitor_name),
+      ],
+      competitorBenchmarks.length >= 2
+        ? "将每个竞品写入 competitor_benchmarks，并在 analysis 增加竞品店铺商品结构解析小节。"
+        : "必须打开/采集至少 2 个同类高排名竞品店铺或商品详情页。"
+    ),
+    external_demand: productionSlot(
+      etsySearchEvidence && googleSearchEvidence && trendsToolEvidence && trendsScreenshotEvidence ? "filled" : etsySearchEvidence || googleSearchEvidence || trendsToolEvidence ? "partial" : "missing",
+      [etsySearchEvidence?.sourceRef, googleSearchEvidence?.sourceRef, trendsToolEvidence?.sourceRef, trendsScreenshotEvidence?.sourceRef],
+      etsySearchEvidence && googleSearchEvidence && trendsToolEvidence && trendsScreenshotEvidence
+        ? "把站内/站外/Trends 证据写入 evidence_ledger 和站外需求维度，趋势只写相对热度。"
+        : "补齐 Etsy Search、Google Search US、Google Trends US 和 Trends 截图视觉解读。"
+    ),
+    trust_fulfillment: productionSlot(
+      hasShippingSearch ? "filled" : pageDomEvidence || competitorBenchmarks.length ? "partial" : "missing",
+      [
+        pageDomEvidence?.sourceRef,
+        hasShippingSearch ? "google_search:shipping_or_transit" : "",
+        ...competitorBenchmarks.map((item) => `${item.competitor_name}:${item.fulfillment_signal}`).slice(0, 2),
+      ],
+      hasShippingSearch
+        ? "可写物流/履约建议，但仍需标明查询日期、目的地、承运商和局限。"
+        : "只允许写履约待确认/Shipping Profile 复核；不要承诺具体工作日时效。"
+    ),
+  };
+  const orderedSlots = SHOP_OPTIMIZER_PRODUCTION_SLOTS.map((slot) => ({
+    ...slot,
+    ...(slots[slot.id] || productionSlot("missing", [], slot.nextAction)),
+  }));
+  const filledCount = orderedSlots.filter((slot) => slot.status === "filled").length;
+  const partialCount = orderedSlots.filter((slot) => slot.status === "partial").length;
+  const missing = orderedSlots.filter((slot) => slot.status !== "filled");
+  return {
+    reportSkeleton: "etsy_shop_health_v1",
+    filledCount,
+    partialCount,
+    totalSlots: orderedSlots.length,
+    readyForFinal: missing.length === 0,
+    nextMissingSlot: missing[0]?.id || "",
+    nextAction: missing[0]?.nextAction || "所有生产槽位已覆盖；输出 final 时必须保持字段与证据一致。",
+    slots: orderedSlots,
+  };
+}
+
+function formatShopOptimizerProductionSkeletonPrompt(toolHistory = [], pageContext = {}) {
+  const state = buildShopOptimizerProductionSkeletonState(toolHistory, pageContext);
+  const rows = state.slots.map((slot, index) =>
+    `${index + 1}. ${slot.title} [${slot.status}] -> final: ${slot.finalFields.join(", ")}；证据: ${slot.requiredEvidence}；下一步: ${slot.nextAction}`
+  ).join("\n");
+  return `\n\n## 店铺体检生产骨架（必须逐槽生产）\n当前骨架覆盖：${state.filledCount}/${state.totalSlots} filled，${state.partialCount} partial；next_missing=${state.nextMissingSlot || "none"}。\n生产流程必须按下列槽位采证、分析和成稿；每次工具调用后先判断哪个槽位被填充，再决定下一步。不得等最终报告阶段才临时补结构。\n${rows}\n\n最终 final.output 必须消费同一份生产骨架：overview/analysis/summary/data 之外，必须同步输出 competitor_benchmarks 与 diagnostic_depth_matrix；data[] 必须包含 evidence、stage_fit、buyer_scenario、evidence_ledger、first_actions、review_window、risk_guard。`;
+}
+
 function looksLikeReportOutput(value = {}) {
   const narrativeFieldCount = ["overview", "analysis", "summary"].filter((key) =>
     typeof value?.[key] === "string" && value[key].trim().length > 0
@@ -3906,6 +4091,7 @@ ${formatBrowserAutomationCapabilityPrompt()}
 - evidenceOk=false、Google Trends 壳页、验证码、登录墙或 blockingGaps 不得被写成已验证增长结论。
 - 工具能力契约说明可以做什么，也说明不能做什么；尤其 Etsy 个人卖家 API 不能读取竞品后台、竞品订单、竞品转化率或平台大盘。
 - 需要翻页、排序、筛选、截图或详情页时，优先使用上方能力契约对应工具；不能用模型想象替代工具证据。
+${isShopOptimizerOnly(skillId) ? formatShopOptimizerProductionSkeletonPrompt(toolHistory, pageContext) : ""}
 
 ## 工具调用格式
 当需要调用工具时，输出：
@@ -4087,6 +4273,10 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
 
     instructionText += `\n\n【极其重要：强制输出格式】\n无论你进行了多少轮推演，**你最后一次的输出必须，且只能是如下 JSON 格式**（请包裹在 \`\`\`json 中）：\n\`\`\`json\n{\n  "type": "final",\n  "output": {\n    "overview": "...",\n    "analysis": "...",\n    "summary": "...",\n    "data": [] \n  }\n}\n\`\`\`\n严禁把上述指令文字直接暴露在最终报告中！`;
     instructionText += `\n\n【最终报告语言净化要求】工具名、函数名、页面解析术语和内部执行细节只允许出现在工具调用中，严禁写入最终报告正文。最终报告必须面向 Etsy 卖家，用“页面文本取证、候选详情页核验、后台资料检索、平台访问限制”等业务语言表达，不得出现 DOM、xpath、read_current_page、open_new_tab、close_tab、agentic_web_search 等内部技术词。`;
+    if (isShopOptimizerOnly(skillId)) {
+      instructionText += formatShopOptimizerProductionSkeletonPrompt(toolHistory, pageContext);
+      instructionText += `\n\n【断点恢复生产要求】你必须先读取上面的店铺体检生产骨架覆盖状态，优先修复 next_missing 槽位；不要重复已填槽位的搜索/开页/截图。`;
+    }
     instructionText += `\n\n【注意：以下是你当前所处的最新页面上下文数据】\n${ctxString}`;
 
     let newUserContent = instructionText;
@@ -4322,9 +4512,12 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
           
           messages.push({ role: "assistant", content: assistantContent });
           const domesticVisualActive = domesticVisualRouteActive(skillId, pageContext, toolHistory);
+          const shopProductionSkeletonFeedback = isShopOptimizerOnly(skillId)
+            ? `${formatShopOptimizerProductionSkeletonPrompt(toolHistory, pageContext)}\n\n【Critic 修复方式】请优先补 report skeleton 中 status=missing/partial 的槽位；若槽位证据已经存在但 final.output 未消费，请把证据落入 competitor_benchmarks、diagnostic_depth_matrix 和 data[].evidence_ledger，而不是重复开页或泛泛改写。`
+            : "";
           messages.push({
             role: "user",
-            content: `【Critic Agent 报告质量审计拒绝】\n你的报告未能通过系统的自动合规自检，发现了以下问题：\n${validationErrors.map((err, i) => `${i + 1}. ${err}`).join("\n")}\n\n${domesticVisualActive ? "【非标视觉寻源硬约束】本轮已经启动目标主图/以图搜图路径。请继续基于图片搜索结果页 productCards 和截图做视觉相似度修正，补齐 candidate_image_url、list_page_visual_score、visual_match_evidence；严禁回到 1688/淘宝文本框关键词搜索来凑结果。\n\n" : ""}请严格对照系统提示词规范，在脑海中进行深度反思（如补充筛选数量、使用真实详情单页链接、清除技术黑话等），并重新调用工具或重新输出一份完美修正了以上所有问题的 \`{"type":"final", "output": {...}}\` 报告！`
+            content: `【Critic Agent 报告质量审计拒绝】\n你的报告未能通过系统的自动合规自检，发现了以下问题：\n${validationErrors.map((err, i) => `${i + 1}. ${err}`).join("\n")}\n${shopProductionSkeletonFeedback}\n\n${domesticVisualActive ? "【非标视觉寻源硬约束】本轮已经启动目标主图/以图搜图路径。请继续基于图片搜索结果页 productCards 和截图做视觉相似度修正，补齐 candidate_image_url、list_page_visual_score、visual_match_evidence；严禁回到 1688/淘宝文本框关键词搜索来凑结果。\n\n" : ""}请严格对照系统提示词规范，在脑海中进行深度反思（如补充筛选数量、使用真实详情单页链接、清除技术黑话等），并重新调用工具或重新输出一份完美修正了以上所有问题的 \`{"type":"final", "output": {...}}\` 报告！`
           });
           await saveCheckpoint({ status: "critic_retry", step, lastNode: "report_validation_retry", validationErrors });
           continue;
@@ -4817,6 +5010,21 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         result: compactToolResultForLedger(toolResult),
       });
       toolHistory.push({ tool: toolName, arguments: stripRuntimeToolArgs(toolArgs), result: toolResult });
+      const shopProductionSkeletonState = isShopOptimizerOnly(skillId)
+        ? buildShopOptimizerProductionSkeletonState(toolHistory, pageContext)
+        : null;
+      if (shopProductionSkeletonState) {
+        await recordWorkflowExecutionEvent(workflowId, "shop_report_skeleton_progress", {
+          step,
+          toolName,
+          toolRunId,
+          filledCount: shopProductionSkeletonState.filledCount,
+          partialCount: shopProductionSkeletonState.partialCount,
+          totalSlots: shopProductionSkeletonState.totalSlots,
+          nextMissingSlot: shopProductionSkeletonState.nextMissingSlot,
+          nextAction: shopProductionSkeletonState.nextAction,
+        });
+      }
 
       sendProgress({
         type: "tool_result",
@@ -4827,7 +5035,8 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         actionLabel: completedToolAction.actionLabel,
         tabLifecycle: completedToolAction.lifecycle,
         toolResult,
-        message: `${completedToolAction.actionLabel}执行完毕，已获取并保存相关证据${evidenceQualityNote}。${completedToolAction.lifecycle ? `（${completedToolAction.lifecycle}）` : ""}`,
+        reportSkeletonState: shopProductionSkeletonState,
+        message: `${completedToolAction.actionLabel}执行完毕，已获取并保存相关证据${evidenceQualityNote}。${shopProductionSkeletonState ? `店铺体检骨架覆盖 ${shopProductionSkeletonState.filledCount}/${shopProductionSkeletonState.totalSlots}，下一槽位：${shopProductionSkeletonState.nextMissingSlot || "none"}。` : ""}${completedToolAction.lifecycle ? `（${completedToolAction.lifecycle}）` : ""}`,
       });
       await saveCheckpoint({
         status: toolTimedOut ? "tool_timeout" : "tool_completed",
@@ -4964,10 +5173,17 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
         result: compactToolResultForLLM(toolName, toolResult),
         rawResultPreservedInToolHistory: true,
       };
+      if (shopProductionSkeletonState) {
+        userResultObj.report_skeleton_state = shopProductionSkeletonState;
+        userResultObj.next_step_instruction = `请先按 report_skeleton_state.nextMissingSlot=${shopProductionSkeletonState.nextMissingSlot || "none"} 推进店铺体检生产骨架。${shopProductionSkeletonState.nextAction}`;
+      }
       const productCards = toolResult?.pageData?.productCards || [];
       if (Array.isArray(productCards) && productCards.length > 0) {
         userResultObj.visual_candidate_summary = summarizeProductCards(productCards);
-        userResultObj.next_step_instruction = "当前页面已经抽取到带主图与屏幕坐标的 productCards。下一步必须停止继续搜索，先对照目标商品主图和最新截图，把这些卡片按外观/材质/结构视觉相似度排序；只允许打开视觉排名最高且未触发材质/造型红线的 1-3 个详情页。最终 data 每项必须写入 candidate_image_url、list_page_visual_score、visual_match_evidence，禁止只按标题关键词选择。";
+        const visualInstruction = "当前页面已经抽取到带主图与屏幕坐标的 productCards。下一步必须停止继续搜索，先对照目标商品主图和最新截图，把这些卡片按外观/材质/结构视觉相似度排序；只允许打开视觉排名最高且未触发材质/造型红线的 1-3 个详情页。最终 data 每项必须写入 candidate_image_url、list_page_visual_score、visual_match_evidence，禁止只按标题关键词选择。";
+        userResultObj.next_step_instruction = userResultObj.next_step_instruction
+          ? `${userResultObj.next_step_instruction}\n${visualInstruction}`
+          : visualInstruction;
       }
       if (isEtsyBusinessSkill(skillId) && toolName === "open_new_tab" && /etsy\.com\/shop\//i.test(String(toolResult?.finalUrl || toolResult?.url || toolArgs.url || ""))) {
         userResultObj.next_step_instruction = "该 Etsy 店铺页已经打开并读取过。下一步不要继续重复 open_new_tab；若已有 2-3 个竞品店铺 URL，请优先调用 collect_etsy_competitor_shops 批量采集；若只处理当前单个店铺，再调用 collect_etsy_shop_pages 采集 1-3 页商品/排序/分页数据。采集后必须调用 analyze_etsy_shop_crawl_screenshots 解读截图；完成取证后关闭不再需要的 tabId。";

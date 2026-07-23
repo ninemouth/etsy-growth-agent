@@ -165,6 +165,9 @@ assert.match(contentSource, /activeOverlayToolRunId[\s\S]*data\.type === "tool_h
 assert.match(backgroundSource, /buildResearchScope[\s\S]*pageContext\.research_scope[\s\S]*shouldClarifyResearchScope/, "background should build research_scope before running Etsy workflows and block weak trend scope");
 assert.match(agentLoopSource, /当前研究范围与页面角色[\s\S]*source_page_role 是 competitor_reference[\s\S]*entry_page_type 是 etsy_home/, "agent loop prompt should make research_scope a first-class execution constraint");
 assert.match(agentLoopSource, /currency_rates[\s\S]*价格与区域口径硬约束[\s\S]*ship_to=US[\s\S]*不要为了前台对标把 Etsy 页面显示价格二次换算成 USD[\s\S]*统一换算进 USD 财务账本/, "agent loop prompt should use regional frontend prices and reserve FX conversion for financial ledgers");
+assert.match(agentLoopSource, /店铺体检生产骨架（必须逐槽生产）[\s\S]*不得等最终报告阶段才临时补结构/, "shop optimizer production process should be driven by the same report skeleton before final delivery");
+assert.match(agentLoopSource, /report_skeleton_state[\s\S]*nextMissingSlot[\s\S]*推进店铺体检生产骨架/, "tool-result context should carry report skeleton state into the next LLM planning turn");
+assert.match(agentLoopSource, /shop_report_skeleton_progress[\s\S]*filledCount[\s\S]*nextMissingSlot/, "workflow runtime should emit durable shop report skeleton progress events");
 assert.match(toolRegistrySource, /ship_to=US/, "Etsy browser evidence URLs should request the US regional storefront instead of relying on post-hoc currency conversion");
 assert.match(toolRegistrySource, /function shouldLocalizeSearchQuery[\s\S]*return \/\[\\u4e00-\\u9fa5\]\//, "English Google/Etsy evidence queries should not pay an extra LLM localization call before opening the browser page");
 assert.match(agentLoopSource, /__toolRunState[\s\S]*cancelled[\s\S]*inFlightToolRuns\.delete\(key\)/, "timed-out tools should receive a soft cancellation token and stop leaking late browser stages");
@@ -1414,6 +1417,29 @@ const validShopEvidenceHistory = [
   competitorOpenHistory,
   competitorOpenHistory2,
 ];
+const shopProductionSkeletonState = __testInternals.buildShopOptimizerProductionSkeletonState(validShopEvidenceHistory, meaningfulPageContext);
+assert.equal(shopProductionSkeletonState.reportSkeleton, "etsy_shop_health_v1", "shop production state should identify the shared report skeleton");
+assert.equal(shopProductionSkeletonState.totalSlots, 7, "shop production state should track the seven shop-health report slots");
+assert.ok(shopProductionSkeletonState.filledCount >= 5, "evidence-complete shop runs should mark most report skeleton slots as filled before final delivery");
+assert.equal(
+  shopProductionSkeletonState.slots.find((slot) => slot.id === "competitor_benchmarks")?.status,
+  "filled",
+  "opened competitor evidence should fill the competitor_benchmarks production slot"
+);
+assert.equal(
+  shopProductionSkeletonState.slots.find((slot) => slot.id === "external_demand")?.status,
+  "filled",
+  "Etsy, Google Search and Google Trends evidence should fill the external-demand production slot"
+);
+assert.equal(
+  shopProductionSkeletonState.slots.find((slot) => slot.id === "trust_fulfillment")?.status,
+  "partial",
+  "fulfillment should remain partial without a realtime shipping/logistics search"
+);
+const shopProductionSkeletonPrompt = __testInternals.formatShopOptimizerProductionSkeletonPrompt(validShopEvidenceHistory, meaningfulPageContext);
+assert.match(shopProductionSkeletonPrompt, /店铺体检生产骨架/, "skeleton prompt should label the production skeleton");
+assert.match(shopProductionSkeletonPrompt, /competitor_benchmarks/, "skeleton prompt should map production slots to final competitor_benchmarks fields");
+assert.match(shopProductionSkeletonPrompt, /不要前台二次换算 USD/, "skeleton prompt should keep regional storefront prices through the production process");
 const toolDomHistory = [
   ...validShopEvidenceHistory,
   {
