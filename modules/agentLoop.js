@@ -5136,6 +5136,87 @@ function isLikelyAgentJSON(parsed) {
   );
 }
 
+function extractMarkdownSection(text = "", headingPatterns = []) {
+  const source = String(text || "");
+  const headings = [];
+  const headingRegex = /^#{1,6}\s+(.+?)\s*$/gm;
+  let match;
+  while ((match = headingRegex.exec(source)) !== null) {
+    headings.push({
+      index: match.index,
+      end: headingRegex.lastIndex,
+      title: match[1].trim(),
+    });
+  }
+  for (let i = 0; i < headings.length; i += 1) {
+    const heading = headings[i];
+    if (!headingPatterns.some((pattern) => pattern.test(heading.title))) continue;
+    const next = headings.slice(i + 1).find((candidate) => candidate.index > heading.index);
+    return source.slice(heading.end, next?.index ?? source.length).trim();
+  }
+  return "";
+}
+
+function markdownLinesToActionItems(text = "") {
+  return String(text || "")
+    .split(/\n+/)
+    .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)]|#{1,6})\s*/, "").trim())
+    .filter((line) => line.length >= 8)
+    .slice(0, 6);
+}
+
+function parseMarkdownReportFallback(text = "") {
+  const source = String(text || "").trim();
+  if (!source) return null;
+  if (/^\s*(?:```)?\s*[{[]/.test(source)) return null;
+  const reportSignals = [
+    /分析概述|深度商业诊断|核心运营建议|结构化行动项|店铺体检|店铺诊断|整改/i,
+    /diagnostic_depth_matrix|competitor_benchmarks|evidence_ledger/i,
+    /Etsy|Google Trends|Google Search|竞品|首图|SEO|物流|履约/i,
+  ];
+  if (reportSignals.filter((pattern) => pattern.test(source)).length < 2) return null;
+
+  const overview = extractMarkdownSection(source, [/分析概述/i, /overview/i, /报告概述/i]) ||
+    source.split(/\n{2,}/).find((part) => /店铺|Etsy|诊断|体检|竞品/.test(part)) ||
+    source.slice(0, 900);
+  const analysis = extractMarkdownSection(source, [/深度商业诊断/i, /商业诊断/i, /深度分析/i, /analysis/i]) ||
+    extractMarkdownSection(source, [/核心发现/i, /诊断发现/i]) ||
+    source.slice(0, 1800);
+  const summary = extractMarkdownSection(source, [/核心运营建议/i, /核心建议/i, /summary/i, /结论/i]) ||
+    extractMarkdownSection(source, [/下一步/i, /行动建议/i]) ||
+    source.slice(Math.max(0, source.length - 900));
+  const actionSection = extractMarkdownSection(source, [/结构化行动项/i, /行动项/i, /整改方案/i, /下一步/i]);
+  const actions = markdownLinesToActionItems(actionSection || summary);
+  const firstTitle = actions[0] || "店铺体检报告格式修复";
+
+  return {
+    type: "final",
+    output: {
+      overview: truncateText(overview, 2200),
+      analysis: truncateText(analysis, 3600),
+      summary: truncateText(summary, 1800),
+      data: [{
+        plan_id: "B-1",
+        title: truncateText(firstTitle, 120),
+        diagnosis_level: /P0|第一优先|紧急|阻断|高风险/i.test(source) ? "P0" : "B",
+        direction: truncateText(actions.join("；") || summary || "将 Markdown 店铺体检报告转为标准 final.output 结构，并继续补齐证据账本和行动字段。", 600),
+        evidence: "模型已输出 Markdown 业务报告，但缺少 final/tool_call 协议外壳；本项由格式兜底解析生成，后续仍需通过证据账本与质量门禁校验。",
+        first_actions: actions.length ? actions.slice(0, 4) : ["补齐报告结构字段", "绑定本轮真实工具证据", "通过质量门禁后交付"],
+        evidence_ledger: [{
+          source_type: "assumption",
+          source_ref: "markdown_report_format_fallback",
+          observed_value: "LLM 输出了可读业务报告正文，但没有包裹为 {type:\"final\", output:{...}} 协议 JSON。",
+          used_for: "避免已有业务报告因包装格式缺失直接变成断点；该兜底只修复交付外壳，业务事实仍必须由真实工具证据或后续 autoRepair/validator 校验。",
+          confidence: "low",
+          limitation: "该条不是外部市场或页面事实，只说明格式修复来源；不能替代 Etsy、Google、截图、API 或物流证据。",
+        }],
+      }],
+      report_format_recovered: true,
+      format_recovery_note: "Recovered from Markdown business report text that omitted the final/tool_call JSON envelope.",
+    },
+  };
+}
+
 export function extractJSONBlock(text) {
   if (!text || typeof text !== "string") return null;
 
@@ -5176,5 +5257,5 @@ export function extractJSONBlock(text) {
     return isLikelyAgentJSON(parsed) ? parsed : null;
   } catch (_) {}
 
-  return null;
+  return parseMarkdownReportFallback(text);
 }

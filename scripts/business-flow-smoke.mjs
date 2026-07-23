@@ -564,6 +564,33 @@ const bareReportJson = `Critic notes...{
 const normalizedBareReport = normalizeFinalReportShapeForDelivery(extractJSONBlock(bareReportJson));
 assert.equal(normalizedBareReport.parsed?.type, "final", "bare report JSON should be normalized into a final envelope");
 assert.equal(normalizedBareReport.parsed?.output?.overview, "Etsy 店铺优化诊断", "bare report output fields should be preserved during final normalization");
+const markdownShopHealthReport = `### 分析概述
+
+本次诊断针对 Etsy 店铺 GrainFrameStudio，已完成 Etsy 搜索、Google Search US、Google Trends US 和 2 个竞品详情页取证。
+
+### 深度商业诊断
+
+核心发现：首图缺少英文卖点，SEO 标题缺少 street photography / travel photographer 场景词，物流时效需实时确认。
+
+### 核心运营建议
+
+第一优先级 B-1 首图与画廊英文视觉卖点改版；第二优先级 B-2 SEO 标题重构与 attributes 填充。
+
+### 结构化行动项
+
+#### 1. 首图与画廊英文视觉卖点改版
+- 为 Ricoh GR IV、Panasonic LUMIX S9 主推款首图添加英文卖点文案
+- 增加尺寸参照图和材质微距图`;
+const parsedMarkdownShopHealthReport = extractJSONBlock(markdownShopHealthReport);
+assert.equal(parsedMarkdownShopHealthReport?.type, "final", "markdown shop health reports should be recovered into the final protocol envelope");
+assert.match(parsedMarkdownShopHealthReport.output.overview, /GrainFrameStudio/, "markdown fallback should preserve the overview section");
+assert.match(parsedMarkdownShopHealthReport.output.analysis, /首图缺少英文卖点/, "markdown fallback should preserve the diagnosis section");
+assert.ok(Array.isArray(parsedMarkdownShopHealthReport.output.data), "markdown fallback should create a data array for later skeleton repair");
+assert.equal(
+  parsedMarkdownShopHealthReport.output.data[0].evidence_ledger[0].source_type,
+  "assumption",
+  "markdown fallback should mark the format recovery ledger as an assumption, not external evidence"
+);
 
 const jargonReport = {
   type: "final",
