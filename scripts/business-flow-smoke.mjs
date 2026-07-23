@@ -1707,6 +1707,31 @@ assert.deepEqual(
   "auto-generated shop health skeleton should prevent QA from bouncing evidence-complete thin reports"
 );
 
+const missingMarketPositioningReport = JSON.parse(JSON.stringify(repairedThinShopHealthReport.parsed));
+missingMarketPositioningReport.output.overview = "店铺体检报告：当前页面视觉统一，但主推款表达仍需收敛。";
+missingMarketPositioningReport.output.analysis = "已完成页面、搜索、趋势和竞品公开证据整理，建议优先优化首图、标题和商品矩阵。";
+assert.ok(
+  validateReport(missingMarketPositioningReport, "", "skills/etsy_global_shop_optimizer.skill.md", validShopEvidenceHistory, meaningfulPageContext)
+    .some((error) => /目标销售市场|目标客群定位/.test(error)),
+  "reports without target market and audience positioning should fail before auto-repair"
+);
+const repairedMissingMarketPositioningReport = autoRepairFinalReportForDelivery(missingMarketPositioningReport, {
+  skillId: "skills/etsy_global_shop_optimizer.skill.md",
+  toolHistory: validShopEvidenceHistory,
+  pageContext: meaningfulPageContext,
+});
+assert.equal(repairedMissingMarketPositioningReport.changed, true, "auto-repair should add target market and audience positioning before Critic retry");
+assert.match(
+  repairedMissingMarketPositioningReport.parsed.output.overview,
+  /Etsy 主要欧美礼品市场[\s\S]*北美\/欧洲手工定制/,
+  "auto-repair should state the default Etsy target market and buyer audience in overview"
+);
+assert.deepEqual(
+  validateReport(repairedMissingMarketPositioningReport.parsed, "", "skills/etsy_global_shop_optimizer.skill.md", validShopEvidenceHistory, meaningfulPageContext),
+  [],
+  "auto-repaired target market positioning should prevent Critic from bouncing otherwise valid reports"
+);
+
 const dom = new JSDOM(html, {
   url: "chrome-extension://test/dashboard.html",
   runScripts: "outside-only",

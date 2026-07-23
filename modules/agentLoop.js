@@ -3094,6 +3094,22 @@ export function normalizeFinalReportShapeForDelivery(parsed) {
   return { parsed, changed: false, reason: "" };
 }
 
+function ensureTargetMarketPositioningForDelivery(parsed, skillId = "") {
+  if (!isEtsyBusinessSkill(skillId) || !parsed?.output || typeof parsed.output !== "object") return [];
+  const overviewText = typeof parsed.output.overview === "string" ? parsed.output.overview : "";
+  const analysisText = typeof parsed.output.analysis === "string" ? parsed.output.analysis : "";
+  const combinedText = `${overviewText}\n${analysisText}`;
+  if (/市场|客群|定位|欧美|北美|欧洲|礼品买家|手工定制/i.test(combinedText)) return [];
+
+  const positioning = "目标市场与客群定位：本报告默认面向 Etsy 主要欧美礼品市场，重点关注北美/欧洲手工定制、节庆礼品与个性化礼品买家。";
+  if (overviewText.trim()) {
+    parsed.output.overview = `${positioning}\n\n${overviewText}`.trim();
+  } else {
+    parsed.output.overview = positioning;
+  }
+  return ["已自动补齐 overview 中的目标销售市场与目标客群定位"];
+}
+
 export function autoRepairFinalReportForDelivery(parsed, {
   skillId = "",
   toolHistory = [],
@@ -3134,6 +3150,7 @@ export function autoRepairFinalReportForDelivery(parsed, {
     });
     reasons.push(...skeletonReasons);
   }
+  reasons.push(...ensureTargetMarketPositioningForDelivery(repaired, skillId));
   const reportText = `${repaired.output.overview || ""}\n${repaired.output.analysis || ""}\n${repaired.output.summary || ""}\n${JSON.stringify(repaired.output.data || [])}`;
   const reportUsesGoogleSearch = /Google Search|Google US|谷歌搜索|站外搜索|搜索结果|站外市场|欧美市场|市场调研|外部流量|站外需求/i.test(reportText);
   const reportUsesTrends = TREND_OR_SEASONAL_RE.test(reportText);
