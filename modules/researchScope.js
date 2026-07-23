@@ -245,11 +245,18 @@ export function buildResearchScope({
     if (!targetName) missingInputs.push("keyword_or_category");
   } else if (url) {
     entryPageType = "external_page";
-    sourcePageRole = hasSpecificKeyword(explicitInstructionKeywords) ? "user_keyword_only" : "unknown";
-    targetType = hasSpecificKeyword(explicitInstructionKeywords) ? "keyword" : "unknown";
-    targetName = hasSpecificKeyword(explicitInstructionKeywords) ? explicitInstructionKeywords[0] : "";
-    confidence = targetName ? "medium" : "low";
-    if (!targetName) missingInputs.push("etsy_keyword_or_category");
+    const objectProfile = pageContext.objectProfile || {};
+    const profileType = String(objectProfile.object_type || "").trim();
+    const profileName = normalizeText(objectProfile.identity?.name || pageContext.h1 || title || host);
+    sourcePageRole = hasSpecificKeyword(explicitInstructionKeywords) ? "user_keyword_only" : "external_public_reference";
+    targetType = hasSpecificKeyword(explicitInstructionKeywords)
+      ? "keyword"
+      : profileType && profileType !== "unknown"
+      ? profileType
+      : "unknown";
+    targetName = hasSpecificKeyword(explicitInstructionKeywords) ? explicitInstructionKeywords[0] : profileName;
+    confidence = objectProfile.confidence || (targetName ? "medium" : "low");
+    if (!targetName) missingInputs.push("object_or_keyword");
   } else {
     if (hasUserSeedKeyword || isPredictive) {
       entryPageType = "unknown";
@@ -360,7 +367,9 @@ export function buildPageRoleNotice(entryPageType = "unknown", sourcePageRole = 
   if (entryPageType === "competitor_listing") return `当前页面识别为竞品 Etsy 商品${name}，只能作为公开对标样本，不能直接复制或写成自营商品事实。`;
   if (entryPageType === "etsy_search") return `当前页面识别为 Etsy 搜索/market 页面${name}，搜索网格只能作为本轮可见样本。`;
   if (entryPageType === "etsy_home") return "当前页面识别为 Etsy 首页，页面上下文较弱；没有明确关键词或类目时不应直接生成深度趋势结论。";
-  if (entryPageType === "external_page") return "当前页面不是 Etsy 业务页面，只能作为弱上下文；需要明确 Etsy 关键词、类目或绑定店铺。";
+  if (entryPageType === "external_page") return targetName
+    ? `当前页面不是 Etsy 业务页面，已作为外部公开对象${name}处理；必须基于页面文本证据与截图视觉观察，不得推断后台数据。`
+    : "当前页面不是 Etsy 业务页面，只能作为弱上下文；需要明确分析对象、Etsy 关键词、类目或绑定店铺。";
   return `当前页面角色不明确（${sourcePageRole}），需要补充研究对象或关键词后再进入深度分析。`;
 }
 

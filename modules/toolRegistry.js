@@ -512,6 +512,27 @@ async function sendToContentScript(tabId, message) {
 
 async function executeGenericDomSnapshot(tabId) {
   const snapshotFn = () => {
+      const normalizeText = (value = "", max = 100000) => String(value || "").replace(/\s+/g, " ").trim().slice(0, max);
+      const extractPriceFromText = (text = "") => {
+        const value = String(text || "");
+        const match = value.match(/(?:US)?\$\s*\d[\d,]*(?:\.\d{2})?(?:\s*[-~–—到至]\s*(?:US)?\$?\s*\d[\d,]*(?:\.\d{2})?)?/i) ||
+          value.match(/USD\s*\d[\d,]*(?:\.\d{2})?(?:\s*[-~–—到至]\s*(?:USD\s*)?\d[\d,]*(?:\.\d{2})?)?/i) ||
+          value.match(/[¥￥]\s*\d+(?:\.\d+)?(?:\s*[-~至]\s*[¥￥]?\s*\d+(?:\.\d+)?)?/i) ||
+          value.match(/\d+(?:\.\d+)?\s*元(?:\s*[-~至]\s*\d+(?:\.\d+)?\s*元)?/i);
+        return match ? normalizeText(match[0], 40) : "";
+      };
+      const extractRatingFromText = (text = "") => {
+        const value = String(text || "");
+        const match = value.match(/(?:rating\s*)?(\d(?:\.\d)?)\s*(?:out of 5|stars?)/i) ||
+          value.match(/\b([1-5](?:\.\d)?)\s*★/);
+        return match ? normalizeText(match[0], 40) : "";
+      };
+      const extractReviewCountFromText = (text = "") => {
+        const value = String(text || "");
+        const match = value.match(/(\d[\d,]*)\s*(?:reviews?|ratings?)/i) ||
+          value.match(/(?:reviews?|ratings?)\s*(\d[\d,]*)/i);
+        return match ? normalizeText(match[0], 40) : "";
+      };
       const bodyText = document.body?.innerText || "";
       const links = Array.from(document.querySelectorAll("a[href]"))
         .map((anchor) => ({ href: anchor.href, text: (anchor.innerText || anchor.getAttribute("aria-label") || "").trim().slice(0, 240) }))
@@ -525,16 +546,103 @@ async function executeGenericDomSnapshot(tabId) {
         .map((node) => node.textContent || "")
         .filter(Boolean)
         .slice(0, 8);
+      const structuredDataTypes = [];
+      for (const raw of jsonLd) {
+        try {
+          const parsed = JSON.parse(raw);
+          const collect = (node) => {
+            if (!node || typeof node !== "object") return;
+            if (Array.isArray(node)) {
+              node.forEach(collect);
+              return;
+            }
+            const type = node["@type"];
+            if (Array.isArray(type)) structuredDataTypes.push(...type.map(String));
+            else if (type) structuredDataTypes.push(String(type));
+            if (node["@graph"]) collect(node["@graph"]);
+          };
+          collect(parsed);
+        } catch (_) {}
+      }
+      const productLinks = links.filter((link) => /etsy\.com\/(listing|shop)\//i.test(link.href) || /product|item|shop|store|seller|listing|offer/i.test(link.href));
+      const title = document.title || "";
+      const h1 = document.querySelector("h1")?.innerText?.trim() || "";
+      const metaDescription = document.querySelector('meta[name="description"]')?.content || "";
+      const text = normalizeText(`${title}\n${h1}\n${metaDescription}\n${bodyText}`, 12000);
+      const ldTypeText = structuredDataTypes.join(" ");
+      let objectType = "website";
+      if ((/Product|Offer|AggregateRating/i.test(ldTypeText) ? 1 : 0) + (extractPriceFromText(text) ? 1 : 0) + (/add to cart|buy now|in stock|sku|加入购物车|立即购买|库存|规格/i.test(text) ? 1 : 0) >= 2) {
+        objectType = "product";
+      } else if ((/Store|Organization|LocalBusiness|Brand/i.test(ldTypeText) ? 1 : 0) + (productLinks.length >= 6 ? 1 : 0) + (/all products|collections|catalog|shop all|店铺|商店|全部商品|产品分类/i.test(text) ? 1 : 0) >= 2) {
+        objectType = "store";
+      } else if (/\/search|[?&](q|query|keyword|search_query)=/i.test(location.href) || (/search|results|筛选|排序|sort by|filter/i.test(text) && productLinks.length >= 4)) {
+        objectType = "search_results";
+      } else if (text.length < 120 && productLinks.length === 0) {
+        objectType = "unknown";
+      }
+      const confidenceScore = Math.min(100,
+        25 +
+        (h1 || title ? 14 : 0) +
+        (extractPriceFromText(text) ? 12 : 0) +
+        (images.length ? 12 : 0) +
+        (structuredDataTypes.length ? 12 : 0) +
+        Math.min(15, productLinks.length) +
+        (text.length >= 800 ? 10 : text.length >= 180 ? 5 : 0)
+      );
+      const objectProfile = {
+        object_type: objectType,
+        platform: location.hostname,
+        hostname: location.hostname,
+        url: location.href,
+        identity: {
+          name: normalizeText(h1 || title || location.hostname, 180),
+          title,
+          h1,
+        },
+        visible_fields: {
+          title: normalizeText(h1 || title, 180),
+          price: extractPriceFromText(text),
+          rating: extractRatingFromText(text),
+          reviewCount: extractReviewCountFromText(text),
+          metaDescription: normalizeText(metaDescription, 260),
+          primaryImage: images[0]?.src || "",
+          productCardCount: 0,
+          productLinkCount: productLinks.length,
+          structuredDataTypes: Array.from(new Set(structuredDataTypes)).slice(0, 8),
+        },
+        evidence_contract: {
+          dom_required: true,
+          screenshot_required: true,
+          dom_status: text.length >= 120 || productLinks.length > 0 ? "usable" : "weak",
+          visual_status: images.length > 0 ? "usable_candidate_images" : "screenshot_required_for_layout",
+          must_not_infer_private_metrics: true,
+        },
+        collection_strategy: objectType === "product"
+          ? "read visible product fields, inspect primary image/gallery screenshot, then verify price/reviews/variants from DOM before recommendations"
+          : objectType === "store"
+          ? "sample visible product links/cards, inspect storefront visual hierarchy screenshot, then open selected product detail pages if deeper claims are needed"
+          : objectType === "search_results"
+          ? "treat cards as visible result samples only; preserve ranks, filters, and screenshot context"
+          : "use DOM text plus screenshot visual triage first; ask for target object if evidence remains weak",
+        confidence: confidenceScore >= 75 ? "high" : confidenceScore >= 50 ? "medium" : "low",
+        confidence_score: confidenceScore,
+        limits: [
+          "陌生站点 DOM 结构未预置，字段必须来自本轮可见 DOM、结构化数据或截图观察。",
+          "截图适合判断视觉层级、图片质量和布局；价格、库存、评论、规格等文字字段必须以 DOM 文本为准。",
+          "公开页面不能推断后台销量、真实转化率、完整库存或不可见评价。",
+        ],
+      };
       return {
         url: location.href,
-        title: document.title || "",
-        h1: document.querySelector("h1")?.innerText?.trim() || "",
+        title,
+        h1,
         visibleText: bodyText.slice(0, 30000),
-        metaDescription: document.querySelector('meta[name="description"]')?.content || "",
-        productLinks: links.filter((link) => /etsy\.com\/(listing|shop)\//i.test(link.href) || /product|item|shop/i.test(link.href)),
+        metaDescription,
+        productLinks,
         links,
         images,
         structuredDataRaw: jsonLd,
+        objectProfile,
         pageHealth: {
           hasMeaningfulDom: bodyText.trim().length >= 120 || links.length > 0,
           visibleTextLength: bodyText.length,
@@ -599,6 +707,7 @@ async function readCompletePageData(tabId, message = {}) {
           : fallback.visibleText,
         productLinks: (contentData.productLinks?.length ? contentData.productLinks : fallback.productLinks) || [],
         images: (contentData.images?.length ? contentData.images : fallback.images) || [],
+        objectProfile: contentData.objectProfile || fallback.objectProfile || null,
         pageHealth: {
           ...(fallback.pageHealth || {}),
           ...(contentData.pageHealth || {}),
@@ -644,6 +753,9 @@ function buildPageEvidence(pageData = {}) {
     productCardCount: Array.isArray(pageData.productCards) ? pageData.productCards.length : 0,
     productLinkCount: Array.isArray(pageData.productLinks) ? pageData.productLinks.length : 0,
     imageCount: Array.isArray(pageData.images) ? pageData.images.length : 0,
+    objectType: pageData.objectProfile?.object_type || "unknown",
+    objectConfidence: pageData.objectProfile?.confidence || "low",
+    objectCollectionStrategy: pageData.objectProfile?.collection_strategy || "",
     hasStructuredData: Boolean(pageData.structuredData || pageData.structuredDataRaw?.length),
     hasMeaningfulDom: Boolean(health.hasMeaningfulDom),
     isLikelyBlocked: Boolean(health.isLikelyBlocked),

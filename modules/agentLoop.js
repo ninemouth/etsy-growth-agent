@@ -4201,6 +4201,14 @@ ${formatBrowserAutomationCapabilityPrompt()}
 - 需要翻页、排序、筛选、截图或详情页时，优先使用上方能力契约对应工具；不能用模型想象替代工具证据。
 ${isShopOptimizerOnly(skillId) ? formatShopOptimizerProductionSkeletonPrompt(toolHistory, pageContext) : ""}
 
+## 通用对象感知与陌生网站取证纪律
+如果 pageContext.objectProfile 存在，必须先按 objectProfile.object_type 判断用户提供对象是 product、store、search_results、website 还是 unknown：
+- 对陌生网站，DOM 结构不可预设；价格、规格、库存、评论、评分、标题、链接等文字字段必须来自 visibleText、structuredData、productCards、productLinks 或 read_current_page 返回字段。
+- 截图用于判断视觉层级、主图/画廊质量、首屏信息密度、品牌调性、信任信号和页面阻断状态；不得用截图去编造未读取到的长文本参数。
+- objectProfile.evidence_contract.dom_status="weak"、pageHealth.isLikelyBlocked=true 或 pageEvidence.hasMeaningfulDom=false 时，只能输出取证受限和下一步补证计划，不能输出深度商业结论。
+- 对 store/search_results/website 页面，当前 productCards/productLinks 只是公开可见样本；没有打开详情页前，不得写商品级材质、变体、完整价格带或评论痛点。
+- 最终 evidence_ledger 必须同时区分 page_dom 与 screenshot_visual：页面文字事实写 page_dom，视觉观察写 screenshot_visual。
+
 ## 工具调用格式
 当需要调用工具时，输出：
 \`\`\`json

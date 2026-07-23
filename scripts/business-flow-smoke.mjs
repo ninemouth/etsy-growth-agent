@@ -30,6 +30,7 @@ const browserSessionManagerSource = fs.readFileSync(path.join(root, "modules", "
 const artifactStoreSource = fs.readFileSync(path.join(root, "modules", "artifactStore.js"), "utf8");
 const workflowSchedulerSource = fs.readFileSync(path.join(root, "modules", "workflowScheduler.js"), "utf8");
 const shopOptimizerSkillSource = fs.readFileSync(path.join(root, "skills", "etsy_global_shop_optimizer.skill.md"), "utf8");
+const genericObjectSkillSource = fs.readFileSync(path.join(root, "skills", "generic_object_analyzer.skill.md"), "utf8");
 const baseAuditorSkillSource = fs.readFileSync(path.join(root, "skills", "base_report_auditor.skill.md"), "utf8");
 const productOpportunitySkillSource = fs.readFileSync(path.join(root, "skills", "etsy_product_opportunity_explorer.skill.md"), "utf8");
 const sourcingSkillSource = fs.readFileSync(path.join(root, "skills", "etsy_sourcing_finder.skill.md"), "utf8");
@@ -444,6 +445,16 @@ assert.match(toolRegistrySource, /putDataUrlArtifact[\s\S]*artifactStore:\s*"ind
 assert.match(artifactStoreSource, /STORE_NAME\s*=\s*"artifacts"[\s\S]*indexedDB\.open[\s\S]*createObjectStore\(STORE_NAME[\s\S]*new Blob/, "large screenshot artifacts should use IndexedDB Blob storage");
 assert.doesNotMatch(artifactStoreSource, /chrome\.storage\.local\.set/, "artifact store must not persist large screenshot blobs through chrome.storage.local");
 assert.match(contentSource, /extractEtsySearchCards/, "content script should extract Etsy-specific listing cards");
+assert.match(contentSource, /function inferGenericObjectProfile[\s\S]*object_type[\s\S]*evidence_contract[\s\S]*collection_strategy/, "content script should build a generic object profile for unknown websites, stores and products");
+assert.match(toolRegistrySource, /executeGenericDomSnapshot[\s\S]*objectProfile[\s\S]*evidence_contract[\s\S]*must_not_infer_private_metrics/, "DOM fallback should also build a generic object profile when the content script is unavailable");
+assert.match(toolRegistrySource, /objectType:\s*pageData\.objectProfile\?\.object_type[\s\S]*objectCollectionStrategy/, "page evidence should expose generic object type and collection strategy");
+assert.match(backgroundSource, /generic_object_analyzer\.skill\.md[\s\S]*hasGenericObjectAnalysisIntent[\s\S]*isExternalObjectPage[\s\S]*generic_object_analyzer\.skill\.md/, "external website/store/product analysis should route to the generic object analyzer");
+assert.match(agentLoopSource, /通用对象感知与陌生网站取证纪律[\s\S]*pageContext\.objectProfile[\s\S]*page_dom[\s\S]*screenshot_visual/, "agent prompt should require DOM plus screenshot evidence for unfamiliar sites");
+assert.match(genericObjectSkillSource, /页面文本证据/, "generic object analyzer skill should require page text evidence");
+assert.match(genericObjectSkillSource, /截图观察/, "generic object analyzer skill should require screenshot visual observations");
+assert.match(genericObjectSkillSource, /后台销量/, "generic object analyzer skill should forbid private metric inference from public pages");
+assert.match(genericObjectSkillSource, /objectProfile\.object_type/, "generic object analyzer skill should classify the provided object before analysis");
+assert.match(genericObjectSkillSource, /source_type": "page_dom\|screenshot_visual\|user_input\|assumption\|blocked"/, "generic object analyzer final reports should support page_dom and screenshot_visual ledgers");
 assert.match(contentSource, /search\\\/shops[\s\S]*shopUrl/, "content script should extract Etsy shop search cards");
 assert.match(contentSource, /visibleOrderRank/, "content script should expose visible product order rank for competitor storefront interpretation");
 assert.match(contentSource, /sortLabel[\s\S]*hasNextPage[\s\S]*etsyShopProductContext/, "content script should expose Etsy shop sort and pagination context");

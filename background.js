@@ -118,6 +118,7 @@ const ETSY_SKILL_PATHS = new Set([
   "skills/etsy_compliance_auditor.skill.md",
   "skills/etsy_event_driven_trend_radar.skill.md",
   "skills/etsy_crossborder_explorer.skill.md",
+  "skills/generic_object_analyzer.skill.md",
 ]);
 
 const GROWTH_ACTION_SKILL_MAP = {
@@ -137,6 +138,7 @@ const GROWTH_ACTION_SKILL_MAP = {
   create_growth_experiment: ["skills/etsy_operations_tracker.skill.md"],
   review_experiment_result: ["skills/etsy_operations_tracker.skill.md"],
   audit_compliance: ["skills/etsy_compliance_auditor.skill.md"],
+  analyze_generic_object: ["skills/generic_object_analyzer.skill.md"],
 };
 
 function normalizeSkillPath(skillPath) {
@@ -178,6 +180,7 @@ async function dispatchEtsySkills(userInstruction, pageContext = {}) {
   const inst = String(userInstruction).toLowerCase();
   const pageUrl = String(pageContext?.url || "").toLowerCase();
   const pageTitle = String(pageContext?.title || "").toLowerCase();
+  const objectType = String(pageContext?.objectProfile?.object_type || "").toLowerCase();
   
   // Keyword mapping to detect which Etsy skills to load
   const matched = [];
@@ -203,12 +206,21 @@ async function dispatchEtsySkills(userInstruction, pageContext = {}) {
     /选品|开发|类目|爆品|机会|牙刷|合规|eac|准入/.test(inst);
   const hasCrossBorderExplorerIntent =
     /跨境出海|多平台|跨境平台|出海缝隙|跨境电商|amazon|temu|ebay|shopee|速卖通|aliexpress|wish|lazada|shein|爆品榜|best seller|类目漫游|category roaming|产品蓝图|product blueprint/i.test(inst);
+  const hasGenericObjectAnalysisIntent =
+    /分析(?:这个|当前)?(?:网站|网页|页面|店铺|商品|产品|品牌|对象)|诊断(?:这个|当前)?(?:网站|网页|页面|店铺|商品|产品|品牌|对象)|体检(?:这个|当前)?(?:网站|网页|页面|店铺|商品|产品|品牌|对象)|object analysis|analy[sz]e (?:this|current) (?:site|website|page|store|shop|product|brand)/i.test(userInstruction);
   const hasComplianceIntent =
     /合规|法规|认证|证书|侵权|商标|版权|cpc|cpsia|gpsr|reach|rohs|fcc|moCRA|禁售|安全审查|发布前审查/.test(inst);
   const hasKeywordIntent = /关键词|搜索词|keyword|seo|标签|tags?|标题词|长尾词|search intent/.test(inst);
   const isEtsyShopPage =
     /etsy\.com\/shop\//.test(pageUrl) ||
     /etsy\s+shop|shop\s+on\s+etsy|seller|店铺/.test(pageTitle);
+  const isEtsyPage = /(^|\/\/)([^/]+\.)?etsy\.com\//.test(pageUrl);
+  const isExternalObjectPage = Boolean(pageUrl && !isEtsyPage && ["product", "store", "search_results", "website", "unknown"].includes(objectType || "unknown"));
+
+  if (hasGenericObjectAnalysisIntent && isExternalObjectPage) {
+    pushUnique(matched, "skills/generic_object_analyzer.skill.md");
+    return matched;
+  }
 
   if (hasEventDrivenTrendIntent && !hasExplicitSourcingIntent && !hasExplicitShopDiagnosisIntent) {
     pushUnique(matched, "skills/etsy_event_driven_trend_radar.skill.md");
@@ -435,6 +447,13 @@ async function listSkills() {
       name: "跨境电商多平台趋势与出海缝隙探索专家",
       description: "基于 Amazon/Etsy/Temu/eBay/Shopee 等跨境平台首页、分类页或爆品榜自动发现出海趋势，输出轻定制、高溢价、跨境物流友好的产品蓝图",
       icon: "🌍",
+    },
+    {
+      id: "generic_object_analyzer",
+      path: "skills/generic_object_analyzer.skill.md",
+      name: "通用对象感知与公开页面分析专家",
+      description: "支持用户提供的陌生网站、店铺、商品或品牌页，基于页面文本证据、通用结构抽取和截图视觉观察建立对象画像与采集计划",
+      icon: "🧭",
     }
   ];
 

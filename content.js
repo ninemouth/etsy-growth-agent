@@ -484,6 +484,118 @@
     };
   }
 
+  function inferGenericObjectProfile({
+    url = "",
+    title = "",
+    h1 = "",
+    visibleText = "",
+    productCards = [],
+    productLinks = [],
+    images = [],
+    structuredData = null,
+    metaDescription = "",
+  } = {}) {
+    let parsedUrl = null;
+    try { parsedUrl = new URL(url); } catch (_) {}
+    const hostname = parsedUrl?.hostname || "";
+    const path = parsedUrl?.pathname || "";
+    const text = normalizeText(`${title}\n${h1}\n${metaDescription}\n${visibleText}`, 12000);
+    const ldTypes = [];
+    const collectLdTypes = (node) => {
+      if (!node || typeof node !== "object") return;
+      if (Array.isArray(node)) {
+        node.forEach(collectLdTypes);
+        return;
+      }
+      const type = node["@type"];
+      if (Array.isArray(type)) ldTypes.push(...type.map(String));
+      else if (type) ldTypes.push(String(type));
+      if (node["@graph"]) collectLdTypes(node["@graph"]);
+    };
+    collectLdTypes(structuredData);
+    const ldTypeText = ldTypes.join(" ");
+    const productSignals = [
+      /Product|Offer|AggregateRating/i.test(ldTypeText),
+      Boolean(extractPriceFromText(text)),
+      /add to cart|buy now|in stock|sku|quantity|加入购物车|立即购买|库存|规格|变体/i.test(text),
+      /\/(product|products|item|goods|listing|offer|dp)\//i.test(path),
+    ];
+    const storeSignals = [
+      /Store|Organization|LocalBusiness|Brand/i.test(ldTypeText),
+      /all products|collections|catalog|shop all|店铺|商店|全部商品|产品分类|collection/i.test(text),
+      Array.isArray(productCards) && productCards.length >= 4,
+      Array.isArray(productLinks) && productLinks.length >= 6,
+      /\/(shop|store|seller|brand|collections?)\b/i.test(path),
+    ];
+    const searchSignals = [
+      /search|query|results|筛选|排序|sort by|filter/i.test(text),
+      /\/search|[?&](q|query|keyword|search_query)=/i.test(url),
+      Array.isArray(productCards) && productCards.length >= 8,
+    ];
+
+    let objectType = "website";
+    if (productSignals.filter(Boolean).length >= 2) objectType = "product";
+    else if (searchSignals.filter(Boolean).length >= 2) objectType = "search_results";
+    else if (storeSignals.filter(Boolean).length >= 2) objectType = "store";
+    else if (/about us|contact|homepage|官网|首页|关于我们/i.test(text)) objectType = "website";
+    else objectType = "unknown";
+
+    const visibleFields = {
+      title: normalizeText(h1 || title, 180),
+      price: extractPriceFromText(text),
+      rating: extractRatingFromText(text),
+      reviewCount: extractReviewCountFromText(text),
+      metaDescription: normalizeText(metaDescription, 260),
+      primaryImage: images[0]?.src || "",
+      productCardCount: Array.isArray(productCards) ? productCards.length : 0,
+      productLinkCount: Array.isArray(productLinks) ? productLinks.length : 0,
+      structuredDataTypes: Array.from(new Set(ldTypes)).slice(0, 8),
+    };
+    const confidenceScore = Math.min(100,
+      25 +
+      (visibleFields.title ? 14 : 0) +
+      (visibleFields.price ? 12 : 0) +
+      (visibleFields.primaryImage ? 12 : 0) +
+      (visibleFields.structuredDataTypes.length ? 12 : 0) +
+      Math.min(15, visibleFields.productCardCount * 3) +
+      (text.length >= 800 ? 10 : text.length >= 180 ? 5 : 0)
+    );
+
+    return {
+      object_type: objectType,
+      platform: hostname,
+      hostname,
+      url,
+      identity: {
+        name: visibleFields.title || hostname,
+        title,
+        h1,
+      },
+      visible_fields: visibleFields,
+      evidence_contract: {
+        dom_required: true,
+        screenshot_required: true,
+        dom_status: text.length >= 120 || visibleFields.productCardCount > 0 ? "usable" : "weak",
+        visual_status: images.length > 0 ? "usable_candidate_images" : "screenshot_required_for_layout",
+        must_not_infer_private_metrics: true,
+      },
+      collection_strategy: objectType === "product"
+        ? "read visible product fields, inspect primary image/gallery screenshot, then verify price/reviews/variants from DOM before recommendations"
+        : objectType === "store"
+        ? "sample visible product cards, inspect storefront visual hierarchy screenshot, then open selected product detail pages if deeper claims are needed"
+        : objectType === "search_results"
+        ? "treat cards as visible result samples only; preserve ranks, filters, and screenshot context"
+        : "use DOM text plus screenshot visual triage first; ask for target object if evidence remains weak",
+      confidence: confidenceScore >= 75 ? "high" : confidenceScore >= 50 ? "medium" : "low",
+      confidence_score: confidenceScore,
+      limits: [
+        "陌生站点 DOM 结构未预置，字段必须来自本轮可见 DOM、结构化数据或截图观察。",
+        "截图适合判断视觉层级、图片质量和布局；价格、库存、评论、规格等文字字段必须以 DOM 文本为准。",
+        "公开页面不能推断后台销量、真实转化率、完整库存或不可见评价。",
+      ],
+    };
+  }
+
   function extractEtsyShopProductControls() {
     if (!window.location.hostname.includes("etsy.com") || !/\/shop\//i.test(window.location.pathname)) {
       return null;
@@ -1352,6 +1464,17 @@
     const pageHealth = classifyPageHealth({ url, title, visibleText, productCards, productLinks });
     const etsyShopProductContext = extractEtsyShopProductControls();
     const etsyReviewData = extractEtsyReviews();
+    const objectProfile = inferGenericObjectProfile({
+      url,
+      title,
+      h1,
+      visibleText,
+      productCards,
+      productLinks,
+      images,
+      structuredData,
+      metaDescription,
+    });
 
     return {
       url,
@@ -1379,7 +1502,8 @@
       reviewPagination: etsyReviewData.reviewPagination,
       pageHealth,
       creatorInfo,
-      detailCreators
+      detailCreators,
+      objectProfile,
     };
   }
 
