@@ -4563,6 +4563,17 @@
             ].filter(Boolean).join("\n"), true, null, message.skillId || "");
             cleanupAgentConnection();
             finishGrowthRun("interrupted", payload.result || "clarification_required").catch((err) => console.warn("Failed to save clarification-required growth run:", err.message));
+          } else if (message.type === "WORKFLOW_RUNNING") {
+            settled = true;
+            statusDot.className = "status-dot";
+            activeAgentPort = null;
+            updateChatRunControls({ running: false });
+            const active = message.activeWorkflow || {};
+            const label = active.growthActionId || active.skillId || active.workflowId || "Etsy workflow";
+            log(`⏱ ${message.message || "当前已有任务正在运行，请等待完成或先暂停当前任务。"}`);
+            log(`↪ 运行中任务：${label}`);
+            cleanupAgentConnection();
+            finishGrowthRun("interrupted", message.message || "workflow_running").catch((err) => console.warn("Failed to save running-blocked growth run:", err.message));
           } else if (message.type === "INTERRUPTED") {
             settled = true;
             statusDot.className = "status-dot";

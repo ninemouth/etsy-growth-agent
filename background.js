@@ -677,6 +677,20 @@ function isExplicitResumeRequest(message = {}) {
   return isCheckpointFollowupInstruction(message.userInstruction);
 }
 
+function buildWorkflowRunningPayload(active = {}, requestedWorkflowId = "") {
+  const sameWorkflow = Boolean(requestedWorkflowId && active?.workflowId && String(requestedWorkflowId) === String(active.workflowId));
+  return {
+    type: "WORKFLOW_RUNNING",
+    errorCode: "WORKFLOW_RUNNING",
+    resumable: false,
+    activeWorkflow: active || null,
+    sameWorkflow,
+    message: sameWorkflow
+      ? "该历史会话已经在运行中，无需重复恢复。请等待当前任务完成，或先点击暂停后再恢复。"
+      : "当前已有任务正在运行。请等待当前任务完成，或先暂停当前任务后再恢复历史会话，避免并发任务重复开页和重复调用 AI。",
+  };
+}
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name === "etsy-agent-loop") {
     const portId = Date.now().toString();
@@ -757,11 +771,11 @@ chrome.runtime.onConnect.addListener((port) => {
       if (message.type === "RUN_SKILL") {
         if (runInFlight) {
           try {
-            port.postMessage({
-              type: "ERROR",
-              error: "当前已有 workflow 正在执行。请等待当前任务完成，或发送“继续”恢复已保存断点，避免并发任务重复开页和重复调用 AI。",
-              resumable: true,
-            });
+            port.postMessage(buildWorkflowRunningPayload({
+              workflowId: activeCheckpointKey,
+              status: "running",
+              ownerId: portId,
+            }, message.workflowSessionId || ""));
           } catch (_) {}
           return;
         }
@@ -776,7 +790,10 @@ chrome.runtime.onConnect.addListener((port) => {
             source: "etsy-agent-loop",
           });
           if (!schedulerSlot.ok) {
-            throw new Error(schedulerSlot.message || "当前已有任务正在运行，请稍后再试。");
+            if (!isCancelled) {
+              port.postMessage(buildWorkflowRunningPayload(schedulerSlot.active, message.workflowSessionId || ""));
+            }
+            return;
           }
           schedulerSlotAcquired = true;
           schedulerFinalStatus = "released";

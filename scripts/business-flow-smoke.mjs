@@ -135,6 +135,26 @@ assert.match(
 );
 assert.match(agentLoopSource, /newestImageMessage/, "older screenshot data URLs should not be resent on every planning turn");
 assert.match(backgroundSource, /runInFlight/, "background should reject duplicate concurrent workflow starts on one port");
+assert.match(
+  backgroundSource,
+  /function buildWorkflowRunningPayload[\s\S]*type:\s*"WORKFLOW_RUNNING"[\s\S]*resumable:\s*false/,
+  "duplicate workflow resume attempts should be surfaced as a non-resumable running state"
+);
+assert.match(
+  backgroundSource,
+  /if \(!schedulerSlot\.ok\) \{[\s\S]*buildWorkflowRunningPayload\(schedulerSlot\.active[\s\S]*return;/,
+  "scheduler-denied resume attempts should not become failed checkpoints"
+);
+assert.match(
+  sidepanelSource,
+  /message\.type === "WORKFLOW_RUNNING"[\s\S]*运行中任务[\s\S]*showStatusNotice[\s\S]*cleanupPort\(\)/,
+  "sidepanel should show active workflow state instead of a resumable error"
+);
+assert.match(
+  contentSource,
+  /message\.type === "WORKFLOW_RUNNING"[\s\S]*运行中任务[\s\S]*finishGrowthRun\("interrupted"/,
+  "floating overlay should close duplicate resume attempts without creating another running task"
+);
 assert.match(backgroundSource, /acquireWorkflowLease[\s\S]*releaseWorkflowLease/, "background should use a global workflow lease instead of a per-port lock only");
 assert.match(agentLoopSource, /isWorkflowCancellationRequested[\s\S]*workflow_cancellation_requested/, "agent loop should honor durable workflow cancellation at node boundaries");
 assert.match(agentLoopSource, /isWorkflowGenerationCurrent[\s\S]*stale_tool_result_discarded/, "late results from an older workflow generation must be discarded");

@@ -827,6 +827,14 @@ async function runSkill() {
         }
         showResult(message.result);
         cleanupPort();
+      } else if (message.type === "WORKFLOW_RUNNING") {
+        if (typeof removeCaptchaAlertBanner === "function") removeCaptchaAlertBanner();
+        const active = message.activeWorkflow || {};
+        const label = active.growthActionId || active.skillId || active.workflowId || "Etsy workflow";
+        addLog("info", "⏱", message.message || "当前已有任务正在运行，请等待完成或先暂停当前任务。");
+        addLog("info", "↪", `运行中任务：${label}`);
+        showStatusNotice(message.message || "当前已有任务正在运行，请等待完成或先暂停当前任务。");
+        cleanupPort();
       } else if (message.type === "ERROR") {
         if (typeof removeCaptchaAlertBanner === "function") removeCaptchaAlertBanner();
         addLog("error", "❌", `错误: ${message.error}`);
@@ -1502,6 +1510,11 @@ function renderGrid(dataArray) {
 function showError(msg) {
   $("resultArea").classList.remove("hidden");
   $("resultContent").innerHTML = `<span style="color:var(--danger)">❌ ${escapeHtml(maskApiKeys(msg))}</span>`;
+}
+
+function showStatusNotice(msg) {
+  $("resultArea").classList.remove("hidden");
+  $("resultContent").innerHTML = `<span style="color:var(--info)">⏱ ${escapeHtml(maskApiKeys(msg))}</span>`;
 }
 
 function syntaxHighlightJSON(json) {
