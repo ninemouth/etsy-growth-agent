@@ -127,18 +127,18 @@ assert.match(
 );
 assert.match(
   backgroundSource,
-  /validate_opportunity_sourcing:\s*\[\s*"skills\/etsy_sourcing_finder\.skill\.md"\s*\]/,
-  "validate_opportunity_sourcing must be an explicit two-stage sourcing action, not auto-loaded into find_expansion_opportunities"
+  /SOURCING_HANDOFF_REQUIRED[\s\S]*buildCrossBorderSourcingHandoff/,
+  "supplier sourcing requests must hand off to the cross-platform Orchestrator before the Etsy agent loop"
 );
 assert.match(
   js,
-  /validate_opportunity_sourcing[\s\S]*runFollowUpSourcingTask/,
-  "dashboard must render sourcing follow-up tasks and wire them to the two-stage action"
+  /follow-up-sourcing-handoff-btn[\s\S]*openSourcingHandoffFromReport/,
+  "dashboard must render sourcing follow-up tasks as a handoff to the cross-platform workflow"
 );
 assert.match(
   sidepanelSource,
-  /sidepanel-follow-up-sourcing-btn[\s\S]*activateGrowthAction\("validate_opportunity_sourcing"\)/,
-  "sidepanel must render sourcing follow-up tasks that activate the explicit two-stage action"
+  /sidepanel-open-sourcing-control-center-btn[\s\S]*cross-border-sourcing-orchestrator/,
+  "sidepanel must render sourcing follow-up tasks as a Control Center handoff"
 );
 assert.match(agentLoopSource, /newestImageMessage/, "older screenshot data URLs should not be resent on every planning turn");
 assert.match(backgroundSource, /runInFlight/, "background should reject duplicate concurrent workflow starts on one port");
@@ -2024,7 +2024,7 @@ assert.equal(storage.savedResults[0].growthCaseId, storeCase.id, "saved report s
 
 await wait();
 const rootTitles = [...window.document.querySelectorAll(".root-node strong")].map((node) => node.textContent.trim());
-assert.deepEqual(rootTitles.slice(0, 7), ["店铺体检", "竞品跟踪", "商品页转化", "平台趋势", "机会扩品", "供应商货源", "执行与复盘"], "workflow roots should stay product-scoped");
+assert.deepEqual(rootTitles.slice(0, 6), ["店铺体检", "竞品跟踪", "商品页转化", "平台趋势", "机会扩品", "执行与复盘"], "workflow roots should stay product-scoped");
 assert.equal(rootTitles.includes("店铺定位重构"), false, "positioning must not be rendered as an independent root");
 
 window.document.querySelector('.nav-menu button[data-tab="reports"]').click();

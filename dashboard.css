@@ -23,6 +23,20 @@
   --radius-sm: 6px;
 }
 
+/* Cloud account boundary: the password form is limited to the Marqel login dialog. */
+.sidebar-footer { gap: 8px; flex-wrap: wrap; }
+.auth-session-button { margin-left: auto; border: 1px solid var(--border); border-radius: 7px; padding: 4px 8px; background: transparent; color: var(--text-secondary); font-size: 11px; font-weight: 700; cursor: pointer; }
+.auth-session-button:hover { border-color: var(--accent); color: var(--accent); }
+.auth-dialog-content { width: min(92vw, 430px); }
+.auth-dialog-copy { margin: 0 0 16px; color: var(--text-secondary); font-size: 13px; line-height: 1.65; }
+.auth-login-form { display: grid; gap: 8px; }
+.auth-phone-input { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 6px; }
+.auth-phone-input .form-input { min-width: 0; }
+.auth-phone-hint { margin: -2px 0 2px; color: var(--text-muted); font-size: 10px; line-height: 1.45; }
+.auth-login-message { min-height: 18px; margin: 2px 0 0; color: var(--danger); font-size: 12px; }
+.auth-login-message[data-kind="success"] { color: var(--success); }
+.auth-logout-button { width: 100%; margin-top: 12px; }
+
 :root.theme-light {
   --bg-primary: #f4f4f5;
   --bg-sidebar: #ffffff;

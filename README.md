@@ -1,8 +1,8 @@
 # Etsy Growth Agent
 
-Etsy Growth Agent is a Manifest V3 Chrome extension adapted from a marketplace growth workflow shell and specialized for Etsy sellers.
+Etsy Growth Agent is a Manifest V3 Chrome extension adapted from a marketplace growth workflow shell and specialized for Etsy seller operations.
 
-It provides an AI-driven browser side panel, page-reading tools, Etsy-focused skills, report rendering, local result storage, sourcing workflows, and a growth dashboard for shop optimization work.
+It provides an AI-driven browser side panel, page-reading tools, Etsy-focused operations skills, report rendering, local result storage, and a growth dashboard for shop optimization work. Cross-platform 1688/Taobao supplier sourcing is handled by the Marqel Etsy Codex workflow and is not an active skill in this extension.
 
 Repository: https://github.com/ninemouth/etsy-growth-agent
 
@@ -11,9 +11,11 @@ Repository: https://github.com/ninemouth/etsy-growth-agent
 - Etsy shop and listing diagnosis from the current browser page.
 - Etsy SEO title, tag, description, and occasion keyword planning.
 - Etsy trend and product opportunity exploration for lightweight gifts, personalized products, craft supplies, and cross-border supply-chain advantages.
-- 1688 and Taobao sourcing support for visual matching and conservative landed-cost estimation.
+- Cross-platform supplier sourcing handoff to the Marqel Etsy Codex Orchestrator (the legacy sourcing report reader remains read-only).
 - Competitor/review analysis focused on buyer expectations, packaging, delivery promise, personalization quality, and IP/compliance risk.
 - Optional Etsy personal-access Open API adapter for active listings and authorized receipts when a Shop ID, API key, OAuth access token, and optional refresh token are configured locally.
+- Etsy Campaign Adapter: imports user-triggered visible Etsy Ads / Offsite Ads evidence, produces approval-required recommendations, and exports approved, credential-free promotion handoffs for downstream services.
+- Marqel Control Center V2 session: the open-source extension keeps its own local LLM/image settings, but Agent execution requires an active Marqel session; first use starts an `etsy-growth-agent` device request that a Web member must approve, then the extension synchronizes the default configuration without removing local overrides. The extension never collects a Marqel password.
 
 ## Project Structure
 
@@ -35,7 +37,6 @@ etsy-growth-agent/
 │   ├── etsy_product_opportunity_explorer.skill.md
 │   ├── etsy_platform_trends.skill.md
 │   ├── etsy_event_driven_trend_radar.skill.md
-│   ├── etsy_sourcing_finder.skill.md
 │   ├── etsy_global_shop_optimizer.skill.md
 │   ├── etsy_operations_tracker.skill.md
 │   ├── etsy_listing_generator.skill.md
@@ -47,12 +48,13 @@ etsy-growth-agent/
 
 ## Etsy Adaptation Notes
 
-This project keeps the browser automation, dashboard, workflow canvas, report library, monitoring baseline, and sourcing guardrails from the source workflow shell, but changes the platform contract:
+This project keeps the browser automation, dashboard, workflow canvas, report library, monitoring baseline, and Etsy operations guardrails from the source workflow shell, but changes the platform contract:
 
 - Platform URLs target `etsy.com`.
 - Runtime routing uses `etsy_*` skills and tool names.
 - The dashboard currency and listing logic are centered on USD-style Etsy economics.
 - Compliance guidance focuses on Etsy IP policy, personalization claims, CE/CPC/FDA/category-specific obligations, and gift-market delivery promises.
+- Supplier sourcing is a runtime handoff boundary. The old `etsy_sourcing_finder` file and legacy report rendering remain only for migration compatibility; it is not listed, routable, or injectable by the active extension.
 - Etsy API integration is modeled as a personal-access/local-browser setup, not a multi-tenant SaaS authorization flow. Public listing reads use the configured API key. Private shop data such as receipts/orders requires an OAuth access token; when a refresh token is also saved, the adapter can refresh an expired access token before retrying the request.
 
 ## Etsy Personal Access Credentials
@@ -64,7 +66,7 @@ The extension stores Etsy credentials only in `chrome.storage.local` for the cur
 - `OAuth Access Token` for private shop data such as receipts/orders
 - Optional `Refresh Token` for renewing an expired access token
 
-This project does not currently implement the full OAuth consent screen or hosted multi-user callback flow. Generate or provide the personal access credentials outside the extension, then save them in the extension settings drawer.
+This project does not currently implement the full OAuth consent screen or hosted multi-user callback flow. Generate or provide the personal access credentials outside the extension, then save them in the extension settings drawer. Marqel Control Center LLM/multimodal/image defaults are a separate configuration lane; Etsy credentials remain local and are never returned by the Control Center config endpoint.
 
 ## Before You Run
 
@@ -72,7 +74,8 @@ Etsy Growth Agent works by reading the currently open browser page and, for some
 
 - Sign in to Etsy in the same Chrome profile before running shop diagnosis, listing work, review analysis, or any workflow that depends on seller-visible pages.
 - Open Google Search and Google Trends once in the same Chrome profile, complete any consent, region, language, or verification prompts, then keep the session available for trend and market-research workflows.
-- If sourcing workflows will be used, sign in to 1688, Taobao, or other supplier sites first and resolve any captcha/login prompts manually.
+- For 1688/Taobao supplier tasks, use Codex `$cross-border-sourcing-orchestrator` and the ordinary Chrome `supplier-sourcing-chrome-runner`; do not use this extension as the supplier-platform runner. Platform login and CAPTCHA prompts remain human-handled.
+- For any Agent run, sign in through the Dashboard's `Marqel Access` control first. The open-source plugin can be configured locally without an account, but it will fail closed before execution when the shared Marqel session is missing or inactive.
 - Keep the original Etsy shop or listing page open while the workflow runs. The extension protects and restores the source tab, but external login or verification pages may still require manual attention.
 - If a run reports a blocked, login, consent, or verification page, resolve it in Chrome, reload the extension/page if needed, then resume the saved workflow instead of starting from scratch.
 
@@ -152,3 +155,27 @@ See `operations/architecture_audit.md` for the current runtime risk register and
 ## Privacy
 
 The extension is designed for local browser execution. LLM provider credentials and Etsy credentials are stored in `chrome.storage.local`. No third-party middleware server is required by this repository.
+
+## Promotion handoff
+
+This repository is the canonical Etsy Growth OS implementation. The earlier
+lightweight Ads-capture prototype is absorbed as the local, read-only Etsy
+Campaign Adapter in `modules/etsyCampaignAdapter.js`. Its visible-page Ads
+normalization, Etsy Ads/Offsite Ads guardrails, evidence-gated trend queue and
+creative-hypothesis safeguards now live here; all new Etsy development belongs
+in this repository.
+
+After a human approves a campaign, the extension may receive a
+`BUILD_ETSY_OUTREACH_HANDOFF` runtime message. It creates a
+`promotion-object-handoff.v1` package for Intelligent Outreach or another
+promotion service. The package contains the public Listing identity, approved
+facts, prohibited claims, required disclosures, approved media references,
+evidence references, campaign expiry and human approval record.
+
+It deliberately excludes passwords, cookies, OAuth/API tokens, AdsPower API
+keys, browser-control endpoints, screenshots/data URLs and every Etsy budget
+mutation instruction. The recipient must still verify the tenant session and
+entitlement with the cloud authorization center before it opens a live run.
+An Etsy campaign approval never authorizes a social post by itself: every
+target, account, final copy and media item remains subject to the downstream
+service's human approval gate.

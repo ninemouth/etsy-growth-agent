@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Etsy AI 运营与选品增长大盘</title>
+  <title>Etsy 运营增长助手 · Marqel</title>
   <link rel="stylesheet" href="dashboard.css">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
@@ -14,7 +14,7 @@
       <div class="sidebar-brand">
         <span class="brand-icon">🛍️</span>
         <div class="brand-info">
-          <span class="brand-name">Etsy Growth OS</span>
+          <span class="brand-name">Etsy 运营增长助手</span>
           <span class="brand-sub">销售增长指挥台</span>
         </div>
       </div>
@@ -39,7 +39,8 @@
         </button>
       </nav>
       <div class="sidebar-footer">
-        <span class="status-indicator"></span> Etsy 本地工作台
+        <span class="status-indicator"></span><span id="auth-session-label">需要 Marqel 登录</span>
+        <button id="open-auth-dialog" class="auth-session-button" type="button">登录</button>
       </div>
     </aside>
 
@@ -156,7 +157,7 @@
           <div class="funnel-step">
             <span>付款</span>
             <strong id="funnel-order">--</strong>
-            <button class="mini-action growth-action-btn" data-action="calculate_profit_guardrail">利润线</button>
+            <button class="mini-action growth-action-btn" data-action="diagnose_sku_funnel">利润/转化</button>
           </div>
           <div class="funnel-step">
             <span>履约</span>
@@ -177,11 +178,11 @@
           </div>
           <div class="stat-card">
             <div class="stat-header">
-              <span class="stat-title">选品库采购商机</span>
+              <span class="stat-title">历史选品报告（已迁移）</span>
               <span class="stat-icon">💵</span>
             </div>
             <div class="stat-value" id="stat-sourcing-count">0</div>
-            <div class="stat-footer">已对齐1688供应链的候选</div>
+            <div class="stat-footer">只读历史记录；新供应商任务进入 Marqel Control Center</div>
           </div>
           <div class="stat-card">
             <div class="stat-header">
@@ -218,12 +219,12 @@
           <!-- Quick Calculator -->
           <div class="grid-card">
             <div class="card-header">
-              <h3>🧮 Etsy 美元跨境套利测算</h3>
+              <h3>🧮 Etsy SKU 利润边界测算</h3>
             </div>
             <div class="card-body">
               <div class="quick-calc-form" style="display:flex; flex-direction:column; gap:10px;">
                 <div class="form-group">
-                  <label class="form-label" style="font-size:11px;">1688 采购成本 (CNY)</label>
+                  <label class="form-label" style="font-size:11px;">单位商品/履约成本 (CNY)</label>
                   <input type="number" id="calc-cost" class="form-input" value="30">
                 </div>
                 <div class="form-group">
@@ -335,7 +336,7 @@
         <div class="workbench-toolbar">
           <div>
             <h2>机会中心</h2>
-            <p>把选品、竞品、差评、季节趋势和寻源套利统一成可执行机会卡。</p>
+            <p>把 Etsy 运营、竞品、差评和季节趋势统一成可执行机会卡；跨平台供应商筛选由 Marqel Control Center 承接。</p>
           </div>
           <div class="toolbar-actions">
             <button class="btn btn-primary growth-action-btn" data-action="find_expansion_opportunities">发现扩品机会</button>
@@ -377,11 +378,11 @@
         </div>
       </section>
 
-      <!-- View: Pipeline (Sourcing & Arbitrage) -->
+      <!-- View: Pipeline (legacy read-only migration surface) -->
       <section id="view-pipeline" class="view-pane">
         <div class="grid-card">
           <div class="card-header filters-bar">
-            <div style="font-weight: 600; font-size: 15px; color: var(--text1);">1688 跨境寻源与美元财务套利库</div>
+            <div style="font-weight: 600; font-size: 15px; color: var(--text1);">历史供应商报告（只读，已迁移）</div>
             <input type="text" id="pipeline-search" class="form-input search-input" style="max-width: 250px;" placeholder="搜索商品名称...">
           </div>
           <div class="card-body scrollable">
@@ -390,7 +391,7 @@
                 <tr>
                   <th>商品图</th>
                   <th>Etsy 对标商品</th>
-                  <th>1688 供应商货源</th>
+                  <th>历史供应商记录</th>
                   <th>采购价 (CNY)</th>
                   <th>预估运费+关税 (USD)</th>
                   <th>Etsy 建议售价 (USD)</th>
@@ -402,7 +403,7 @@
               <tbody id="pipeline-table-body">
                 <tr>
                   <td colspan="9" class="empty-cell">
-                    <div class="empty-state">暂无对齐货源，请在 Etsy 详情页开启“1688寻源与套利测算”AI技能。</div>
+                    <div class="empty-state">新 1688/淘宝供应商任务不在 Etsy Growth Agent 中启动，请在 Codex 调用 $cross-border-sourcing-orchestrator，并在 Marqel Control Center 查看。</div>
                   </td>
                 </tr>
               </tbody>
@@ -780,6 +781,20 @@
   </div>
 
   <!-- Load core scripts -->
+  <div id="auth-dialog" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="auth-dialog-title">
+    <section class="modal-content auth-dialog-content">
+      <header class="modal-header"><div><div class="hero-kicker">MARQEL ACCESS</div><h3 id="auth-dialog-title">设备授权</h3></div><button id="close-auth-dialog" class="modal-close" type="button" aria-label="关闭">&times;</button></header>
+      <div class="modal-body">
+        <p class="auth-dialog-copy">扩展不会收集或发送团队密码。点击发起 V2 设备授权后，Marqel 会打开人工批准窗口；请在 Web 页面登录并核对显示的客户端身份，再回到这里检查批准状态。授权成功后会同步团队模型配置。</p>
+        <div class="auth-login-form">
+          <button id="extension-device-start" class="btn btn-primary" type="button">发起设备授权</button>
+          <button id="extension-device-poll" class="btn btn-outline" type="button">我已批准，检查状态</button>
+          <p id="extension-login-message" class="auth-login-message" aria-live="polite"></p>
+        </div>
+        <button id="extension-logout-button" class="btn btn-outline auth-logout-button hidden" type="button">退出 Marqel 登录</button>
+      </div>
+    </section>
+  </div>
   <script src="libs/dompurify.min.js"></script>
   <script src="libs/marked.min.js"></script>
   <script src="dashboard.js"></script>

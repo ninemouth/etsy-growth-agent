@@ -12,12 +12,93 @@ document.addEventListener("DOMContentLoaded", async () => {
   setDefaultStoreDateRange();
   document.body.classList.add("workflow-mode");
   initTabs();
+  bindAuthorizationControls();
+  await refreshAuthorizationSession();
   await refreshAllData();
   maybeAutoRefreshSellerApiCache().catch((err) => console.warn("Etsy 个人访问 API auto refresh skipped:", err.message));
   bindEvents();
 });
 
 const SELLER_API_AUTO_REFRESH_MS = 6 * 60 * 60 * 1000;
+
+function renderAuthorizationSession(session = null) {
+  const label = document.getElementById("auth-session-label");
+  const openButton = document.getElementById("open-auth-dialog");
+  const logoutButton = document.getElementById("extension-logout-button");
+  if (!label || !openButton || !logoutButton) return;
+  if (!session?.user) {
+    label.textContent = "需要 Marqel 登录";
+    openButton.textContent = "登录";
+    logoutButton.classList.add("hidden");
+    return;
+  }
+  const expires = new Date(session.expiresAt);
+  label.textContent = `${session.user.phone || "已登录"} · 至 ${Number.isFinite(expires.getTime()) ? expires.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "稍后"}`;
+  openButton.textContent = "账户";
+  logoutButton.classList.remove("hidden");
+}
+
+async function refreshAuthorizationSession() {
+  const response = await chrome.runtime.sendMessage({ type: "AUTH_STATUS" });
+  if (!response?.ok) {
+    renderAuthorizationSession(null);
+    return null;
+  }
+  renderAuthorizationSession(response.session);
+  if (!response.session && response.pendingDevice) {
+    const message = document.getElementById("extension-login-message");
+    if (message) message.textContent = `等待人工批准设备代码 ${response.pendingDevice.userCode || "—"}。打开账户窗口后点击检查状态。`;
+  }
+  return response.session;
+}
+
+function bindAuthorizationControls() {
+  const dialog = document.getElementById("auth-dialog");
+  const message = document.getElementById("extension-login-message");
+  const setMessage = (text = "", kind = "error") => {
+    message.textContent = text;
+    message.dataset.kind = kind;
+  };
+  document.getElementById("open-auth-dialog")?.addEventListener("click", () => dialog.classList.remove("hidden"));
+  document.getElementById("close-auth-dialog")?.addEventListener("click", () => dialog.classList.add("hidden"));
+  dialog?.addEventListener("click", (event) => { if (event.target === dialog) dialog.classList.add("hidden"); });
+  document.getElementById("extension-device-start")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    setMessage();
+    try {
+      const response = await chrome.runtime.sendMessage({ type: "AUTH_DEVICE_START" });
+      if (!response?.ok) throw new Error(response?.error || "无法发起设备授权");
+      const result = response.result || {};
+      setMessage(`已打开人工批准窗口。请核对 ${result.clientId || "Etsy Growth Agent"}，批准后点击“我已批准，检查状态”。设备代码：${result.userCode || "—"}`, "success");
+    } catch (error) { setMessage(error.message || "无法发起设备授权"); }
+    finally { button.disabled = false; }
+  });
+  document.getElementById("extension-device-poll")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    setMessage();
+    try {
+      const response = await chrome.runtime.sendMessage({ type: "AUTH_DEVICE_POLL" });
+      if (!response?.ok) throw new Error(response?.error || "设备授权检查失败");
+      const result = response.result || {};
+      if (result.status === "approval_pending") {
+        setMessage(`设备仍等待人工批准（代码 ${result.userCode || "—"}）。`, "error");
+        return;
+      }
+      if (result.status !== "authorized") throw new Error("当前没有可用的设备授权，请重新发起。");
+      renderAuthorizationSession(result);
+      setMessage("设备已批准，订阅状态和团队模型配置已同步。", "success");
+      setTimeout(() => dialog.classList.add("hidden"), 500);
+    } catch (error) { setMessage(error.message || "设备授权检查失败"); }
+    finally { button.disabled = false; }
+  });
+  document.getElementById("extension-logout-button")?.addEventListener("click", async () => {
+    await chrome.runtime.sendMessage({ type: "AUTH_LOGOUT" });
+    renderAuthorizationSession(null);
+    dialog.classList.add("hidden");
+  });
+}
 let selectedWorkflowId = "store_health";
 let workflowZoom = 1;
 let workflowPanX = 0;
@@ -190,21 +271,6 @@ const GROWTH_ACTIONS = {
     skillPath: "skills/etsy_review_analyzer.skill.md",
     instruction: "分析欧美买家评论与退换货风险，归因质量、包装、说明、规格、物流和预期差距，并生成产品改良任务。",
   },
-  calculate_profit_guardrail: {
-    title: "利润安全线",
-    skillPath: "skills/etsy_sourcing_finder.skill.md",
-    instruction: "测算 Etsy SKU 建议售价、最低促销价、利润保护价、发货资料 成本边界和是否需要寻源降本。",
-  },
-  filter_supplier_sources: {
-    title: "供应商货源筛选",
-    skillPath: "skills/etsy_sourcing_finder.skill.md",
-    instruction: "基于当前 Etsy 商品、候选扩品方向或平台趋势机会，筛选可进入验证的 1688/国内供应商货源。请优先做外观与规格一致性、起批量、采购价、跨境物流、Etsy 佣金、关税和 USD 净利润率审计；未获得真实供应商详情页时不得输出采购直达链接。",
-  },
-  validate_opportunity_sourcing: {
-    title: "验证机会货源",
-    skillPath: "skills/etsy_sourcing_finder.skill.md",
-    instruction: "基于前一轮选品/机会报告中的候选方向，进入供应链寻源第二阶段。请把机会目标当成待验证假设，优先用 1688/淘宝以图搜图或中文复合检索对齐真实货源，审计外观、规格、MOQ、采购价、跨境物流、Etsy 佣金、关税和 USD 净利润率；未取得真实供应商详情页时不得输出采购直达链接，并在报告中回写本次货源验证对原机会的支撑或推翻结论。",
-  },
   detect_fulfillment_risk: {
     title: "履约风险扫描",
     skillPath: "skills/etsy_operations_tracker.skill.md",
@@ -239,9 +305,6 @@ const GROWTH_ACTION_CASE_TYPE = {
   rewrite_listing: "listing_conversion",
   scan_competitor_changes: "competitor_watch",
   analyze_review_defects: "listing_conversion",
-  calculate_profit_guardrail: "opportunity_profit",
-  filter_supplier_sources: "supplier_sourcing",
-  validate_opportunity_sourcing: "supplier_sourcing",
   detect_fulfillment_risk: "store_health",
   find_expansion_opportunities: "opportunity_profit",
   explore_platform_trends: "platform_trends",
@@ -1015,7 +1078,7 @@ function buildSkuRows(tracked = [], savedResults = [], events = [], activeShop =
       const nextAction = {
         exposure: "基于真实 SKU 曝光不足，优先重构关键词和类目入口",
         conversion: "基于真实加购率偏低，优先改首图和详情页承接",
-        profit: "真实销量可见，需补利润安全线和寻源降本",
+        profit: "真实销量可见，需补利润安全线、平台扣款和履约成本",
         fulfillment: "真实订单 SKU 进入履约风险观察",
         scale: "真实数据表现可放大，建议扩展变体和相邻关键词",
       }[issue];
@@ -1088,11 +1151,11 @@ function buildOpportunityCards(skuRows = [], events = [], savedResults = []) {
   if (weakProfit) {
     cards.push({
       id: `opp_profit_${weakProfit.id}`,
-      type: "利润/寻源",
+      type: "利润/价格",
       title: `${weakProfit.title} 低于利润安全线`,
-      evidence: `模型毛利线 ${weakProfit.margin}%；适合先测最低促销价，再进入独立寻源降本。`,
+      evidence: `模型毛利线 ${weakProfit.margin}%；先复核售价、促销折扣、平台扣款和履约成本，再决定是否进入独立跨平台选品验证。`,
       impact: "减少卖得越多利润越薄的风险",
-      action: "calculate_profit_guardrail",
+      action: "diagnose_sku_funnel",
       experiment: "利润保护价调价实验",
     });
   }
@@ -1227,7 +1290,7 @@ function buildWorkflowTasks({ skuRows = [], opportunities = [], events = [], rep
 
   skuRows.filter(row => row.issue !== "scale" && row.issue !== "needs_api").slice(0, 6).forEach((row) => {
     const actionId = row.issue === "profit"
-      ? "calculate_profit_guardrail"
+      ? "diagnose_sku_funnel"
       : row.issue === "fulfillment"
         ? "detect_fulfillment_risk"
         : row.issue === "conversion"
@@ -1457,8 +1520,7 @@ function mergeGrowthCasesWithRoots(storedCases = [], tasks = [], reports = [], a
     { type: "competitor_watch", actionId: "scan_competitor_changes", taskKinds: ["competitor_event"] },
     { type: "listing_conversion", actionId: "rewrite_listing", matcher: task => /visual|listing|review|conversion|加购|转化|改版|评论/.test(`${task.actionId || ""} ${task.title || ""} ${task.reason || ""}`) },
     { type: "platform_trends", actionId: "explore_platform_trends", matcher: task => task.kind === "platform_trend" || /platform_trends|trend|趋势|平台|类目|热卖|搜索|需求词/.test(`${task.actionId || ""} ${task.title || ""} ${task.reason || ""}`) },
-    { type: "opportunity_profit", actionId: "find_expansion_opportunities", matcher: task => task.kind === "opportunity" || /profit|expansion|机会|利润|扩品|寻源/.test(`${task.actionId || ""} ${task.title || ""}`) },
-    { type: "supplier_sourcing", actionId: "filter_supplier_sources", matcher: task => task.kind === "supplier_sourcing" || /supplier|sourcing|货源|供应商|1688|采购|寻源|利润账本/.test(`${task.actionId || ""} ${task.title || ""} ${task.reason || ""}`) },
+    { type: "opportunity_profit", actionId: "find_expansion_opportunities", matcher: task => task.kind === "opportunity" || /profit|expansion|机会|利润|扩品/.test(`${task.actionId || ""} ${task.title || ""}`) },
     { type: "experiment_review", actionId: "review_experiment_result", matcher: task => task.kind === "experiment_review" || ["confirmed", "observing", "done"].includes(task.status) },
   ];
 
@@ -1471,8 +1533,7 @@ function mergeGrowthCasesWithRoots(storedCases = [], tasks = [], reports = [], a
       if (root.type === "competitor_watch") return /competitor|optimizer/i.test(skill);
       if (root.type === "listing_conversion") return /listing|review|optimizer/i.test(skill);
       if (root.type === "platform_trends") return report.growthActionId === "explore_platform_trends" || /opportunity|trend|trends/i.test(skill);
-      if (root.type === "opportunity_profit") return /opportunity|sourcing/i.test(skill);
-      if (root.type === "supplier_sourcing") return report.growthActionId === "filter_supplier_sources" || /sourcing/i.test(skill);
+      if (root.type === "opportunity_profit") return /opportunity/i.test(skill);
       if (root.type === "experiment_review") return /operations|tracker/i.test(skill);
       return false;
     });
@@ -1516,7 +1577,7 @@ function buildRootEvidenceStatus(root, { reports = [], events = [], experiments 
   const reportCount = root.report ? 1 : reports.filter((report) => {
     if (!report) return false;
     if (root.id === "platform_trends") return report.growthActionId === "explore_platform_trends" || /trend|opportunity/i.test(report.skillId || "");
-    if (root.id === "supplier_sourcing") return report.growthActionId === "filter_supplier_sources" || /sourcing/i.test(report.skillId || "");
+    if (root.id === "opportunity_profit") return report.growthActionId === "find_expansion_opportunities" || /opportunity/i.test(report.skillId || "");
     return report.growthActionId === root.actionId || String(report.skillId || "").includes(String(root.actionId || ""));
   }).length;
 
@@ -1562,14 +1623,12 @@ function buildRootEvidenceStatus(root, { reports = [], events = [], experiments 
       detail: experiments.length ? "已有实验/观察对象可复盘。" : "还没有已执行动作进入观察窗口。",
     });
   }
-  if (root.id === "platform_trends" || root.id === "supplier_sourcing") {
+  if (root.id === "platform_trends") {
     status.push({
       key: "front_page",
       label: "需前台页面",
       tone: "warn",
-      detail: root.id === "platform_trends"
-        ? "平台趋势最好在 Etsy 搜索、类目、品牌或热卖页面触发，Dashboard 内运行可能缺少页面上下文。"
-        : "货源验证最好从具体 Etsy 商品/机会页面触发，以便读取目标图和规格；Dashboard 内运行可能需要右侧浮窗承接。",
+      detail: "平台趋势最好在 Etsy 搜索、类目、品牌或热卖页面触发，Dashboard 内运行可能缺少页面上下文。",
     });
   }
   return status;
@@ -1621,7 +1680,7 @@ function buildWorkflowRoots({ tasks = [], reports = [], events = [], experiments
       actionId: "explore_platform_trends",
       report: latestReportBy(reports, report => report.growthActionId === "explore_platform_trends" || /opportunity|trend|trends/i.test(report.skillId || "")),
       taskFilter: task => task.kind === "platform_trend" || /platform_trends|trend|趋势|平台|类目|热卖|搜索|需求词/.test(`${task.actionId || ""} ${task.title || ""} ${task.reason || ""}`),
-      narrative: "这里看的是 Etsy 平台上的商品机会和趋势窗口，不等同于本店扩品。它先回答：平台上哪些类目、价格带、关键词和季节需求正在形成机会；通过验证后，才进入机会扩品或供应链利润线。",
+      narrative: "这里看的是 Etsy 平台上的商品机会和趋势窗口，不等同于本店扩品。它先回答：平台上哪些类目、价格带、关键词和季节需求正在形成机会；通过验证后，再由 Codex 的跨平台选品工作流承接供应商验证。",
     },
     {
       id: "opportunity_profit",
@@ -1631,17 +1690,7 @@ function buildWorkflowRoots({ tasks = [], reports = [], events = [], experiments
       actionId: "find_expansion_opportunities",
       report: latestReportBy(reports, report => /opportunity|sourcing/i.test(report.skillId || "")),
       taskFilter: task => task.kind === "opportunity" || /profit|expansion|机会|利润|扩品|寻源/.test(`${task.actionId || ""} ${task.title || ""}`),
-      narrative: "不是孤立选品，而是把已验证 SKU、竞品空位、欧美需求词和供应链利润线变成小批测试工作流。",
-    },
-    {
-      id: "supplier_sourcing",
-      lane: "growth",
-      title: "供应商货源",
-      subtitle: "1688/国内货源、规格一致、USD 利润账本",
-      actionId: "filter_supplier_sources",
-      report: latestReportBy(reports, report => report.growthActionId === "filter_supplier_sources" || /sourcing/i.test(report.skillId || "")),
-      taskFilter: task => task.kind === "supplier_sourcing" || /supplier|sourcing|货源|供应商|1688|采购|寻源|利润账本/.test(`${task.actionId || ""} ${task.title || ""} ${task.reason || ""}`),
-      narrative: "这里不是普通选品，而是把已经值得验证的商品机会进入供应商筛选：同款/相似款匹配、规格一致性、起批量、采购价、跨境物流、平台佣金、关税和美元净利润率都必须过账。",
+      narrative: "不是孤立选品，而是把已验证 SKU、竞品空位和欧美需求词变成小批测试工作流；供应商验证由 Marqel Etsy Control Center 的统一选品链路承接。",
     },
     {
       id: "experiment_review",
@@ -2510,7 +2559,7 @@ function renderGrowthHome() {
         <strong>${escapeHtml(row.title)}</strong>
         <p>${escapeHtml(row.nextAction)}</p>
       </div>
-      <button class="btn btn-outline btn-xs growth-action-btn" data-action="${row.issue === "profit" ? "calculate_profit_guardrail" : row.issue === "fulfillment" ? "detect_fulfillment_risk" : "diagnose_sku_funnel"}" data-sku="${escapeHtml(row.sku)}">诊断</button>
+      <button class="btn btn-outline btn-xs growth-action-btn" data-action="${row.issue === "fulfillment" ? "detect_fulfillment_risk" : "diagnose_sku_funnel"}" data-sku="${escapeHtml(row.sku)}">诊断</button>
     </div>
   `).join("") : `<div class="empty-state">暂无紧急风险。先绑定店铺 API 或添加监控任务后，系统会自动生成今日动作。</div>`;
 
@@ -2644,7 +2693,7 @@ function renderCurrencySettings(ratesInput = null, statusText = "") {
   if (statusEl) {
     const updatedAt = rates.updated_at ? formatLocalTime(rates.updated_at) : "未同步";
     statusEl.innerHTML = `
-      <div>当前用于 Dashboard 快速测算和 AI 寻源财务账本：USD/CNY ${rates.usdToCny.toFixed(4)}，更新：${escapeHtml(updatedAt)}。</div>
+      <div>当前用于 Dashboard 快速测算和 Etsy SKU 财务边界：USD/CNY ${rates.usdToCny.toFixed(4)}，更新：${escapeHtml(updatedAt)}。</div>
       <div>${escapeHtml(statusText || `来源：${rates.source || "default_assumption"}。所有 CNY 成本会先换算为 USD 后参与利润计算。`)}</div>
     `;
   }
@@ -2692,12 +2741,27 @@ function renderSkuWorkbench() {
       <td class="sku-actions">
         <button class="btn btn-outline btn-xs growth-action-btn" data-action="diagnose_sku_funnel" data-sku="${escapeHtml(row.sku)}">诊断</button>
         <button class="btn btn-outline btn-xs growth-action-btn" data-action="rewrite_listing" data-sku="${escapeHtml(row.sku)}">改版</button>
+        <button class="btn btn-outline btn-xs outreach-handoff-btn" data-sku="${escapeHtml(row.sku)}" data-title="${escapeHtml(row.title)}" data-url="${escapeHtml(row.url || "")}" data-next-action="${escapeHtml(row.nextAction)}">推广交接</button>
         <button class="btn btn-primary btn-xs create-exp-btn" data-sku="${escapeHtml(row.sku)}" data-title="${escapeHtml(row.title)}" data-action="${escapeHtml(row.nextAction)}">实验</button>
       </td>
     </tr>
   `).join("");
   body.querySelectorAll(".growth-action-btn").forEach((btn) => {
     btn.addEventListener("click", () => handleGrowthAction(btn.dataset.action, btn.dataset.sku || ""));
+  });
+  body.querySelectorAll(".outreach-handoff-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      try {
+        await createOutreachHandoffFromSku({
+          sku: btn.dataset.sku,
+          title: btn.dataset.title,
+          url: btn.dataset.url,
+          nextAction: btn.dataset.nextAction,
+        });
+      } catch (error) {
+        alert(`推广交接未创建：${error.message}`);
+      }
+    });
   });
   body.querySelectorAll(".create-exp-btn").forEach((btn) => {
     btn.addEventListener("click", () => createGrowthExperiment({
@@ -2817,6 +2881,54 @@ async function createGrowthExperiment({ sku, title, action, metric, source }) {
   openWorkflowPip({
     taskId: (growthRuntimeState.workflowTasks || []).find((task) => task.title.includes(title || "增长实验"))?.id || "",
   });
+}
+
+function downloadJsonFile(filename, data) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+async function createOutreachHandoffFromSku(row = {}) {
+  const tenantId = window.prompt("云端租户 ID（必须与推广服务中的租户一致）", "");
+  if (!tenantId) return;
+  const listingId = window.prompt("Etsy Listing ID（不可使用内部 SKU 代替，除非二者相同）", String(row.sku || ""));
+  if (!listingId) return;
+  const defaultUrl = /^https:\/\/www\.etsy\.com\//.test(row.url || "")
+    ? row.url
+    : `https://www.etsy.com/listing/${encodeURIComponent(listingId)}`;
+  const listingUrl = window.prompt("公开 Etsy Listing URL", defaultUrl);
+  if (!listingUrl) return;
+  const campaignObjective = window.prompt("站外推广目标（例如：验证美国礼品买家需求）", "");
+  if (!campaignObjective) return;
+  const approvedFact = window.prompt("一条已核验、允许在社媒使用的商品事实", "");
+  if (!approvedFact) return;
+  const disclosure = window.prompt("必须披露的关系说明", "利益相关：我正在协助这家 Etsy 店铺。");
+  if (!disclosure) return;
+  const operator = window.prompt("审批人标识（姓名或工作邮箱）", "");
+  if (!operator) return;
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const summary = `将「${row.title || listingId}」交给 Intelligent Outreach 仅用于草稿和人工审批。\n\n商品事实：${approvedFact}\n披露：${disclosure}\n\n此操作不会改动 Etsy 广告预算，也不会发布任何社媒内容。确认已人工审核以上信息？`;
+  if (!window.confirm(summary)) return;
+  const response = await new Promise((resolve) => chrome.runtime.sendMessage({
+    type: "BUILD_ETSY_OUTREACH_HANDOFF",
+    payload: {
+      tenantId,
+      listing: { id: listingId, url: listingUrl, title: row.title || `Etsy Listing ${listingId}`, summary: row.nextAction || "", tags: [] },
+      campaign: { id: `etsy-outreach-${Date.now()}`, objective: campaignObjective, targetRegions: [], allowedChannels: [], expiresAt },
+      claims: { approvedFacts: [approvedFact], doNotClaim: [], mustDisclose: [disclosure] },
+      media: { images: [], assetManifestRefs: [] },
+      approval: { status: "approved", approvedBy: operator, approvedAt: new Date().toISOString(), expiresAt, revoked: false },
+      evidence: { reportIds: [], listingEvidenceRefs: [], freshnessAt: new Date().toISOString() },
+    },
+  }, resolve));
+  if (!response?.ok) throw new Error(response?.error || "无法创建推广交接包。");
+  downloadJsonFile(`etsy-outreach-handoff-${listingId}-${Date.now()}.json`, response.data);
+  alert("已下载推广交接包。请在 Intelligent Outreach 中创建 draft-only Run，并用 promotion-handoff-importer 导入；它仍会要求逐条社媒内容审批。");
 }
 
 async function moveExperiment(id, nextStatus) {
@@ -3079,46 +3191,17 @@ async function handleGrowthAction(actionId, sku = "") {
   }
 }
 
-async function runFollowUpSourcingTask(task, parentReport) {
-  const actionId = "validate_opportunity_sourcing";
-  const parentOutput = normalizeFinalOutput(parentReport?.result);
-  const opportunitySummary = parentOutput?.summary || parentOutput?.overview || "";
-  const validated = Array.isArray(parentOutput?.validated_opportunities) ? parentOutput.validated_opportunities : [];
-  const assumptions = Array.isArray(parentOutput?.assumption_opportunities) ? parentOutput.assumption_opportunities : [];
-  const opportunities = Array.isArray(parentOutput?.data) ? parentOutput.data : [];
-  const targetOpportunity = opportunities.find((item) =>
-    item?.opportunity_id && (validated.includes(item.opportunity_id) || assumptions.includes(item.opportunity_id))
-  ) || opportunities[0];
+function openSourcingHandoffFromReport(task = {}, parentReport = {}) {
+  const target = String(task.target || "").trim();
+  const operationId = String(parentReport?.growthCaseId || parentReport?.raw?.growthCaseId || "").trim();
   const instruction = [
-    `【选品→寻源 第二阶段】请基于前一轮机会报告验证该候选方向的供应链可行性。`,
-    `任务目标：${task.target || ""}`,
-    `任务原因：${task.reason || ""}`,
-    task.expected_output ? `预期产出：${task.expected_output}` : "",
-    Array.isArray(task.required_evidence) && task.required_evidence.length ? `必须补齐的证据：${task.required_evidence.join("；")}` : "",
-    opportunitySummary ? `前一轮报告结论：${opportunitySummary}` : "",
-    targetOpportunity ? `重点验证机会：${targetOpportunity.title || ""}。${targetOpportunity.evidence || ""}` : "",
-    `注意：未取得真实 1688/淘宝供应商详情页前不得输出采购直达链接；如果视觉/文本寻源受阻，必须在报告中明确说明并给出下一步人工补证建议。`,
-  ].filter(Boolean).join("\n");
-  const run = await createGrowthCaseRun(actionId, "", instruction);
-  await refreshAllData();
-  openWorkflowPip({ rootId: GROWTH_ACTION_CASE_TYPE[actionId] || "supplier_sourcing" });
-  try {
-    await persistGrowthRunUpdate(run.caseId, run.id, { status: "running", startedAt: new Date().toISOString() }, { status: "running" });
-    await startDashboardGrowthRun(run);
-    await refreshAllData();
-    openWorkflowPip({ rootId: GROWTH_ACTION_CASE_TYPE[actionId] || "supplier_sourcing" });
-  } catch (err) {
-    const isInterrupted = /已保存断点|后台连接中断/.test(err.message);
-    const fallbackStatus = isInterrupted ? "interrupted" : /当前环境不支持|Receiving end|无法获取当前活动|无法注入|content/i.test(err.message) ? "needs_frontend_context" : "failed";
-    await persistGrowthRunUpdate(run.caseId, run.id, {
-      status: fallbackStatus,
-      error: err.message,
-      ...(isInterrupted ? { interruptedAt: new Date().toISOString() } : { failedAt: new Date().toISOString() }),
-    }, { status: fallbackStatus });
-    await refreshAllData();
-    openWorkflowPip({ rootId: GROWTH_ACTION_CASE_TYPE[actionId] || "supplier_sourcing" });
-    alert(`已创建「${run.title}」增长案件，但当前无法在 dashboard 内直接完成运行。\n\n原因：${err.message}\n\n请打开对应 Etsy 页面，右侧浮窗会继续承接该动作。`);
-  }
+    "$cross-border-sourcing-orchestrator",
+    target ? `目标：${target}` : "目标：使用当前机会报告中的候选方向",
+    operationId ? `关联案件：${operationId}` : "关联案件：请由 Orchestrator 创建 operation_id",
+  ].join("\n");
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(instruction).catch(() => {});
+  chrome.tabs.create({ url: "https://www.marqel.shop/operations.html" });
+  alert(`供应商筛选已迁移到统一跨平台选品工作流。\n\n请在 Codex 对话中调用 $cross-border-sourcing-orchestrator。\n${target ? `目标：${target}\n` : ""}已打开 Marqel Control Center；平台验证码仍需在普通 Chrome 中人工处理。`);
 }
 
 function renderManualFunnelForm() {
@@ -3260,7 +3343,7 @@ function renderPipelineTable(savedResults = []) {
     body.innerHTML = `
       <tr>
         <td colspan="9" class="empty-cell">
-          <div class="empty-state">暂无对齐货源，请在 Etsy 详情页开启“1688寻源与套利测算”AI技能。</div>
+          <div class="empty-state">暂无历史供应商报告。新的 1688/淘宝任务请在 Codex 调用 $cross-border-sourcing-orchestrator，并在 Marqel Control Center 查看。</div>
         </td>
       </tr>
     `;
@@ -3305,7 +3388,7 @@ function renderPipelineTable(savedResults = []) {
   body.innerHTML = rowsHtml || `
     <tr>
       <td colspan="9" class="empty-cell">
-        <div class="empty-state">暂无对齐货源，请在 Etsy 详情页开启“1688寻源与套利测算”AI技能。</div>
+        <div class="empty-state">暂无历史供应商报告。新的 1688/淘宝任务请在 Codex 调用 $cross-border-sourcing-orchestrator，并在 Marqel Control Center 查看。</div>
       </td>
     </tr>
   `;
@@ -4051,11 +4134,12 @@ function renderReportsList(monitorReports = [], savedResults = []) {
       : [];
     const followUpHtml = sourcingTasks.length
       ? `<div class="report-follow-up-bar" style="margin:12px 0;padding:12px;background:var(--bg2);border-radius:8px;border:1px solid var(--border);">
-          <div style="font-weight:600;margin-bottom:8px;font-size:12px;">选品→寻源 第二阶段</div>
+          <div style="font-weight:600;margin-bottom:8px;font-size:12px;">选品→供应商筛选（已迁移）</div>
+          <p style="margin:0 0 8px 0;color:var(--text2);font-size:12px;line-height:1.5;">供应商筛选不再由 Etsy Growth Agent 直接执行，请转到 Codex 的统一跨平台选品工作流；历史报告仍可只读查看。</p>
           <div style="display:flex;flex-wrap:wrap;gap:8px;">
             ${sourcingTasks.map((task, idx) => `
-              <button class="btn btn-primary btn-sm follow-up-sourcing-btn" data-task-index="${idx}" data-report-index="${index}">
-                验证货源：${escapeHtml(String(task.target || "").slice(0, 24))}${String(task.target || "").length > 24 ? "…" : ""}
+              <button class="btn btn-primary btn-sm follow-up-sourcing-handoff-btn" data-task-index="${idx}" data-report-index="${index}">
+                转交统一选品：${escapeHtml(String(task.target || "").slice(0, 24))}${String(task.target || "").length > 24 ? "…" : ""}
               </button>
             `).join("")}
           </div>
@@ -4089,13 +4173,13 @@ function renderReportsList(monitorReports = [], savedResults = []) {
     viewer.querySelector(".report-pdf-current")?.addEventListener("click", () => downloadReportPdf(rep));
     viewer.querySelector(".report-evidence-current")?.addEventListener("click", () => downloadEvidenceBundle(rep));
     viewer.querySelector(".report-delete-current")?.addEventListener("click", () => deleteReportEntry(rep));
-    viewer.querySelectorAll(".follow-up-sourcing-btn").forEach((btn) => {
+    viewer.querySelectorAll(".follow-up-sourcing-handoff-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         const taskIdx = Number(btn.dataset.taskIndex);
         const reportIdx = Number(btn.dataset.reportIndex);
         const task = list[reportIdx]?.followUpTasks?.filter((t) => t?.task_type === "sourcing_validation")[taskIdx];
         if (task && list[reportIdx]?.raw) {
-          runFollowUpSourcingTask(task, list[reportIdx].raw);
+          openSourcingHandoffFromReport(task, list[reportIdx].raw);
         }
       });
     });

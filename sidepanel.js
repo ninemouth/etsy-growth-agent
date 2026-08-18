@@ -24,7 +24,7 @@ const SESSION_HISTORY_CATEGORIES = [
   { id: "listing", label: "Listing" },
   { id: "review", label: "评论" },
   { id: "compliance", label: "合规" },
-  { id: "sourcing", label: "货源" },
+  { id: "sourcing", label: "已迁移" },
   { id: "operations", label: "运营" },
 ];
 const SESSION_HISTORY_ACTION_CATEGORY = {
@@ -106,21 +106,6 @@ const GROWTH_ACTIONS = {
     skillId: "etsy_review_analyzer",
     instruction: "分析欧美买家评论与退换货风险，归因质量、包装、说明、规格、物流和预期差距，并生成产品改良任务。",
   },
-  calculate_profit_guardrail: {
-    label: "利润安全线",
-    skillId: "etsy_sourcing_finder",
-    instruction: "测算当前 Etsy 商品的建议售价、最低促销价、利润保护价、发货资料 成本边界和是否需要独立寻源降本。",
-  },
-  filter_supplier_sources: {
-    label: "货源筛选",
-    skillId: "etsy_sourcing_finder",
-    instruction: "基于当前 Etsy 商品、候选扩品方向或平台趋势机会筛选国内供应商货源。请重点验证同款/相似款图片匹配、规格一致、起批量、采购价、跨境物流、Etsy 佣金、关税和 USD 净利润率；未获得真实供应商详情页时不得输出采购直达链接。",
-  },
-  validate_opportunity_sourcing: {
-    label: "验证机会货源",
-    skillId: "etsy_sourcing_finder",
-    instruction: "基于前一轮选品/机会报告中的候选方向，进入供应链寻源第二阶段。请把机会目标当成待验证假设，优先用 1688/淘宝以图搜图或中文复合检索对齐真实货源，审计外观、规格、MOQ、采购价、跨境物流、Etsy 佣金、关税和 USD 净利润率；未取得真实供应商详情页时不得输出采购直达链接，并在报告中回写本次货源验证对原机会的支撑或推翻结论。",
-  },
   detect_fulfillment_risk: {
     label: "履约风险",
     skillId: "etsy_operations_tracker",
@@ -150,9 +135,6 @@ const GROWTH_ACTION_SKILL_PATHS = {
   diagnose_visual_conversion: "skills/etsy_global_shop_optimizer.skill.md",
   scan_competitor_changes: "skills/etsy_global_shop_optimizer.skill.md",
   analyze_review_defects: "skills/etsy_review_analyzer.skill.md",
-  calculate_profit_guardrail: "skills/etsy_sourcing_finder.skill.md",
-  filter_supplier_sources: "skills/etsy_sourcing_finder.skill.md",
-  validate_opportunity_sourcing: "skills/etsy_sourcing_finder.skill.md",
   detect_fulfillment_risk: "skills/etsy_operations_tracker.skill.md",
   find_expansion_opportunities: "skills/etsy_product_opportunity_explorer.skill.md",
   explore_platform_trends: "skills/etsy_platform_trends.skill.md",
@@ -609,7 +591,6 @@ function isImageSourcingSkill(skill) {
   return !!skill && [
     "domestic_sourcing_finder",
     "tiktok_shop_fastmoss_analyzer",
-    "etsy_sourcing_finder"
   ].includes(skill.id);
 }
 
@@ -734,6 +715,13 @@ async function runSkill() {
     addLog("start", "🚀", activeGrowthAction ? `执行增长动作: ${activeGrowthAction.label}` : `执行 Skill: ${selectedSkill.name}`);
 
   try {
+    const authResponse = await chrome.runtime.sendMessage({ type: "AUTH_STATUS" });
+    if (!authResponse?.ok || !authResponse.session) {
+      throw new Error("请先在 Etsy Growth Agent 的 Dashboard 中完成 Marqel 登录；开源插件保留本地模型配置，但未鉴权时不会执行任务。");
+    }
+    if (authResponse.session.configStatus === "sync_failed") {
+      addLog("warning", "⚠️", "Marqel 配置同步暂时失败，将继续使用插件本地配置；请稍后从 Dashboard 重新同步。");
+    }
     // Check API key first
     const settings = await new Promise((r) => chrome.storage.local.get(["apiKey", "llmModel", "llmProfiles"], r));
     const hasConfiguredProfile = Array.isArray(settings.llmProfiles) && settings.llmProfiles.some((profile) => profile?.enabled !== false && profile?.apiKey && profile?.model);
@@ -842,6 +830,18 @@ async function runSkill() {
           addLog("info", "↩", message.resumeHint);
         }
         showError(message.error);
+        cleanupPort();
+      } else if (message.type === "SOURCING_HANDOFF_REQUIRED") {
+        if (typeof removeCaptchaAlertBanner === "function") removeCaptchaAlertBanner();
+        const handoff = message.result || {};
+        const nextActions = Array.isArray(handoff.nextActions) ? handoff.nextActions : [];
+        addLog("warning", "↗", handoff.message || "供应商筛选已交给统一跨平台工作流。");
+        nextActions.forEach((item) => addLog("info", "•", item));
+        showStatusNotice([
+          handoff.message || "供应商筛选已迁移。",
+          `Codex Skill：$${handoff.destination?.orchestratorSkill || "cross-border-sourcing-orchestrator"}`,
+          `Control Center：${handoff.destination?.controlCenterUrl || "https://www.marqel.shop/operations.html"}`,
+        ].join("\n"));
         cleanupPort();
       } else if (message.type === "CLARIFICATION_REQUIRED") {
         if (typeof removeCaptchaAlertBanner === "function") removeCaptchaAlertBanner();
@@ -1278,19 +1278,18 @@ function renderReport(resultObj) {
   const followUpTasks = Array.isArray(resultObj.follow_up_tasks) ? resultObj.follow_up_tasks : [];
   const sourcingTasks = followUpTasks.filter((task) => task?.task_type === "sourcing_validation");
   if (sourcingTasks.length) {
-    const typeLabels = {
-      trend_validation: "趋势复核",
-      competitor_detail: "竞品详情补采",
-      compliance_precheck: "合规预审",
-      sourcing_validation: "供应商可行性验证",
-      listing_experiment: "Listing 实验",
-    };
-    let tasksHtml = `<div style="margin:10px 0;padding:10px;background:var(--bg3);border-radius:6px;"><h3 style="margin:0 0 8px 0;font-size:1.1em;color:var(--text);">选品 → 寻源 第二阶段</h3><div style="display:flex;flex-wrap:wrap;gap:8px;">`;
-    sourcingTasks.forEach((task, idx) => {
-      const label = typeLabels[task.task_type] || task.task_type || "后续任务";
-      tasksHtml += `<button class="btn btn-primary btn-sm sidepanel-follow-up-sourcing-btn" data-task-index="${idx}" style="font-size:12px;padding:6px 10px;">${escapeHtml(label)}：${escapeHtml(String(task.target || "").slice(0, 20))}${String(task.target || "").length > 20 ? "…" : ""}</button>`;
-    });
-    tasksHtml += `</div></div>`;
+    const targetSummary = sourcingTasks
+      .map((task) => String(task.target || "").trim())
+      .filter(Boolean)
+      .slice(0, 2)
+      .join("；");
+    const targetText = targetSummary ? `待交接目标：${targetSummary}` : "该机会报告包含供应商可行性验证任务。";
+    const tasksHtml = `<div style="margin:10px 0;padding:10px;background:var(--bg3);border-radius:6px;">
+      <h3 style="margin:0 0 8px 0;font-size:1.1em;color:var(--text);">选品 → 供应商筛选（已迁移）</h3>
+      <p style="margin:0 0 8px 0;color:var(--text2);line-height:1.5;">${escapeHtml(targetText)} 1688/淘宝供应商筛选现在由 Codex 的统一跨平台工作流执行，Etsy Growth Agent 不再直接启动旧寻源 Agent。</p>
+      <code style="display:block;padding:8px;background:var(--bg2);border-radius:5px;color:var(--text);">$cross-border-sourcing-orchestrator</code>
+      <button class="btn btn-primary btn-sm sidepanel-open-sourcing-control-center-btn" style="font-size:12px;padding:6px 10px;margin-top:8px;">打开 Control Center</button>
+    </div>`;
     html += tasksHtml;
   }
   return html;
@@ -1301,22 +1300,10 @@ function attachSidepanelFollowUpListeners(reportContainer, resultObj) {
     (task) => task?.task_type === "sourcing_validation"
   );
   if (!sourcingTasks.length || !reportContainer) return;
-  reportContainer.querySelectorAll(".sidepanel-follow-up-sourcing-btn").forEach((btn) => {
+  reportContainer.querySelectorAll(".sidepanel-open-sourcing-control-center-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const idx = Number(btn.dataset.taskIndex);
-      const task = sourcingTasks[idx];
-      if (!task) return;
-      activateGrowthAction("validate_opportunity_sourcing");
-      const extra = [
-        `【选品→寻源 第二阶段】`,
-        `任务目标：${task.target || ""}`,
-        `任务原因：${task.reason || ""}`,
-        task.expected_output ? `预期产出：${task.expected_output}` : "",
-        Array.isArray(task.required_evidence) && task.required_evidence.length ? `必须补齐的证据：${task.required_evidence.join("；")}` : "",
-      ].filter(Boolean).join("\n");
-      const current = $("instruction")?.value || "";
-      $("instruction").value = current ? `${current}\n\n${extra}` : extra;
-      addLog("info", "🚀", "已载入选品→寻源第二阶段任务，请确认指令后点击运行。");
+      chrome.tabs.create({ url: "https://www.marqel.shop/operations.html" });
+      addLog("info", "↗", `已打开统一 Control Center；请在 Codex 对话中调用 $cross-border-sourcing-orchestrator。待交接任务数：${sourcingTasks.length}`);
     });
   });
 }
@@ -1658,13 +1645,16 @@ async function loadLibrary() {
 // ── Settings ──
 async function loadSettings() {
   const s = await new Promise((r) =>
-    chrome.storage.local.get(["apiKey", "llmProvider", "llmModel", "llmFallbackModels", "imageGenerationModel", "llmBaseUrl", "temperature", "helium10ApiKey", "sellerSpriteApiKey", "fastmossApiKey"], r)
+    chrome.storage.local.get(["apiKey", "llmProvider", "llmModel", "llmFallbackModels", "imageGenerationModel", "imageProvider", "imageBaseUrl", "imageApiKey", "llmBaseUrl", "temperature", "helium10ApiKey", "sellerSpriteApiKey", "fastmossApiKey"], r)
   );
 
   if (s.llmProvider) $("llmProvider").value = s.llmProvider;
   if (s.llmModel) $("llmModel").value = s.llmModel;
   if (s.llmFallbackModels) $("llmFallbackModels").value = Array.isArray(s.llmFallbackModels) ? s.llmFallbackModels.join("\n") : s.llmFallbackModels;
   if (s.imageGenerationModel) $("imageGenerationModel").value = s.imageGenerationModel;
+  if (s.imageProvider) $("imageProvider").value = s.imageProvider;
+  if (s.imageBaseUrl) $("imageBaseUrl").value = s.imageBaseUrl;
+  if (s.imageApiKey) $("imageApiKey").value = s.imageApiKey;
   if (s.apiKey) $("apiKey").value = s.apiKey;
   if (s.llmBaseUrl) $("llmBaseUrl").value = s.llmBaseUrl;
   if (s.temperature !== undefined) {
@@ -1829,6 +1819,9 @@ async function saveSettings() {
   const llmModel = $("llmModel").value.trim();
   const llmFallbackModels = $("llmFallbackModels").value.trim();
   const imageGenerationModel = $("imageGenerationModel").value.trim();
+  const imageProvider = $("imageProvider").value;
+  const imageBaseUrl = $("imageBaseUrl").value.trim();
+  const imageApiKey = $("imageApiKey").value.trim();
   const llmBaseUrl = $("llmBaseUrl").value.trim();
   const temperature = $("temperature").value;
   const helium10ApiKey = $("helium10ApiKey").value.trim();
@@ -1851,6 +1844,9 @@ async function saveSettings() {
       llmModel, 
       llmFallbackModels,
       imageGenerationModel,
+      imageProvider,
+      imageBaseUrl,
+      imageApiKey,
       llmBaseUrl, 
       temperature,
       helium10ApiKey,
@@ -1860,6 +1856,7 @@ async function saveSettings() {
   );
 
   $("apiKey").type = "password";
+  $("imageApiKey").type = "password";
   $("helium10ApiKey").type = "password";
   $("sellerSpriteApiKey").type = "password";
   $("fastmossApiKey").type = "password";

@@ -8,6 +8,7 @@ const root = process.cwd();
 const distDir = path.join(root, "dist");
 const packageName = `etsy-growth-agent-${manifest.version}.zip`;
 const outputPath = path.join(distDir, packageName);
+const excludedLegacyFiles = ["skills/etsy_sourcing_finder.skill.md"];
 
 const include = [
   "_locales",
@@ -34,7 +35,7 @@ const include = [
 await mkdir(distDir, { recursive: true });
 if (existsSync(outputPath)) await rm(outputPath);
 
-const result = spawnSync("zip", ["-r", outputPath, ...include], {
+const result = spawnSync("zip", ["-r", outputPath, ...include, "-x", ...excludedLegacyFiles], {
   cwd: root,
   stdio: "inherit",
 });

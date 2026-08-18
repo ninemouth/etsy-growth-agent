@@ -25,6 +25,7 @@ import {
 import { cleanupOwnedTabs, protectWorkflowTab } from './modules/browserSessionManager.js';
 import { getArtifactDataUrl } from './modules/artifactStore.js';
 import { buildEvidenceBundle } from './modules/evidenceBundle.js';
+import { buildEtsyOutreachHandoff } from './modules/etsyCampaignAdapter.js';
 import { summarizeEvidenceQuality } from './modules/evidenceQuality.js';
 import {
   appendTaskLog,
@@ -48,6 +49,43 @@ import {
   shouldClarifyResearchScope,
 } from './modules/researchScope.js';
 import { getCurrencyRates, saveCurrencyRates } from './modules/currencyRates.js';
+import { getActiveSession, getPendingDeviceAuthorization, pollDeviceAuthorization, requireActiveSession, signOut, startDeviceAuthorization, syncClientConfig } from './modules/controlCenterAuth.js';
+import { buildCrossBorderSourcingHandoff, isCrossBorderSourcingRequest } from './modules/crossBorderSourcingHandoff.js';
+
+function clientConfigSummary(config = null) {
+  if (!config) return null;
+  return {
+    revision: Number(config.revision || 0),
+    llmConfigured: Boolean(config.llm?.apiKey),
+    imageConfigured: Boolean(config.image?.apiKey),
+    multimodalEnabled: config.interaction?.multimodalEnabled !== false,
+  };
+}
+
+function clientAuthSessionSummary(session = null) {
+  if (!session) return null;
+  return {
+    user: session.user,
+    expiresAt: session.expiresAt,
+    authVersion: Number(session.authVersion || 2),
+    clientId: session.clientId,
+    deviceId: session.deviceId,
+    configStatus: session.configStatus,
+    config: clientConfigSummary(session.config),
+    controlCenterOrigin: session.controlCenterOrigin,
+  };
+}
+
+function clientPendingDeviceSummary(pending = null) {
+  if (!pending) return null;
+  return {
+    userCode: pending.userCode,
+    expiresAt: pending.expiresAt,
+    intervalSeconds: Number(pending.intervalSeconds || 5),
+    clientType: pending.clientType,
+    clientId: pending.clientId,
+  };
+}
 
 // ── Keep Service Worker Alive in MV3 ──
 // Calling any Chrome API resets the 30-second idle timer in Manifest V3.
@@ -60,6 +98,7 @@ setInterval(() => {
 
 let activeWorkflowRuns = 0;
 const TASK_LOG_RETENTION_ALARM = "etsy_task_log_retention";
+const DEVICE_AUTH_ALARM = "marqel_device_auth_poll";
 
 function logTaskEvent({ workflowId = "", sessionId = "", skillId = "", severity = "info", category = "workflow", event = "event", message = "", context = {} } = {}) {
   appendTaskLog({ workflowId, sessionId, skillId, severity, category, event, message, context })
@@ -109,7 +148,6 @@ async function loadSkill(skillPath) {
 const ETSY_SKILL_PATHS = new Set([
   "skills/etsy_product_opportunity_explorer.skill.md",
   "skills/etsy_platform_trends.skill.md",
-  "skills/etsy_sourcing_finder.skill.md",
   "skills/etsy_global_shop_optimizer.skill.md",
   "skills/etsy_operations_tracker.skill.md",
   "skills/etsy_listing_generator.skill.md",
@@ -129,11 +167,8 @@ const GROWTH_ACTION_SKILL_MAP = {
   diagnose_visual_conversion: ["skills/etsy_global_shop_optimizer.skill.md", "skills/etsy_listing_generator.skill.md"],
   scan_competitor_changes: ["skills/etsy_global_shop_optimizer.skill.md"],
   analyze_review_defects: ["skills/etsy_review_analyzer.skill.md"],
-  calculate_profit_guardrail: ["skills/etsy_sourcing_finder.skill.md"],
-  filter_supplier_sources: ["skills/etsy_sourcing_finder.skill.md"],
   detect_fulfillment_risk: ["skills/etsy_operations_tracker.skill.md"],
   find_expansion_opportunities: ["skills/etsy_product_opportunity_explorer.skill.md"],
-  validate_opportunity_sourcing: ["skills/etsy_sourcing_finder.skill.md"],
   explore_platform_trends: ["skills/etsy_platform_trends.skill.md"],
   create_growth_experiment: ["skills/etsy_operations_tracker.skill.md"],
   review_experiment_result: ["skills/etsy_operations_tracker.skill.md"],
@@ -255,10 +290,6 @@ async function dispatchEtsySkills(userInstruction, pageContext = {}) {
     pushUnique(matched, "skills/etsy_product_opportunity_explorer.skill.md");
   }
 
-  if (hasExplicitSourcingIntent) {
-    pushUnique(matched, "skills/etsy_sourcing_finder.skill.md");
-  }
-
   if (!hasShopOptimizationIntent && /etsy.*(店铺|卖家|运营|转化|流量|加购|整改|abc)|listing\s*诊断|标题诊断|主图诊断/.test(inst)) {
     pushUnique(matched, "skills/etsy_global_shop_optimizer.skill.md");
   }
@@ -279,20 +310,19 @@ async function dispatchEtsySkills(userInstruction, pageContext = {}) {
         const classificationPrompt = [
         {
           role: "system",
-          content: `你是一个 Etsy 跨境电商运营智能路由器。请根据用户的输入需求，从以下 11 个专有 AI 技能路径中选择所有最相关的技能路径：
+        content: `你是一个 Etsy 跨境电商运营智能路由器。请根据用户的输入需求，从以下 10 个专有 AI 技能路径中选择所有最相关的技能路径：
 1. "skills/etsy_product_opportunity_explorer.skill.md" (Etsy选品、类目需求分析、合规性风险审计)
-2. "skills/etsy_sourcing_finder.skill.md" (1688货源开发、美元跨境利润套利测算、运费关税核算)
-3. "skills/etsy_global_shop_optimizer.skill.md" (Etsy店铺经营诊断、自营 listings/订单/发货资料对账、ABC分级优化)
-4. "skills/etsy_operations_tracker.skill.md" (监控数据、对比优化阶段、流量曝光转化效果)
-5. "skills/etsy_listing_generator.skill.md" (英文 SEO Title/Description 商品详情文案生成)
-6. "skills/etsy_review_analyzer.skill.md" (买家原声差评剖析、退换货与商品缺陷分析)
-7. "skills/etsy_compliance_auditor.skill.md" (Etsy 商品发布前合规、IP、产品安全与目的地法规审查)
-8. "skills/etsy_keyword_analysis.skill.md" (Etsy 站内搜索词、买家意图和标签证据分析)
-9. "skills/etsy_platform_trends.skill.md" (Etsy 平台公开搜索、Google Search/Trends 和趋势机会分析)
-10. "skills/etsy_event_driven_trend_radar.skill.md" (Etsy 事件驱动型季节性/突发事件选品与趋势机会雷达)
-11. "skills/etsy_crossborder_explorer.skill.md" (Amazon/Etsy/Temu/eBay/Shopee 多平台跨境出海趋势与产品蓝图探索)
+2. "skills/etsy_global_shop_optimizer.skill.md" (Etsy店铺经营诊断、自营 listings/订单/发货资料对账、ABC分级优化)
+3. "skills/etsy_operations_tracker.skill.md" (监控数据、对比优化阶段、流量曝光转化效果)
+4. "skills/etsy_listing_generator.skill.md" (英文 SEO Title/Description 商品详情文案生成)
+5. "skills/etsy_review_analyzer.skill.md" (买家原声差评剖析、退换货与商品缺陷分析)
+6. "skills/etsy_compliance_auditor.skill.md" (Etsy 商品发布前合规、IP、产品安全与目的地法规审查)
+7. "skills/etsy_keyword_analysis.skill.md" (Etsy 站内搜索词、买家意图和标签证据分析)
+8. "skills/etsy_platform_trends.skill.md" (Etsy 平台公开搜索、Google Search/Trends 和趋势机会分析)
+9. "skills/etsy_event_driven_trend_radar.skill.md" (Etsy 事件驱动型季节性/突发事件选品与趋势机会雷达)
+10. "skills/etsy_crossborder_explorer.skill.md" (Amazon/Etsy/Temu/eBay/Shopee 多平台跨境出海趋势与产品蓝图探索)
 
-请直接输出一个包含路径字符串的 JSON 数组（例如：["skills/etsy_sourcing_finder.skill.md"]），不要包含任何其他说明字符，格式必须是标准的 JSON 数组。`
+请直接输出一个包含路径字符串的 JSON 数组，不要包含任何其他说明字符，格式必须是标准的 JSON 数组。供应商筛选、1688/淘宝和采购利润核算不属于本插件的活动 Skill；这类请求由后台交接边界处理。`
         },
         {
           role: "user",
@@ -368,6 +398,37 @@ async function exportEvidenceBundle(reportId) {
   };
 }
 
+const ETSY_OUTREACH_HANDOFFS_KEY = "etsyOutreachHandoffs";
+
+async function buildAndStoreEtsyOutreachHandoff(payload = {}) {
+  const storage = await new Promise((resolve) => chrome.storage.local.get([
+    ETSY_OUTREACH_HANDOFFS_KEY,
+    "activeShopId",
+    "etsyShops",
+  ], resolve));
+  const activeShop = (storage.etsyShops || []).find((shop) =>
+    shop.id === storage.activeShopId || shop.shopId === storage.activeShopId
+  ) || {};
+  const handoff = buildEtsyOutreachHandoff({
+    ...payload,
+    shop: {
+      id: activeShop.shopId || activeShop.id || "",
+      name: activeShop.name || "",
+      ...(payload.shop || {}),
+    },
+  });
+  const existing = storage[ETSY_OUTREACH_HANDOFFS_KEY] || [];
+  const next = [handoff, ...existing.filter((item) => item.handoff_id !== handoff.handoff_id)].slice(0, 100);
+  await new Promise((resolve) => chrome.storage.local.set({ [ETSY_OUTREACH_HANDOFFS_KEY]: next }, resolve));
+  logTaskEvent({
+    category: "campaign",
+    event: "outreach_handoff_created",
+    message: "Created approved Etsy campaign handoff for downstream promotion planning.",
+    context: { handoffId: handoff.handoff_id, campaignId: handoff.campaign.id, listingId: handoff.source.listing_id },
+  });
+  return handoff;
+}
+
 async function listSkills() {
   const knownSkills = [
     {
@@ -383,13 +444,6 @@ async function listSkills() {
       name: "Etsy 平台趋势与公开需求研究专家",
       description: "基于 Etsy 搜索、Google Search、Google Trends 和公开竞品页面分析平台级需求窗口，不把自营 API 数据冒充平台大盘",
       icon: "📊",
-    },
-    {
-      id: "etsy_sourcing_finder",
-      path: "skills/etsy_sourcing_finder.skill.md",
-      name: "Etsy ➔ 1688 跨境选品供应链与套利审计专家 (Auto)",
-      description: "自动对齐国内 1688 货源，精确核算Etsy 跨境国际段运费（Etsy 自发货）、关税及平台扣款，输出精确美元利润账本",
-      icon: "💵",
     },
     {
       id: "etsy_global_shop_optimizer",
@@ -510,11 +564,9 @@ function requiresComplianceGate({ message = {}, matchedSkills = [], pageContext 
   if (skills.includes("etsy_compliance_auditor") || actionId === "audit_compliance") return false;
   const actionRequiresGate = [
     "rewrite_listing",
-    "filter_supplier_sources",
-    "calculate_profit_guardrail",
     "find_expansion_opportunities",
   ].includes(actionId);
-  const skillRequiresGate = /etsy_listing_generator|etsy_sourcing_finder/.test(skills);
+  const skillRequiresGate = /etsy_listing_generator/.test(skills);
   return (actionRequiresGate || skillRequiresGate) && isComplianceSensitiveContext(pageContext, message.userInstruction);
 }
 
@@ -788,6 +840,27 @@ chrome.runtime.onConnect.addListener((port) => {
       }
 
       if (message.type === "RUN_SKILL") {
+        try {
+          const session = await getActiveSession({ revalidate: true });
+          if (!session) throw new Error("请先在 Etsy Growth Agent Dashboard 完成 Marqel 登录；未鉴权时不会执行任何 Agent workflow。");
+        } catch (error) {
+          try { port.postMessage({ type: "ERROR", error: error.message, errorCode: "AUTH_REQUIRED", resumable: false }); } catch (_) {}
+          return;
+        }
+        if (isCrossBorderSourcingRequest({
+          actionId: message.growthActionId,
+          skillPath: message.skillPath,
+          userInstruction: message.userInstruction,
+        })) {
+          port.postMessage({
+            type: "SOURCING_HANDOFF_REQUIRED",
+            result: buildCrossBorderSourcingHandoff({
+              actionId: message.growthActionId,
+              userInstruction: message.userInstruction,
+            }),
+          });
+          return;
+        }
         if (runInFlight) {
           try {
             port.postMessage(buildWorkflowRunningPayload({
@@ -1020,17 +1093,6 @@ chrome.runtime.onConnect.addListener((port) => {
               message: `🤖 [AI 智脑分流] 自动分析意图，调集底层运营能力: ${matchedNames.join(" + ")}`
             }
           });
-
-          if (message.growthActionId === "validate_opportunity_sourcing") {
-            port.postMessage({
-              type: "PROGRESS",
-              data: {
-                type: "thinking",
-                step: 0,
-                message: "[阶段 2：供应链寻源] 已承接前一轮选品机会，开始验证真实 1688/淘宝货源与跨境利润账本。",
-              }
-            });
-          }
 
           // Combine the system prompts of all matched skills
           let combinedSkillsMarkdown = baseMarkdown ? `${baseMarkdown}\n\n` : "";
@@ -1289,6 +1351,46 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "AUTH_LOGIN") {
+    startDeviceAuthorization()
+      .then((result) => sendResponse({ ok: true, result }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "AUTH_DEVICE_START") {
+    startDeviceAuthorization()
+      .then((result) => sendResponse({ ok: true, result }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "AUTH_DEVICE_POLL") {
+    pollDeviceAuthorization()
+      .then((result) => sendResponse({ ok: true, result }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "AUTH_STATUS") {
+    getActiveSession({ revalidate: true })
+      .then(async (session) => sendResponse({ ok: true, session: clientAuthSessionSummary(session), pendingDevice: clientPendingDeviceSummary(await getPendingDeviceAuthorization()) }))
+      .catch((err) => sendResponse({ ok: false, error: err.message, session: null }));
+    return true;
+  }
+
+  if (message.type === "AUTH_LOGOUT") {
+    signOut().then(() => sendResponse({ ok: true })).catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "AUTH_SYNC_CONFIG") {
+    syncClientConfig()
+      .then((result) => sendResponse({ ok: true, result: { status: result.status, targetId: result.targetId, revision: result.config?.revision || 0 } }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
   if (message.type === "LIST_SKILLS") {
     listSkills().then(sendResponse).catch((err) => {
       sendResponse({ ok: false, error: err.message });
@@ -1322,6 +1424,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     exportEvidenceBundle(message.id || message.reportId)
       .then((data) => sendResponse({ ok: true, data }))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "BUILD_ETSY_OUTREACH_HANDOFF") {
+    requireActiveSession()
+      .then(() => buildAndStoreEtsyOutreachHandoff(message.payload || {}))
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "LIST_ETSY_OUTREACH_HANDOFFS") {
+    chrome.storage.local.get([ETSY_OUTREACH_HANDOFFS_KEY], (data) => {
+      sendResponse({ ok: true, data: data[ETSY_OUTREACH_HANDOFFS_KEY] || [] });
+    });
     return true;
   }
 
@@ -1558,6 +1675,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ── Alarms Listener for Scheduled Background Monitoring Checks ──
 chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === DEVICE_AUTH_ALARM) {
+    try { await pollDeviceAuthorization(); } catch { /* Dashboard exposes the actionable error on the next explicit check. */ }
+    return;
+  }
   if (alarm.name === TASK_LOG_RETENTION_ALARM) {
     const result = await pruneTaskLogs(TASK_LOG_RETENTION);
     logTaskEvent({
@@ -1770,6 +1891,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 chrome.runtime.onInstalled.addListener(() => {
   ensureUpdateAlarm().catch((err) => console.warn("Failed to initialize update alarm:", err.message));
   ensureTaskLogRetentionAlarm().catch((err) => console.warn("Failed to initialize task log retention:", err.message));
+  chrome.alarms.create(DEVICE_AUTH_ALARM, { periodInMinutes: 1 });
   chrome.storage.local.get(["llmProvider"], (data) => {
     if (!data.llmProvider) {
       chrome.storage.local.set({
@@ -1785,6 +1907,7 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 ensureTaskLogRetentionAlarm().catch((err) => console.warn("Failed to run task log retention startup check:", err.message));
+chrome.alarms.create(DEVICE_AUTH_ALARM, { periodInMinutes: 1 });
 
 chrome.runtime.onUpdateAvailable.addListener((details) => {
   markRuntimeUpdateAvailable(details)

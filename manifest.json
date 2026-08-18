@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Etsy Growth Agent",
-  "version": "1.1.0",
-  "description": "针对 Etsy 平台的智能跨境电商运营与选品套利工具。",
+  "name": "Etsy 运营增长助手",
+  "version": "1.2.0",
+  "description": "针对 Etsy 平台的智能店铺运营、Listing 改版、趋势研究与 Marqel 订阅鉴权工具。",
   "default_locale": "zh_CN",
   "permissions": [
     "activeTab",
@@ -12,7 +12,7 @@
     "debugger",
     "alarms"
   ],
-  "host_permissions": ["<all_urls>"],
+  "host_permissions": ["<all_urls>", "https://www.marqel.shop/*"],
   "background": {
     "service_worker": "background.js",
     "type": "module"
@@ -35,8 +35,7 @@
       "matches": [
         "*://www.etsy.com/*",
         "*://*.etsy.com/*",
-        "*://etsy.com/*",
-        "*://*.1688.com/*"
+        "*://etsy.com/*"
       ],
       "js": ["content.js"],
       "run_at": "document_end",

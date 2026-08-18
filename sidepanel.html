@@ -61,7 +61,6 @@
             <button class="growth-action-btn" data-action="diagnose_visual_conversion">首图诊断</button>
             <button class="growth-action-btn" data-action="scan_competitor_changes">竞品扫描</button>
             <button class="growth-action-btn" data-action="explore_platform_trends">平台趋势</button>
-            <button class="growth-action-btn" data-action="filter_supplier_sources">货源筛选</button>
             <button class="growth-action-btn" data-action="review_experiment_result">实验复盘</button>
           </div>
           <div class="growth-queue" id="growthActionQueue">
@@ -183,7 +182,7 @@
             <input type="checkbox" id="highRandomnessCheckbox" />
             <span class="checkbox-text">强制发散探索 (跳出常规，强制每次结果不同)</span>
           </label>
-          <label class="checkbox-label" style="margin-top: 6px;" title="开启后，Agent 将自动避开高退货率服饰、超重超大件、医疗/成人/版权侵权高风险品类。Etsy 跨境寻源或特定品类可选择关闭。">
+          <label class="checkbox-label" style="margin-top: 6px;" title="开启后，Agent 将自动避开高退货率服饰、超重超大件、医疗/成人/版权侵权高风险品类。">
             <input type="checkbox" id="negativeFilterCheckbox" checked />
             <span class="checkbox-text">严格执行选品“几不卖”原则 (过滤重货、服饰、侵权)</span>
           </label>
@@ -281,7 +280,29 @@
             <input type="text" id="imageGenerationModel" class="form-input" placeholder="如 gpt-image-1，可留空禁用" />
             <div id="imageModelHints" class="model-hints"></div>
           </div>
-          <div class="form-help">用于把目标商品主图处理成背景更干净、主体更完整的搜图图，减少 1688 自动框选偏差。</div>
+          <div class="form-help">用于需要图像理解的 Etsy 页面分析；供应商平台以图搜由独立普通 Chrome Runner 执行。</div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">生图 Provider <span class="optional">(可与 LLM 分开)</span></label>
+          <select id="imageProvider" class="form-select">
+            <option value="">跟随 LLM Provider</option>
+            <option value="openai">OpenAI</option>
+            <option value="qwen">Qwen / 通义万相</option>
+            <option value="siliconflow">SiliconFlow</option>
+            <option value="third_party_proxy">第三方代理</option>
+            <option value="custom">自定义 OpenAI-compatible</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">生图 Base URL <span class="optional">(代理或自定义接口)</span></label>
+          <input type="url" id="imageBaseUrl" class="form-input" placeholder="留空使用 Provider 默认地址" />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">生图 API Key <span class="optional">(留空则回退 LLM Key)</span></label>
+          <input type="password" id="imageApiKey" class="form-input" placeholder="第三方生图代理 API Key" />
         </div>
 
         <div class="form-group">
@@ -319,7 +340,7 @@
 
         <div class="settings-section-title">关于</div>
         <p class="settings-about">
-          <b>Etsy Growth Agent</b> 是面向 Etsy 卖家的开源 AI 增长插件。它在本地浏览器读取公开页面、截图和个人卖家 API 数据，结合 Etsy 专项 Skill 输出店铺体检、趋势洞察、Listing 优化、合规审查和寻源利润方案。
+          <b>Etsy Growth Agent</b> 是面向 Etsy 卖家的开源 AI 运营插件。它在本地浏览器读取公开页面、截图和个人卖家 API 数据，结合 Etsy 专项 Skill 输出店铺体检、趋势洞察、Listing 优化、合规审查和实验复盘；1688/淘宝供应商筛选由 Codex 统一选品工作流承接。
         </p>
         <div class="update-card" id="updateCard">
           <div class="update-card-head">

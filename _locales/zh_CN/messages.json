@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "Etsy Growth Agent",
+    "message": "Etsy 运营增长助手",
     "description": "Chrome extension name"
   },
   "extDescription": {
@@ -8,7 +8,7 @@
     "description": "Chrome extension description"
   },
   "actionTitle": {
-    "message": "打开 Etsy Growth Agent",
+    "message": "打开 Etsy 运营增长助手",
     "description": "Toolbar action title"
   },
   "chooseSkill": {

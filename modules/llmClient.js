@@ -3,7 +3,7 @@
 export async function getSettings() {
   return new Promise((resolve) => {
     chrome.storage.local.get(
-      ["apiKey", "llmProvider", "llmModel", "llmFallbackModels", "llmProfiles", "imageGenerationModel", "llmBaseUrl", "temperature", "helium10ApiKey", "sellerSpriteApiKey", "fastmossApiKey"],
+      ["apiKey", "llmProvider", "llmModel", "llmFallbackModels", "llmProfiles", "imageGenerationModel", "imageProvider", "imageBaseUrl", "imageApiKey", "llmVisionModel", "llmBaseUrl", "temperature", "helium10ApiKey", "sellerSpriteApiKey", "fastmossApiKey"],
       resolve
     );
   });
@@ -121,11 +121,12 @@ async function fetchWithRetry(url, options, maxRetries = LLM_MAX_RETRIES) {
 }
 
 function resolveImageEditUrl(settings) {
-  const provider = settings.llmProvider || "openai";
+  const provider = settings.imageProvider || settings.llmProvider || "openai";
+  const configuredBaseUrl = settings.imageBaseUrl || settings.llmBaseUrl || "";
   if (provider === "openai") return "https://api.openai.com/v1/images/edits";
-  if (provider === "custom") {
-    if (!settings.llmBaseUrl) throw new Error("未配置自定义 API 地址，无法调用生图模型。");
-    const raw = settings.llmBaseUrl.replace(/\/+$/, "");
+  if (provider === "custom" || provider === "third_party_proxy") {
+    if (!configuredBaseUrl) throw new Error("未配置生图代理 Base URL，无法调用生图模型。");
+    const raw = configuredBaseUrl.replace(/\/+$/, "");
     if (raw.endsWith("/images/edits") || raw.endsWith("/images/generations")) return raw;
     if (raw.endsWith("/v1")) return `${raw}/images/edits`;
     return `${raw}/v1/images/edits`;
@@ -148,7 +149,8 @@ function dataUrlToBlob(dataUrl) {
 
 export async function prepareCleanProductImage(imageUrl, promptOverride = "") {
   const settings = await getSettings();
-  const { apiKey, imageGenerationModel } = settings;
+  const imageApiKey = settings.imageApiKey || settings.apiKey;
+  const { imageGenerationModel } = settings;
   if (!imageGenerationModel) {
     return {
       ok: false,
@@ -158,7 +160,7 @@ export async function prepareCleanProductImage(imageUrl, promptOverride = "") {
       message: "未配置生图模型，继续使用原始目标图进行以图搜图。",
     };
   }
-  if (!apiKey) throw new Error("未配置 API Key，无法调用生图模型。");
+  if (!imageApiKey) throw new Error("未配置生图 API Key，无法调用生图模型。");
   if (!imageUrl) throw new Error("imageUrl is required");
 
   let sourceBlob;
@@ -191,7 +193,7 @@ export async function prepareCleanProductImage(imageUrl, promptOverride = "") {
   const response = await fetchWithRetry(endpoint, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${imageApiKey}`,
     },
     body: form,
   });

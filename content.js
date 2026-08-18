@@ -2142,8 +2142,7 @@
   function injectFloatingUI() {
     const hostname = window.location.hostname;
     const isEtsy = hostname.includes("etsy.com") || hostname.includes("etsy.com");
-    const is1688 = hostname.includes("1688.com");
-    if (!isEtsy && !is1688) return;
+    if (!isEtsy) return;
 
     // Check if on a product detail page
     const isProductPage = isEtsy && (window.location.pathname.includes("/product/") || /\/\d{8,15}\/?/i.test(window.location.pathname));
@@ -2170,16 +2169,6 @@
         label: "机会扫描",
         short: "机会",
         instruction: "基于当前 Etsy 搜索、类目、店铺或商品页面扫描增长机会。请识别价格带空位、关键词入口、可扩展 SKU、Etsy 欧美需求线索和第一批低风险实验方向。",
-      },
-      filter_supplier_sources: {
-        label: "货源筛选",
-        short: "货源",
-        instruction: "基于当前 Etsy 商品、候选扩品方向或平台趋势机会筛选国内供应商货源。请重点验证同款/相似款图片匹配、规格一致、起批量、采购价、跨境物流、Etsy 佣金、关税和 USD 净利润率；未获得真实供应商详情页时不得输出采购直达链接。",
-      },
-      validate_opportunity_sourcing: {
-        label: "验证机会货源",
-        short: "验证货源",
-        instruction: "基于前一轮选品/机会报告中的候选方向，进入供应链寻源第二阶段。请把机会目标当成待验证假设，优先用 1688/淘宝以图搜图或中文复合检索对齐真实货源，审计外观、规格、MOQ、采购价、跨境物流、Etsy 佣金、关税和 USD 净利润率；未取得真实供应商详情页时不得输出采购直达链接，并在报告中回写本次货源验证对原机会的支撑或推翻结论。",
       },
       explore_platform_trends: {
         label: "平台趋势",
@@ -2208,10 +2197,10 @@
         return ["diagnose_store_growth"];
       }
       if (isProductPage) {
-        return ["diagnose_sku_funnel", "rewrite_listing", "filter_supplier_sources", "scan_competitor_changes"];
+        return ["diagnose_sku_funnel", "rewrite_listing", "scan_competitor_changes"];
       }
       if (isSearchOrCatalogPage) {
-        return ["explore_platform_trends", "scan_competitor_changes", "filter_supplier_sources"];
+        return ["explore_platform_trends", "scan_competitor_changes"];
       }
       return ["diagnose_store_growth", "explore_platform_trends"];
     };
@@ -2221,8 +2210,6 @@
       diagnose_sku_funnel: "skills/etsy_operations_tracker.skill.md",
       scan_competitor_changes: "skills/etsy_global_shop_optimizer.skill.md",
       find_expansion_opportunities: "skills/etsy_product_opportunity_explorer.skill.md",
-      filter_supplier_sources: "skills/etsy_sourcing_finder.skill.md",
-      validate_opportunity_sourcing: "skills/etsy_sourcing_finder.skill.md",
       explore_platform_trends: "skills/etsy_platform_trends.skill.md",
       rewrite_listing: "skills/etsy_listing_generator.skill.md",
       analyze_review_defects: "skills/etsy_review_analyzer.skill.md",
@@ -3222,7 +3209,6 @@
       diagnose_sku_funnel: '<svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/></svg>',
       scan_competitor_changes: '<svg viewBox="0 0 24 24"><path d="M10.5 20.5 4 14l6.5-6.5"/><path d="M4 14h16"/><path d="M13.5 3.5 20 10l-6.5 6.5"/></svg>',
       find_expansion_opportunities: '<svg viewBox="0 0 24 24"><path d="M12 2v5"/><path d="M12 17v5"/><path d="m4.93 4.93 3.54 3.54"/><path d="m15.53 15.53 3.54 3.54"/><path d="M2 12h5"/><path d="M17 12h5"/><path d="m4.93 19.07 3.54-3.54"/><path d="m15.53 8.47 3.54-3.54"/></svg>',
-      filter_supplier_sources: '<svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M6 7l2 14h8l2-14"/><path d="M9 7a3 3 0 0 1 6 0"/><path d="M9 12h6"/><path d="M10 16h4"/></svg>',
       explore_platform_trends: '<svg viewBox="0 0 24 24"><path d="M3 17 9 11l4 4 8-8"/><path d="M14 7h7v7"/><path d="M4 21h16"/></svg>',
       rewrite_listing: '<svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
       analyze_review_defects: '<svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H7l-4 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M8 9h8"/><path d="M8 13h5"/></svg>',
@@ -3232,7 +3218,6 @@
       diagnose_sku_funnel: "product-btn",
       scan_competitor_changes: "competitor-btn",
       find_expansion_opportunities: "opportunity-btn",
-      filter_supplier_sources: "opportunity-btn",
       explore_platform_trends: "opportunity-btn",
       rewrite_listing: "listing-btn",
       analyze_review_defects: "review-btn",
@@ -3582,7 +3567,7 @@
       { id: "listing", label: "Listing" },
       { id: "review", label: "评论" },
       { id: "compliance", label: "合规" },
-      { id: "sourcing", label: "货源" },
+      { id: "sourcing", label: "已迁移" },
       { id: "operations", label: "运营" },
     ];
     const OVERLAY_HISTORY_ACTION_CATEGORY = {
@@ -4725,6 +4710,27 @@
             }
             cleanupAgentConnection();
             finishGrowthRun("failed", message.error || "unknown error").catch((err) => console.warn("Failed to finish growth run:", err.message));
+          } else if (message.type === "SOURCING_HANDOFF_REQUIRED") {
+            settled = true;
+            statusDot.className = "status-dot";
+            activeAgentPort = null;
+            updateChatRunControls({ running: false });
+            const handoff = message.result || {};
+            const nextActions = Array.isArray(handoff.nextActions) ? handoff.nextActions : [];
+            log(`↗ ${handoff.message || "供应商筛选已迁移到统一跨平台工作流。"}`);
+            nextActions.forEach((item) => log(`• ${item}`));
+            addMessage("assistant", [
+              "### 供应商筛选已转交统一工作流",
+              "",
+              handoff.message || "1688/淘宝供应商筛选不再由 Etsy Growth Agent 直接执行。",
+              "",
+              `请在 Codex 对话中调用 $${handoff.destination?.orchestratorSkill || "cross-border-sourcing-orchestrator"}。`,
+              `Control Center：${handoff.destination?.controlCenterUrl || "https://www.marqel.shop/operations.html"}`,
+              "",
+              ...nextActions.map((item) => `- ${item}`),
+            ].join("\n"), true, null, "cross-border-sourcing-orchestrator");
+            cleanupAgentConnection();
+            finishGrowthRun("interrupted", handoff.code || "sourcing_handoff_required").catch((err) => console.warn("Failed to save sourcing handoff:", err.message));
           } else if (message.type === "CLARIFICATION_REQUIRED") {
             settled = true;
             statusDot.className = "status-dot";
