@@ -15,6 +15,35 @@ let sessionHistoryCategory = "all";
 let activeToolRunId = "";
 
 const WORKFLOW_CHECKPOINTS_KEY = "agentWorkflowCheckpoints";
+
+function optionalHostPattern(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch (_) {
+    throw new Error(`无效的自定义 URL：${raw}`);
+  }
+  if (!["https:", "http:"].includes(parsed.protocol)) {
+    throw new Error("自定义服务只允许 http(s) URL。");
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("自定义服务 URL 不得包含用户名或密码。");
+  }
+  return `${parsed.origin}/*`;
+}
+
+async function ensureOptionalHostPermissions(values = []) {
+  const origins = [...new Set(values.map(optionalHostPattern).filter(Boolean))];
+  if (!origins.length) return;
+  const granted = await chrome.permissions.contains({ origins });
+  if (granted) return;
+  const approved = await chrome.permissions.request({ origins });
+  if (!approved) {
+    throw new Error(`未获得自定义服务域名访问权限：${origins.join("、")}`);
+  }
+}
 const SESSION_HISTORY_CATEGORIES = [
   { id: "all", label: "全部" },
   { id: "store", label: "店铺体检" },
@@ -723,7 +752,12 @@ async function runSkill() {
       addLog("warning", "⚠️", "Marqel 配置同步暂时失败，将继续使用插件本地配置；请稍后从 Dashboard 重新同步。");
     }
     // Check API key first
-    const settings = await new Promise((r) => chrome.storage.local.get(["apiKey", "llmModel", "llmProfiles"], r));
+    const settings = await new Promise((r) => chrome.storage.local.get(["apiKey", "llmModel", "llmProfiles", "llmBaseUrl", "imageBaseUrl"], r));
+    await ensureOptionalHostPermissions([
+      settings.llmBaseUrl,
+      settings.imageBaseUrl,
+      ...(Array.isArray(settings.llmProfiles) ? settings.llmProfiles.map((profile) => profile?.baseUrl || profile?.llmBaseUrl || "") : []),
+    ]);
     const hasConfiguredProfile = Array.isArray(settings.llmProfiles) && settings.llmProfiles.some((profile) => profile?.enabled !== false && profile?.apiKey && profile?.model);
     if (!settings.apiKey && !hasConfiguredProfile) {
       throw new Error("未配置 API Key，请先前往设置页面填写。");
@@ -1786,10 +1820,12 @@ async function checkForUpdates() {
 async function saveUpdateSettings() {
   const msg = $("settingsMsg");
   try {
+    const releaseManifestUrl = $("releaseManifestUrl")?.value?.trim?.() || "";
+    await ensureOptionalHostPermissions([releaseManifestUrl]);
     await chrome.runtime.sendMessage({
       type: "SAVE_UPDATE_SETTINGS",
       settings: {
-        releaseManifestUrl: $("releaseManifestUrl")?.value?.trim?.() || "",
+        releaseManifestUrl,
         autoApplyRuntimeUpdates: $("autoApplyRuntimeUpdates")?.checked !== false,
       },
     });
@@ -1832,6 +1868,18 @@ async function saveSettings() {
 
   if (!apiKey || !llmModel) {
     msg.textContent = "请填写 API Key 和模型名称";
+    msg.className = "settings-msg error";
+    msg.classList.remove("hidden");
+    return;
+  }
+
+  try {
+    await ensureOptionalHostPermissions([
+      llmProvider === "custom" ? llmBaseUrl : "",
+      imageBaseUrl,
+    ]);
+  } catch (err) {
+    msg.textContent = err.message;
     msg.className = "settings-msg error";
     msg.classList.remove("hidden");
     return;

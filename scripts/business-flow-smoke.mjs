@@ -167,9 +167,9 @@ assert.match(agentLoopSource, /isWorkflowCancellationRequested[\s\S]*workflow_ca
 assert.match(agentLoopSource, /isWorkflowGenerationCurrent[\s\S]*stale_tool_result_discarded/, "late results from an older workflow generation must be discarded");
 assert.match(agentLoopSource, /putDataUrlArtifact[\s\S]*workflow-loop-screenshot/, "immediate workflow screenshots should be retained as evidence artifacts");
 assert.match(toolRegistrySource, /executeGenericDomSnapshot[\s\S]*allFrames: true[\s\S]*scripting_executeScript_dom_fallback/, "page reading should have an all-frame DOM fallback route");
-assert.match(toolRegistrySource, /captureFullPageScreenshot[\s\S]*screenshotCaptureMode/, "Etsy evidence capture should use debugger-backed full-page screenshots with fallback");
+assert.match(toolRegistrySource, /captureVisibleTab[\s\S]*captureMode:\s*"captureVisibleTab_viewport"/, "Etsy evidence capture should label viewport screenshots without debugger access");
 assert.match(toolRegistrySource, /getTabForCapture[\s\S]*isCapturableTabUrl[\s\S]*expectedUrl[\s\S]*_captureTabScreenshot\(tabId,\s*\{ expectedUrl:\s*payload\.searchUrl \}\)/, "search screenshots should wait for a capturable http(s) tab URL and use the search URL as a diagnostic fallback");
-assert.match(agentLoopSource, /captureFullPageScreenshot[\s\S]*captureVisibleTab_viewport/, "Etsy detail-page loop screenshots should prefer full-page capture and retain viewport fallback");
+assert.match(agentLoopSource, /captureVisibleTab[\s\S]*captureVisibleTab_viewport/, "Etsy detail-page loop screenshots should use explicitly labeled viewport evidence");
 assert.match(toolRegistrySource, /createOwnedTab[\s\S]*closeOwnedTab/, "Etsy crawl tabs should have centralized workflow ownership");
 assert.match(browserSessionManagerSource, /openerTabId[\s\S]*chrome\.tabs\.create/, "workflow-created tabs should preserve the source tab as opener instead of replacing the shop page");
 assert.match(browserSessionManagerSource, /function focusCreatedTab[\s\S]*chrome\.tabs\.update\(tab\.id,\s*\{\s*active:\s*true\s*\}[\s\S]*chrome\.windows\.update\(tab\.windowId,\s*\{\s*focused:\s*true\s*\}/, "active workflow tabs should be explicitly selected and their window focused");

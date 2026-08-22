@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import createDOMPurify from "dompurify";
 import { JSDOM } from "jsdom";
+import fs from "node:fs";
+
+const read = (file) => fs.readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
 
 const SANITIZE_ALLOWED_TAGS = ["H1", "H2", "H3", "H4", "H5", "H6", "P", "SPAN", "DIV", "UL", "OL", "LI", "STRONG", "EM", "CODE", "PRE", "TABLE", "THEAD", "TBODY", "TR", "TH", "TD", "BR", "A", "HR"];
 const SANITIZE_ALLOWED_ATTR = ["href", "class", "target", "rel", "title", "style"];
@@ -138,5 +141,14 @@ const masked = maskApiKeys('Bearer sk-live1234567890abcdef token="github_pat_123
 assert.equal(masked.includes("secret-value"), false, "plain apiKey value must be masked");
 assert.equal(masked.includes("github_pat_1234567890abcdef"), false, "GitHub token must be masked");
 assert.equal(masked.includes("sk-live1234567890abcdef"), false, "Bearer token must be masked");
+
+const manifest = JSON.parse(read("manifest.json"));
+const sidepanelSource = read("sidepanel.js");
+assert.equal(manifest.permissions.includes("debugger"), false, "extension must not request debugger access");
+assert.equal(manifest.host_permissions.includes("<all_urls>"), false, "extension must not request blanket install-time host access");
+assert.equal((manifest.web_accessible_resources || []).length, 0, "internal extension resources must not be exposed to web pages");
+assert.deepEqual(manifest.optional_host_permissions, ["https://*/*", "http://*/*"], "custom services must use runtime optional host permission");
+assert.match(sidepanelSource, /chrome\.permissions\.contains[\s\S]*chrome\.permissions\.request/, "custom service origins must be requested explicitly");
+assert.match(sidepanelSource, /parsed\.username \|\| parsed\.password/, "custom service URLs must reject embedded credentials");
 
 console.log("security smoke passed");

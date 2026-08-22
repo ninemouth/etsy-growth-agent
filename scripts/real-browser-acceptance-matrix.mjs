@@ -119,6 +119,7 @@ function renderMarkdown() {
     `生成时间：${now}`,
     "",
     "说明：该矩阵用于真实 Chrome/Etsy/1688/Google Trends 环境验收。脚本本身不访问外网，也不把静态检查伪装成真机通过。",
+    "通过后还必须在 JSON 中填写被测扩展版本、完整 Git SHA、Chrome 版本、平台、操作者、执行时间，并为每个验收项附上证据引用。",
     "",
     "## 验收项",
     "",
@@ -140,10 +141,19 @@ function renderMarkdown() {
 
 function renderJson() {
   return JSON.stringify({
+    schemaVersion: "real-browser-acceptance.v2",
     generatedAt: now,
     status: "not_run",
     note: "真实浏览器验收矩阵；需要人工或 Chrome 实机执行后填写 results。",
-    matrix: acceptanceMatrix.map((item) => ({ ...item, result: "not_run", blocker: "" })),
+    tested: {
+      extensionVersion: "",
+      sourceCommit: "",
+      chromeVersion: "",
+      platform: "",
+      operator: "",
+      executedAt: "",
+    },
+    matrix: acceptanceMatrix.map((item) => ({ ...item, result: "not_run", blocker: "", evidence: [] })),
   }, null, 2);
 }
 

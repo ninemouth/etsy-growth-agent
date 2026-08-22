@@ -146,11 +146,12 @@ See `operations/architecture_audit.md` for the current runtime risk register and
 
 ## Open-Source Release Checklist
 
-1. Keep `manifest.json` and `package.json` versions aligned.
-2. Run `npm run lint` and the smoke tests.
-3. Run `npm run package:extension` to create `dist/etsy-growth-agent-<version>.zip`.
-4. Push to `github.com/ninemouth/etsy-growth-agent`.
-5. Create a tag such as `v1.1.0`; GitHub Actions will build the release assets.
+1. Keep `manifest.json` and `package.json` versions aligned and use the Node version pinned in `.nvmrc`.
+2. Run `npm run test:release`; this executes lint and every `test:*` smoke suite.
+3. Complete all six real-browser acceptance items and record `real-browser-acceptance.v2` evidence in `operations/acceptance/real_browser_acceptance_matrix.json`.
+4. Run `npm run release:readiness`. It fails closed on a dirty tree, version/tag mismatch, excessive permissions, missing acceptance evidence, or runtime changes after the tested commit.
+5. Run `npm run package:extension` to create a reproducible ZIP plus `dist/release-manifest.json` with source and SHA-256 provenance.
+6. Push the reviewed commit and create the exact tag `v<manifest.version>`; GitHub Actions repeats the full release gate before publishing assets.
 
 ## Privacy
 

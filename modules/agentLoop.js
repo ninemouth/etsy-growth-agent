@@ -4,7 +4,6 @@ import { callLLM, getSettings } from './llmClient.js';
 import { tools, hasValidEtsySearchEvidence, hasValidGoogleTrendsEvidence } from './toolRegistry.js';
 import { appendWorkflowEvent, isWorkflowCancellationRequested, isWorkflowGenerationCurrent } from './workflowRuntime.js';
 import { putDataUrlArtifact } from './artifactStore.js';
-import { captureFullPageScreenshot } from './debuggerCapture.js';
 import { formatBrowserAutomationCapabilityPrompt } from './browserAutomationCapabilities.js';
 import { getCurrencyRateContextForPrompt } from './currencyRates.js';
 import { buildNegativeFilterPrompt } from './negativeFilters.js';
@@ -5385,24 +5384,13 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
             });
           });
           if (t && t.windowId) {
-            if (/etsy\.com/i.test(String(t.url || ""))) {
-              try {
-                const fullPageCapture = await captureFullPageScreenshot(tId);
-                nextScreenshot = fullPageCapture.dataUrl;
-                nextScreenshotCaptureMode = fullPageCapture.captureMode;
-              } catch (err) {
-                console.warn("Could not capture Etsy full-page screenshot for loop context:", err.message);
-              }
-            }
-            if (!nextScreenshot) {
-              nextScreenshot = await new Promise((resScr) => {
-                chrome.tabs.captureVisibleTab(t.windowId, { format: "jpeg", quality: 60 }, (dataUrl) => {
-                  if (chrome.runtime.lastError || !dataUrl) resScr(null);
-                  else resScr(dataUrl);
-                });
+            nextScreenshot = await new Promise((resScr) => {
+              chrome.tabs.captureVisibleTab(t.windowId, { format: "jpeg", quality: 60 }, (dataUrl) => {
+                if (chrome.runtime.lastError || !dataUrl) resScr(null);
+                else resScr(dataUrl);
               });
-              nextScreenshotCaptureMode = "captureVisibleTab_viewport";
-            }
+            });
+            nextScreenshotCaptureMode = "captureVisibleTab_viewport";
           }
         } catch (err) {
           console.warn("Could not capture real-time loop screenshot:", err.message);

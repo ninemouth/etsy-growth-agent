@@ -7,6 +7,7 @@ const read = (file) => fs.readFileSync(new URL(`../${file}`, import.meta.url), "
 const toolRegistry = read("modules/toolRegistry.js");
 const agentLoop = read("modules/agentLoop.js");
 const content = read("content.js");
+const manifest = JSON.parse(read("manifest.json"));
 const shop = read("skills/etsy_global_shop_optimizer.skill.md");
 const trends = read("skills/etsy_platform_trends.skill.md");
 const sourcing = read("skills/etsy_sourcing_finder.skill.md");
@@ -42,7 +43,10 @@ assert.match(agentLoop, /页面动态加载时必须相信工具返回的 loadSt
 assert.match(agentLoop, /Etsy 个人卖家 API 不能读取竞品后台、竞品订单、竞品转化率或平台大盘/, "agent prompt should preserve Etsy personal API boundary");
 assert.match(toolRegistry, /minStableReads[\s\S]*waitForTabReadiness[\s\S]*stableReads/, "runtime should wait for stable page evidence before collection");
 assert.match(toolRegistry, /executeGenericDomSnapshot[\s\S]*allFrames: true/, "DOM collection should include multi-frame fallback");
-assert.match(toolRegistry, /captureFullPageScreenshot[\s\S]*captureVisibleTab/, "screenshot collection should have full-page and viewport fallback");
+assert.match(toolRegistry, /captureVisibleTab[\s\S]*captureMode:\s*"captureVisibleTab_viewport"/, "screenshot collection should label viewport evidence precisely");
+assert.equal(manifest.permissions.includes("debugger"), false, "release manifest must not request Chrome debugger access");
+assert.equal(manifest.host_permissions.includes("<all_urls>"), false, "release manifest must not request blanket host access at install time");
+assert.equal((manifest.web_accessible_resources || []).length, 0, "internal skills and icons must not be web-accessible resources");
 assert.match(content, /INPUT_TEXT_AND_SEARCH[\s\S]*KeyboardEvent[\s\S]*pressedEnter/, "content script must support keyboard-like input and Enter fallback");
 assert.match(content, /CLICK_BY_COORDINATE[\s\S]*file upload\/camera|Proactively blocked click_by_coordinate on file upload\/camera elements/, "coordinate clicking must block unsafe file upload targets");
 assert.match(content, /READ_CURRENT_PAGE[\s\S]*readCurrentPage/, "content script must expose DOM collection");

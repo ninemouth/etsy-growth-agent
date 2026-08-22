@@ -77,7 +77,7 @@ Vendored browser libraries:
 
 Intentional custom code:
 
-- Chrome tab/session ownership, `chrome.debugger` screenshot capture, content-script DOM reads, and MV3 service-worker persistence must remain custom because they are extension-runtime specific.
+- Chrome tab/session ownership, `captureVisibleTab` evidence capture, content-script DOM reads, and MV3 service-worker persistence must remain custom because they are extension-runtime specific. Full-page `chrome.debugger` access was removed: viewport screenshots are labeled as such and combined with DOM evidence instead of requesting debugger-backend access.
 - Workflow checkpoints, leases, cancellation, and quality gates are product-specific. A generic job queue would not understand Chrome tab ownership, content-script evidence, or resumable LLM/tool context.
 - Evidence validators are business-specific. Replacing them with a generic schema validator would lose the current hard gates around Etsy/Google/Google Trends evidence.
 
@@ -109,12 +109,9 @@ Custom code to keep under review:
 Run these before release:
 
 ```bash
-npm run test:task-logs
-npm run test:scheduler
-npm run test:runtime
-npm run test:browser-capabilities
-npm run test:evidence-bundle
-npm run test:business
-npm run test:security
-npm run lint
+npm run test:release
+npm run release:readiness
+npm run package:extension
 ```
+
+`release:readiness` intentionally remains blocked until the six-item real-browser matrix is recorded as `real-browser-acceptance.v2` with evidence references. A green local test suite proves code contracts; it does not substitute for Etsy/Chrome/1688/Google Trends acceptance.

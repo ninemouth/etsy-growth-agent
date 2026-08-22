@@ -9,10 +9,58 @@
     "scripting",
     "storage",
     "tabs",
-    "debugger",
     "alarms"
   ],
-  "host_permissions": ["<all_urls>", "https://www.marqel.shop/*"],
+  "host_permissions": [
+    "https://www.etsy.com/*",
+    "https://*.etsy.com/*",
+    "https://*.etsystatic.com/*",
+    "https://api.etsy.com/*",
+    "https://openapi.etsy.com/*",
+    "https://www.marqel.shop/*",
+    "https://api.openai.com/*",
+    "https://api.anthropic.com/*",
+    "https://dashscope.aliyuncs.com/*",
+    "https://openrouter.ai/*",
+    "https://www.thinktv.ai/*",
+    "https://api.siliconflow.cn/*",
+    "https://api.groq.com/*",
+    "https://github.com/*",
+    "https://open.er-api.com/*",
+    "https://www.google.com/*",
+    "https://trends.google.com/*",
+    "https://www.bing.com/*",
+    "https://www.amazon.com/*",
+    "https://www.amazon.co.uk/*",
+    "https://www.amazon.de/*",
+    "https://www.amazon.fr/*",
+    "https://www.amazon.ca/*",
+    "https://www.amazon.com.au/*",
+    "https://www.ebay.com/*",
+    "https://www.ebay.co.uk/*",
+    "https://www.ebay.de/*",
+    "https://www.ebay.fr/*",
+    "https://www.ebay.ca/*",
+    "https://www.ebay.com.au/*",
+    "https://s.1688.com/*",
+    "https://detail.1688.com/*",
+    "https://sec.1688.com/*",
+    "https://*.alicdn.com/*",
+    "https://s.taobao.com/*",
+    "https://*.taobao.com/*",
+    "https://search.jd.com/*",
+    "https://mobile.yangkeduo.com/*",
+    "https://www.pinterest.com/*",
+    "https://trends.pinterest.com/*",
+    "https://www.tiktok.com/*",
+    "https://shop.tiktok.com/*",
+    "https://www.instagram.com/*",
+    "https://www.reddit.com/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
   "background": {
     "service_worker": "background.js",
     "type": "module"
@@ -40,12 +88,6 @@
       "js": ["content.js"],
       "run_at": "document_end",
       "all_frames": true
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": ["skills/*.md", "icons/*"],
-      "matches": ["<all_urls>"]
     }
   ]
 }

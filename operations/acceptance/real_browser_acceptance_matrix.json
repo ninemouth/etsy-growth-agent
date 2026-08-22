@@ -1,7 +1,16 @@
 {
+  "schemaVersion": "real-browser-acceptance.v2",
   "generatedAt": "2026-07-17T01:29:55.589Z",
   "status": "not_run",
   "note": "真实浏览器验收矩阵；需要人工或 Chrome 实机执行后填写 results。",
+  "tested": {
+    "extensionVersion": "",
+    "sourceCommit": "",
+    "chromeVersion": "",
+    "platform": "",
+    "operator": "",
+    "executedAt": ""
+  },
   "matrix": [
     {
       "id": "RB-01",
@@ -22,7 +31,8 @@
         "PDF 尾页包含证据包摘要"
       ],
       "result": "not_run",
-      "blocker": ""
+      "blocker": "",
+      "evidence": []
     },
     {
       "id": "RB-02",
@@ -42,7 +52,8 @@
         "报告不得把加载失败的 Google Trends 当作趋势结论"
       ],
       "result": "not_run",
-      "blocker": ""
+      "blocker": "",
+      "evidence": []
     },
     {
       "id": "RB-03",
@@ -60,7 +71,8 @@
         "评论读取失败必须降级为待验证，不伪造评价结论"
       ],
       "result": "not_run",
-      "blocker": ""
+      "blocker": "",
+      "evidence": []
     },
     {
       "id": "RB-04",
@@ -78,7 +90,8 @@
         "不能把公开可见样本写成竞品后台完整 SKU 或销量"
       ],
       "result": "not_run",
-      "blocker": ""
+      "blocker": "",
+      "evidence": []
     },
     {
       "id": "RB-05",
@@ -97,7 +110,8 @@
         "详情页 tab 生命周期受 workflow 管理"
       ],
       "result": "not_run",
-      "blocker": ""
+      "blocker": "",
+      "evidence": []
     },
     {
       "id": "RB-06",
@@ -116,7 +130,8 @@
         "证据包 missing artifact 明确显示，不静默失败"
       ],
       "result": "not_run",
-      "blocker": ""
+      "blocker": "",
+      "evidence": []
     }
   ]
 }

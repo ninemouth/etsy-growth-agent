@@ -5,7 +5,6 @@ import { etsyGetProductList, etsyGetProductInfo, etsyGetAnalyticsData, etsyGetFb
 import { getArtifactDataUrl, pruneArtifacts, putDataUrlArtifact } from './artifactStore.js';
 import { closeOwnedTab, createOwnedTab, createOwnedTabCallback } from './browserSessionManager.js';
 import { appendWorkflowEvent, isWorkflowCancellationRequested } from './workflowRuntime.js';
-import { captureFullPageScreenshot } from './debuggerCapture.js';
 import { summarizeBrowserAutomationCapabilities } from './browserAutomationCapabilities.js';
 
 const preparedImageCache = new Map();
@@ -837,13 +836,6 @@ async function _captureTabScreenshot(tabId, options = {}) {
   if (!tab?.windowId) throw new Error("Unable to resolve tab window for screenshot");
   if (!isCapturableTabUrl(tab.url)) {
     throw new Error(`Tab URL is not capturable yet: ${JSON.stringify(tab.url || "")}`);
-  }
-  if (/etsy\.com/i.test(String(tab.url || ""))) {
-    try {
-      return await captureFullPageScreenshot(tabId);
-    } catch (err) {
-      console.warn("Chrome debugger full-page capture unavailable; falling back to viewport capture:", err.message);
-    }
   }
   return await new Promise((resolve, reject) => {
     chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }, (dataUrl) => {

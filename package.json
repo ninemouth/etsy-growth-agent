@@ -7,6 +7,9 @@
   "scripts": {
     "lint": "eslint .",
     "package:extension": "node scripts/package-extension.mjs",
+    "release:readiness": "node scripts/release-readiness.mjs",
+    "test:release": "node scripts/run-release-tests.mjs",
+    "test:release-readiness": "node scripts/release-readiness-smoke.mjs",
     "test:security": "node scripts/security-smoke.mjs",
     "test:control-center-auth": "node scripts/control-center-auth-smoke.mjs",
     "test:business": "node scripts/business-flow-smoke.mjs",
@@ -48,6 +51,6 @@
     "prettier": "^3.2.5"
   },
   "dependencies": {
-    "dompurify": "^3.4.11"
+    "dompurify": "^3.4.14"
   }
 }
