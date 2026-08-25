@@ -14,9 +14,12 @@ assert.equal(pkg.version, manifest.version, "package.json and manifest.json vers
 assert.match(updateManagerSource, /chrome\.runtime\.requestUpdateCheck/, "update manager should ask Chrome for runtime extension updates");
 assert.match(updateManagerSource, /chrome\.runtime\.reload\(\)/, "update manager should be able to apply downloaded runtime updates");
 assert.match(updateManagerSource, /releaseManifestUrl/, "update manager should support open-source release manifest awareness");
+assert.match(updateManagerSource, /marqel-browser-extension-catalog\.v1/, "update manager should use the governed Control Center extension catalog");
+assert.match(updateManagerSource, /LEGACY_RELEASE_MANIFEST_URL/, "existing installs should migrate away from the obsolete GitHub latest manifest");
 assert.match(backgroundSource, /chrome\.runtime\.onUpdateAvailable/, "background should record Chrome update-available events");
 assert.match(backgroundSource, /activeWorkflowRuns[\s\S]*applyPendingUpdateIfIdle/, "runtime updates should wait for active workflows before auto-apply");
 assert.match(sidepanelHtml, /releaseManifestUrl[\s\S]*checkUpdatesBtn[\s\S]*applyUpdateBtn/, "sidepanel should expose update awareness controls");
 assert.match(sidepanelSource, /GET_UPDATE_STATUS[\s\S]*CHECK_FOR_UPDATES[\s\S]*APPLY_PENDING_UPDATE/, "sidepanel should read, check, and apply update state through background messages");
+assert.match(sidepanelSource, /screenshotDisclosureConfirmed:\s*true/, "sidepanel runs must carry explicit screenshot disclosure confirmation");
 
 console.log("update manager smoke passed");

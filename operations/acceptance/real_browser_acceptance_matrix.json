@@ -4,7 +4,7 @@
   "status": "not_run",
   "note": "真实浏览器验收矩阵；需要人工或 Chrome 实机执行后填写 results。",
   "tested": {
-    "extensionVersion": "",
+    "extensionVersion": "1.2.2",
     "sourceCommit": "",
     "chromeVersion": "",
     "platform": "",

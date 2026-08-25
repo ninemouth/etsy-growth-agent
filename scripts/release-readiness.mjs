@@ -12,6 +12,7 @@ if (process.versions.node.split(".")[0] !== "22") errors.push(`release requires 
 if (pkg.version !== manifest.version) errors.push("package.json and manifest.json versions differ");
 if (manifest.permissions.includes("debugger")) errors.push("manifest must not request debugger permission");
 if (manifest.host_permissions.includes("<all_urls>")) errors.push("manifest must not request blanket install-time host access");
+if (Number.parseInt(manifest.minimum_chrome_version || "0", 10) < 114) errors.push("manifest minimum_chrome_version must be at least 114 for the Side Panel API");
 if ((manifest.web_accessible_resources || []).length) errors.push("release must not expose internal files as web-accessible resources");
 
 let head = "";
@@ -29,6 +30,7 @@ let acceptance = {};
 try {
   acceptance = JSON.parse(fs.readFileSync(new URL("../operations/acceptance/real_browser_acceptance_matrix.json", import.meta.url), "utf8"));
   errors.push(...validateAcceptanceRecord(acceptance, { manifestVersion: manifest.version }));
+  if (acceptance.status === "passed" && !String(manifest.key || "").trim()) errors.push("production readiness requires an organization-owned manifest key for a stable extension ID");
 } catch (error) {
   errors.push(`unable to read acceptance record: ${error.message}`);
 }

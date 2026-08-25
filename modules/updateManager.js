@@ -4,7 +4,9 @@ const UPDATE_STATUS_KEY = "extensionUpdateStatus";
 const UPDATE_SETTINGS_KEY = "extensionUpdateSettings";
 const UPDATE_ALARM_NAME = "etsy_growth_agent_update_check";
 const DEFAULT_CHECK_INTERVAL_MINUTES = 12 * 60;
-const DEFAULT_RELEASE_MANIFEST_URL = "https://github.com/ninemouth/etsy-growth-agent/releases/latest/download/release-manifest.json";
+const DEFAULT_RELEASE_MANIFEST_URL = "https://www.marqel.shop/api/browser-extensions/catalog";
+const LEGACY_RELEASE_MANIFEST_URL = "https://github.com/ninemouth/etsy-growth-agent/releases/latest/download/release-manifest.json";
+const EXTENSION_ID = "etsy-growth-agent";
 
 function nowIso() {
   return new Date().toISOString();
@@ -41,8 +43,9 @@ export function compareVersions(a = "", b = "") {
 async function getUpdateSettings() {
   const stored = await storageGet([UPDATE_SETTINGS_KEY]);
   const settings = stored[UPDATE_SETTINGS_KEY] || {};
+  const configuredReleaseManifestUrl = settings.releaseManifestUrl === LEGACY_RELEASE_MANIFEST_URL ? DEFAULT_RELEASE_MANIFEST_URL : settings.releaseManifestUrl;
   return {
-    releaseManifestUrl: settings.releaseManifestUrl || DEFAULT_RELEASE_MANIFEST_URL,
+    releaseManifestUrl: configuredReleaseManifestUrl || DEFAULT_RELEASE_MANIFEST_URL,
     autoCheckEnabled: settings.autoCheckEnabled !== false,
     autoApplyRuntimeUpdates: settings.autoApplyRuntimeUpdates !== false,
     checkIntervalMinutes: Number(settings.checkIntervalMinutes || DEFAULT_CHECK_INTERVAL_MINUTES),
@@ -90,6 +93,19 @@ async function fetchReleaseManifest(url) {
 }
 
 function normalizeReleaseManifest(data = {}) {
+  if (data.contractVersion === "marqel-browser-extension-catalog.v1" && Array.isArray(data.extensions)) {
+    const item = data.extensions.find((candidate) => candidate.id === EXTENSION_ID) || {};
+    return {
+      latestVersion: item.currentVersion || "",
+      releaseUrl: item.distribution?.releaseUrl || item.distribution?.repositoryUrl || "",
+      downloadUrl: item.distribution?.downloadUrl || "",
+      changelog: item.releaseState || "",
+      publishedAt: item.updatedAt || "",
+      minimumChromeVersion: item.minimumChromeVersion || "",
+      minimumSupportedVersion: item.minimumSupportedVersion || item.currentVersion || "",
+      releaseState: item.releaseState || "",
+    };
+  }
   const latestVersion = data.latest_version || data.version || "";
   return {
     latestVersion,
@@ -98,6 +114,8 @@ function normalizeReleaseManifest(data = {}) {
     changelog: data.changelog || data.notes || "",
     publishedAt: data.published_at || data.date || "",
     minimumChromeVersion: data.minimum_chrome_version || "",
+    minimumSupportedVersion: data.minimum_supported_version || latestVersion,
+    releaseState: "legacy_release_manifest",
   };
 }
 
@@ -108,6 +126,7 @@ export async function checkForUpdates({ force = false } = {}) {
   const releaseResult = await fetchReleaseManifest(settings.releaseManifestUrl);
   const release = releaseResult.ok ? normalizeReleaseManifest(releaseResult.data) : null;
   const releaseUpdateAvailable = Boolean(release?.latestVersion && compareVersions(release.latestVersion, currentVersion) > 0);
+  const unsupported = Boolean(release?.minimumSupportedVersion && compareVersions(currentVersion, release.minimumSupportedVersion) < 0);
   const runtimeUpdateAvailable = runtimeCheck.status === "update_available";
   const next = await saveUpdateStatus({
     currentVersion,
@@ -122,13 +141,16 @@ export async function checkForUpdates({ force = false } = {}) {
     releaseManifestStatus: releaseResult.skipped ? "not_configured" : releaseResult.ok ? "ok" : "error",
     releaseManifestError: releaseResult.error || "",
     latestReleaseVersion: release?.latestVersion || "",
+    minimumSupportedVersion: release?.minimumSupportedVersion || "",
+    releaseState: release?.releaseState || "",
+    unsupported,
     releaseUpdateAvailable,
     releaseUrl: release?.releaseUrl || "",
     downloadUrl: release?.downloadUrl || "",
     changelog: release?.changelog || "",
     publishedAt: release?.publishedAt || "",
     updateAvailable: runtimeUpdateAvailable || releaseUpdateAvailable,
-    updateChannel: runtimeUpdateAvailable ? "chrome_runtime" : releaseUpdateAvailable ? "open_source_release_manifest" : "none",
+    updateChannel: runtimeUpdateAvailable ? "chrome_runtime" : releaseUpdateAvailable || unsupported ? "marqel_control_center_catalog" : "none",
   });
   return next;
 }

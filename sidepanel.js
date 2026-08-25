@@ -741,6 +741,7 @@ function cleanupPort() {
 
 async function runSkill() {
   if (!selectedSkill || isRunning) return;
+  if (!window.confirm("运行会采集当前可见页面截图，并发送给你配置的第三方模型。请确认页面不包含账号、订单、付款、验证码或其他敏感信息。是否继续？")) return;
 
   isRunning = true;
   const runBtn = $("runBtn");
@@ -960,6 +961,7 @@ async function runSkill() {
       forceNewSession: !shouldContinueSession,
       highRandomness: $("highRandomnessCheckbox").checked,
       negativeFilter: $("negativeFilterCheckbox").checked,
+      screenshotDisclosureConfirmed: true,
     });
 
   } catch (err) {

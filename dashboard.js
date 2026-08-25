@@ -3001,6 +3001,9 @@ async function ensureDashboardSavedEntry(run, successResult = {}) {
 }
 
 function startDashboardGrowthRun(run) {
+  if (!window.confirm("运行会采集当前可见页面截图，并发送给你配置的第三方模型。请确认页面不包含账号、订单、付款、验证码或其他敏感信息。是否继续？")) {
+    return Promise.reject(new Error("用户取消了当前页面截图披露确认。"));
+  }
   return new Promise((resolve, reject) => {
     if (!chrome.runtime?.connect) {
       reject(new Error("当前环境不支持后台长连接，请在 Etsy 页面右侧浮窗执行该技能。"));
@@ -3092,6 +3095,7 @@ function startDashboardGrowthRun(run) {
       continueSession: false,
       forceNewSession: true,
       userInstruction: run.instruction,
+      screenshotDisclosureConfirmed: true,
     });
   });
 }

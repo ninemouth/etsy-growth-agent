@@ -1,7 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Etsy 运营增长助手",
-  "version": "1.2.1",
+  "version": "1.2.2",
+  "minimum_chrome_version": "114",
   "description": "针对 Etsy 平台的智能店铺运营、Listing 改版、趋势研究与 Marqel 订阅鉴权工具。",
   "default_locale": "zh_CN",
   "permissions": [
@@ -66,9 +67,9 @@
   "content_scripts": [
     {
       "matches": [
-        "*://www.etsy.com/*",
-        "*://*.etsy.com/*",
-        "*://etsy.com/*"
+        "https://www.etsy.com/*",
+        "https://*.etsy.com/*",
+        "https://etsy.com/*"
       ],
       "js": ["content.js"],
       "run_at": "document_end",

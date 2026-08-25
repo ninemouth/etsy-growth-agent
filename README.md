@@ -102,22 +102,22 @@ The extension includes update awareness in the side panel settings:
 
 - `Check for updates` calls Chrome's runtime update check.
 - `onUpdateAvailable` is recorded and applied automatically when no workflow is running.
-- An optional open-source release manifest URL can be configured for GitHub release awareness.
+- The default version source is the Marqel browser-extension catalog at `/api/browser-extensions/catalog`; it distinguishes current source, minimum supported version, controlled-test artifacts, and production-ready releases.
+- Existing installations that still point at the obsolete GitHub `releases/latest` manifest are migrated to the governed catalog. A historical GitHub Release is not treated as the current supported version.
 
-For GitHub releases, publish a `release-manifest.json` with this shape:
+The governed catalog publishes a record with this shape:
 
 ```json
 {
-  "latest_version": "1.1.0",
-  "release_url": "https://github.com/ninemouth/etsy-growth-agent/releases/latest",
-  "download_url": "https://github.com/ninemouth/etsy-growth-agent/releases/latest",
-  "published_at": "2026-07-13T00:00:00Z",
-  "minimum_chrome_version": "120",
-  "changelog": "Release notes"
+  "id": "etsy-growth-agent",
+  "currentVersion": "1.2.2",
+  "minimumSupportedVersion": "1.2.2",
+  "minimumChromeVersion": "114",
+  "releaseState": "source_only_blocked"
 }
 ```
 
-The included GitHub Action packages the extension zip and uploads both the zip and release manifest when a tag like `v1.1.0` is pushed.
+The GitHub Action packages a ZIP only after the real-browser release gate passes. Until then, the current source remains visible while the catalog explicitly blocks production installation.
 
 ## Development
 
@@ -156,7 +156,7 @@ See `operations/architecture_audit.md` for the current runtime risk register and
 
 ## Privacy
 
-The extension is designed for local browser execution. LLM provider credentials and Etsy credentials are stored in `chrome.storage.local`. No third-party middleware server is required by this repository.
+The extension is designed for local browser execution. LLM provider credentials are stored in `chrome.storage.local`; Etsy login credentials and cookies are not collected by the extension. Viewport screenshots require a fresh user disclosure confirmation before they can be sent to the configured model provider. See `DATA_GOVERNANCE.md` for the enforced boundary.
 
 ## Promotion handoff
 

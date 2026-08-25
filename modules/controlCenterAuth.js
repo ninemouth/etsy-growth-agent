@@ -320,6 +320,30 @@ export async function syncClientConfig() {
   return { ...result, config: await storedConfig() };
 }
 
+function installedChromeVersion() {
+  return navigator.userAgent.match(/(?:Chrome|Chromium)\/(\d+(?:\.\d+){0,3})/)?.[1] || "0";
+}
+
+export async function reportBrowserExtensionInstallation() {
+  const session = await getActiveSession({ revalidate: false });
+  if (!session?.accessToken) throw new Error("请先完成 Marqel V2 设备授权，再上报插件版本。");
+  return request("/api/browser-extensions/report", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${session.accessToken}` },
+    body: JSON.stringify({
+      contractVersion: "marqel-browser-extension-report.v1",
+      extension: {
+        id: CLIENT_ID,
+        version: chrome.runtime.getManifest().version,
+        runtimeExtensionId: chrome.runtime.id || "",
+        chromeVersion: installedChromeVersion(),
+        platform: "adspower_etsy",
+        installMode: "unknown",
+      },
+    }),
+  }, session);
+}
+
 export async function signOut() {
   await clearStoredSession();
 }

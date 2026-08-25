@@ -49,7 +49,7 @@ import {
   shouldClarifyResearchScope,
 } from './modules/researchScope.js';
 import { getCurrencyRates, saveCurrencyRates } from './modules/currencyRates.js';
-import { getActiveSession, getPendingDeviceAuthorization, pollDeviceAuthorization, requireActiveSession, signOut, startDeviceAuthorization, syncClientConfig } from './modules/controlCenterAuth.js';
+import { getActiveSession, getPendingDeviceAuthorization, pollDeviceAuthorization, reportBrowserExtensionInstallation, requireActiveSession, signOut, startDeviceAuthorization, syncClientConfig } from './modules/controlCenterAuth.js';
 import { buildCrossBorderSourcingHandoff, isCrossBorderSourcingRequest } from './modules/crossBorderSourcingHandoff.js';
 
 function clientConfigSummary(config = null) {
@@ -847,6 +847,10 @@ chrome.runtime.onConnect.addListener((port) => {
           try { port.postMessage({ type: "ERROR", error: error.message, errorCode: "AUTH_REQUIRED", resumable: false }); } catch (_) {}
           return;
         }
+        if (message.screenshotDisclosureConfirmed !== true) {
+          try { port.postMessage({ type: "ERROR", error: "运行前必须明确确认：当前可见页面截图会发送给已配置的第三方模型；请移除账号、订单、付款或验证码等敏感信息。", errorCode: "SCREENSHOT_DISCLOSURE_REQUIRED", resumable: false }); } catch (_) {}
+          return;
+        }
         if (isCrossBorderSourcingRequest({
           actionId: message.growthActionId,
           skillPath: message.skillPath,
@@ -1367,7 +1371,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "AUTH_DEVICE_POLL") {
     pollDeviceAuthorization()
-      .then((result) => sendResponse({ ok: true, result }))
+      .then(async (result) => {
+        if (result.status === "authorized") await reportBrowserExtensionInstallation();
+        sendResponse({ ok: true, result });
+      })
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }
@@ -1688,7 +1695,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // ── Alarms Listener for Scheduled Background Monitoring Checks ──
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === DEVICE_AUTH_ALARM) {
-    try { await pollDeviceAuthorization(); } catch { /* Dashboard exposes the actionable error on the next explicit check. */ }
+    try {
+      const result = await pollDeviceAuthorization();
+      if (result.status === "authorized") await reportBrowserExtensionInstallation();
+    } catch { /* Dashboard exposes the actionable error on the next explicit check. */ }
     return;
   }
   if (alarm.name === TASK_LOG_RETENTION_ALARM) {
@@ -1705,6 +1715,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (isUpdateAlarm(alarm.name)) {
     try {
       await checkForUpdates();
+      try { await reportBrowserExtensionInstallation(); } catch { /* Reporting requires an approved device session. */ }
       await applyPendingUpdateIfIdle("scheduled_check");
     } catch (err) {
       console.warn("Scheduled update check failed:", err.message);

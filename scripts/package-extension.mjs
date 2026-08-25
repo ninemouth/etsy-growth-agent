@@ -16,7 +16,7 @@ const excludedLegacyFiles = ["skills/etsy_sourcing_finder.skill.md"];
 const include = [
   "_locales", "icons", "libs", "modules", "skills", "background.js", "content.js",
   "dashboard.css", "dashboard.html", "dashboard.js", "manifest.json", "print.html", "print.js",
-  "sidepanel.css", "sidepanel.html", "sidepanel.js", "PrivacyPolicy.md", "README.md", "LICENSE",
+  "sidepanel.css", "sidepanel.html", "sidepanel.js", "PrivacyPolicy.md", "DATA_GOVERNANCE.md", "README.md", "LICENSE",
 ];
 
 const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
@@ -74,7 +74,7 @@ const releaseManifest = {
   extension_manifest_sha256: manifestSha256,
   release_url: `https://github.com/${repository}/releases/tag/v${manifest.version}`,
   download_url: `https://github.com/${repository}/releases/download/v${manifest.version}/${packageName}`,
-  minimum_chrome_version: "120",
+  minimum_chrome_version: manifest.minimum_chrome_version,
   changelog: "See GitHub release notes.",
 };
 await writeFile(releaseManifestPath, `${JSON.stringify(releaseManifest, null, 2)}\n`, "utf8");
