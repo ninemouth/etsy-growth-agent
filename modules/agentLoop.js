@@ -4278,6 +4278,17 @@ function buildPromptContext(pageContext = {}) {
 const INTERNAL_RUNAWAY_GUARD_STEPS = 200;
 const LLM_RECOVERY_RETRIES = 1;
 const LLM_PLANNING_TIMEOUT_MS = 4 * 60 * 1000;
+// The Etsy extension is an evidence and planning client. Generic page mutation and
+// supplier-platform execution belong to separate, explicitly authorized lanes.
+const MODEL_DENIED_PAGE_MUTATION_TOOLS = new Set([
+  "click_by_text",
+  "click_by_selector",
+  "click_by_coordinate",
+  "input_text_and_search",
+  "image_search_1688",
+  "image_search_taobao",
+  "image_search_in_browser",
+]);
 
 function isRetryableLLMError(error) {
   return /network|fetch failed|请求.*失败|请求.*超时|timeout|timed out|502|503|504|429|连接|socket|ECONN|ENET|EAI_AGAIN/i.test(String(error?.message || error || ""));
@@ -4316,6 +4327,7 @@ export async function runAgentLoop({ tabId, skillId, skillMarkdown, userInstruct
   const isApiActive = !!(settings.helium10ApiKey || settings.sellerSpriteApiKey);
   const isFastMossActive = !!settings.fastmossApiKey;
   const filteredToolList = Object.keys(tools).filter(name => {
+    if (MODEL_DENIED_PAGE_MUTATION_TOOLS.has(name)) return false;
     if (isComplianceSkill(skillId) && !COMPLIANCE_ALLOWED_TOOLS.has(name)) return false;
     if (name === "query_market_data") return isApiActive;
     if (name === "query_fastmoss_data") return isFastMossActive;
@@ -4829,6 +4841,20 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     if (parsed.type === "tool_call") {
       let toolName = parsed.tool;
       let toolArgs = parsed.arguments || {};
+
+      if (MODEL_DENIED_PAGE_MUTATION_TOOLS.has(toolName)) {
+        messages.push({ role: "assistant", content: assistantContent });
+        messages.push({
+          role: "user",
+          content: JSON.stringify({
+            type: "tool_error",
+            tool: toolName,
+            error: "该动作会修改网页状态或进入独立供应商执行通道，Etsy Growth Agent 的模型执行权限已在中央策略中拒绝。请改用只读证据工具；供应商任务交给 supplier-sourcing-chrome-runner，任何高后果动作由人工在对应平台完成。",
+          }),
+        });
+        await saveCheckpoint({ status: "tool_guard_retry", step, lastNode: "central_page_mutation_guard", toolName });
+        continue;
+      }
 
       if (isPlatformTrendSkill(skillId) && !PLATFORM_TRENDS_ALLOWED_TOOLS.has(toolName)) {
         messages.push({ role: "assistant", content: assistantContent });

@@ -144,11 +144,21 @@ assert.equal(masked.includes("sk-live1234567890abcdef"), false, "Bearer token mu
 
 const manifest = JSON.parse(read("manifest.json"));
 const sidepanelSource = read("sidepanel.js");
+const contentSource = read("content.js");
+const agentLoopSource = read("modules/agentLoop.js");
 assert.equal(manifest.permissions.includes("debugger"), false, "extension must not request debugger access");
 assert.equal(manifest.host_permissions.includes("<all_urls>"), false, "extension must not request blanket install-time host access");
 assert.equal((manifest.web_accessible_resources || []).length, 0, "internal extension resources must not be exposed to web pages");
-assert.deepEqual(manifest.optional_host_permissions, ["https://*/*", "http://*/*"], "custom services must use runtime optional host permission");
+assert.deepEqual(manifest.optional_host_permissions, [], "release must not offer arbitrary cross-origin permissions");
 assert.match(sidepanelSource, /chrome\.permissions\.contains[\s\S]*chrome\.permissions\.request/, "custom service origins must be requested explicitly");
 assert.match(sidepanelSource, /parsed\.username \|\| parsed\.password/, "custom service URLs must reject embedded credentials");
+assert.match(sidepanelSource, /APPROVED_PROVIDER_ORIGINS/, "provider endpoints must be restricted to declared origins");
+assert.match(contentSource, /attachShadow\(\{ mode: "closed" \}\)/, "page overlay must use a closed shadow root");
+assert.match(contentSource, /Credentials and provider settings must live on an extension-origin page/, "page overlay must replace the legacy credential form before attachment");
+assert.doesNotMatch(contentSource, /<input[^>]+id="(?:etsy-new-api-key|etsy-new-oauth-token|etsy-new-refresh-token|llm-api-key)"/, "page overlay source must not render secret input fields");
+assert.match(agentLoopSource, /MODEL_DENIED_PAGE_MUTATION_TOOLS/, "model actions must use the centralized mutation deny policy");
+for (const tool of ["click_by_text", "click_by_selector", "click_by_coordinate", "input_text_and_search", "image_search_1688", "image_search_taobao"]) {
+  assert.match(agentLoopSource, new RegExp(`MODEL_DENIED_PAGE_MUTATION_TOOLS[\\s\\S]*${tool}`), `${tool} must be denied to the model`);
+}
 
 console.log("security smoke passed");

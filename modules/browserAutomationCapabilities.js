@@ -20,13 +20,13 @@ export const BROWSER_AUTOMATION_CAPABILITIES = [
   },
   {
     id: "keyboard_input_search",
-    label: "模拟键盘输入与站内搜索",
-    tools: ["input_text_and_search"],
-    robustness: "medium_high",
+    label: "站内搜索边界",
+    tools: ["search_in_browser"],
+    robustness: "human_gated",
     guarantees: [
-      "模拟清空、逐字输入、input/change/keyup 事件",
-      "优先点击可见搜索按钮，找不到按钮时回退 Enter",
-      "轮询结果页，直到商品卡片、商品链接或阻断状态出现",
+      "模型不获得通用输入、提交或页面点击工具",
+      "公开检索只通过受约束的搜索导航工具打开新标签页",
+      "需要登录、提交或状态变更时转为人工操作",
     ],
     limitations: [
       "复杂 Shadow DOM、强登录态或验证码可能需要人工介入",
@@ -36,12 +36,12 @@ export const BROWSER_AUTOMATION_CAPABILITIES = [
   {
     id: "filter_sort_pagination",
     label: "筛选、排序与翻页",
-    tools: ["collect_etsy_shop_pages", "collect_etsy_competitor_shops", "scroll_page", "read_current_page", "click_by_text", "click_by_coordinate"],
+    tools: ["collect_etsy_shop_pages", "collect_etsy_competitor_shops", "scroll_page", "read_current_page"],
     robustness: "medium_high",
     guarantees: [
       "店铺商品页会按 Etsy 分页机制采集可见商品",
       "竞品采集会记录排序、分页、商品卡片和页面签名",
-      "坐标点击会屏蔽上传、相机和文件选择类危险区域",
+      "模型侧不暴露通用文本、选择器或坐标点击能力",
     ],
     limitations: [
       "Etsy 个性化、地区化和虚拟加载会影响排序样本",
@@ -66,10 +66,10 @@ export const BROWSER_AUTOMATION_CAPABILITIES = [
   {
     id: "multimodal_screenshot",
     label: "多模态截图与视觉识别",
-    tools: ["collect_etsy_shop_pages", "analyze_etsy_shop_crawl_screenshots", "search_in_browser", "click_by_coordinate"],
+    tools: ["collect_etsy_shop_pages", "analyze_etsy_shop_crawl_screenshots", "search_in_browser"],
     robustness: "medium_high",
     guarantees: [
-      "优先使用 Chrome debugger full-page screenshot，失败回退 visible viewport",
+      "使用 Chrome captureVisibleTab 采集当前可见 viewport，并明确标记采集模式",
       "店铺、竞品、Google Trends 截图进入 artifactStore 并带 capture mode",
       "截图视觉分析必须与 DOM 和搜索证据双轨校验",
     ],

@@ -1549,6 +1549,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "OPEN_SIDEPANEL") {
+    const tabId = sender?.tab?.id;
+    if (!Number.isInteger(tabId)) {
+      sendResponse({ ok: false, error: "无法确定当前 Etsy 标签页。" });
+      return false;
+    }
+    chrome.sidePanel.open({ tabId })
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   if (message.type === "GET_ETSY_STORE_SNAPSHOT") {
     const args = message.args || {};
     tools

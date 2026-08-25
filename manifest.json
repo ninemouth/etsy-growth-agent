@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Etsy 运营增长助手",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "针对 Etsy 平台的智能店铺运营、Listing 改版、趋势研究与 Marqel 订阅鉴权工具。",
   "default_locale": "zh_CN",
   "permissions": [
@@ -42,25 +42,10 @@
     "https://www.ebay.fr/*",
     "https://www.ebay.ca/*",
     "https://www.ebay.com.au/*",
-    "https://s.1688.com/*",
-    "https://detail.1688.com/*",
-    "https://sec.1688.com/*",
-    "https://*.alicdn.com/*",
-    "https://s.taobao.com/*",
-    "https://*.taobao.com/*",
-    "https://search.jd.com/*",
-    "https://mobile.yangkeduo.com/*",
     "https://www.pinterest.com/*",
-    "https://trends.pinterest.com/*",
-    "https://www.tiktok.com/*",
-    "https://shop.tiktok.com/*",
-    "https://www.instagram.com/*",
-    "https://www.reddit.com/*"
+    "https://trends.pinterest.com/*"
   ],
-  "optional_host_permissions": [
-    "https://*/*",
-    "http://*/*"
-  ],
+  "optional_host_permissions": [],
   "background": {
     "service_worker": "background.js",
     "type": "module"

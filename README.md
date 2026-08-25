@@ -15,7 +15,7 @@ Repository: https://github.com/ninemouth/etsy-growth-agent
 - Competitor/review analysis focused on buyer expectations, packaging, delivery promise, personalization quality, and IP/compliance risk.
 - Optional Etsy personal-access Open API adapter for active listings and authorized receipts when a Shop ID, API key, OAuth access token, and optional refresh token are configured locally.
 - Etsy Campaign Adapter: imports user-triggered visible Etsy Ads / Offsite Ads evidence, produces approval-required recommendations, and exports approved, credential-free promotion handoffs for downstream services.
-- Marqel Control Center V2 session: the open-source extension keeps its own local LLM/image settings, but Agent execution requires an active Marqel session; first use starts an `etsy-growth-agent` device request that a Web member must approve, then the extension synchronizes the default configuration without removing local overrides. The extension never collects a Marqel password.
+- Marqel Control Center V2 session: Agent execution requires an active Marqel session; first use starts an `etsy-growth-agent` device request that a Web member must approve. The extension can use approved organization defaults or local overrides from its extension-origin side panel, and never collects a Marqel password.
 
 ## Project Structure
 
@@ -66,15 +66,16 @@ The extension stores Etsy credentials only in `chrome.storage.local` for the cur
 - `OAuth Access Token` for private shop data such as receipts/orders
 - Optional `Refresh Token` for renewing an expired access token
 
-This project does not currently implement the full OAuth consent screen or hosted multi-user callback flow. Generate or provide the personal access credentials outside the extension, then save them in the extension settings drawer. Marqel Control Center LLM/multimodal/image defaults are a separate configuration lane; Etsy credentials remain local and are never returned by the Control Center config endpoint.
+This project does not currently implement the full OAuth consent screen or hosted multi-user callback flow. Generate or provide the personal access credentials outside the extension, then save them in the extension side panel. The page overlay never renders or repopulates credential fields. Marqel Control Center LLM/multimodal/image defaults are a separate configuration lane; Etsy credentials remain local and are never returned by the Control Center config endpoint.
 
 ## Before You Run
 
-Etsy Growth Agent works by reading the currently open browser page and, for some skills, opening temporary evidence tabs for Etsy Search, Google Search, Google Trends, competitor shops/listings, and sourcing sites. For reliable runs, prepare the browser session first:
+Etsy Growth Agent works by reading the currently open browser page and, for some skills, opening temporary read-only evidence tabs for Etsy Search, Google Search, Google Trends, and public competitor/shop research. It does not execute supplier-platform actions. For reliable runs, prepare the browser session first:
 
 - Sign in to Etsy in the same Chrome profile before running shop diagnosis, listing work, review analysis, or any workflow that depends on seller-visible pages.
 - Open Google Search and Google Trends once in the same Chrome profile, complete any consent, region, language, or verification prompts, then keep the session available for trend and market-research workflows.
 - For 1688/Taobao supplier tasks, use Codex `$cross-border-sourcing-orchestrator` and the ordinary Chrome `supplier-sourcing-chrome-runner`; do not use this extension as the supplier-platform runner. Platform login and CAPTCHA prompts remain human-handled.
+- The model tool surface is read-only for page evidence. Generic clicks, form input/submission, image upload/search, purchase, publish, account, Ads, and other high-consequence actions are denied centrally and remain human-controlled.
 - For any Agent run, sign in through the Dashboard's `Marqel Access` control first. The open-source plugin can be configured locally without an account, but it will fail closed before execution when the shared Marqel session is missing or inactive.
 - Keep the original Etsy shop or listing page open while the workflow runs. The extension protects and restores the source tab, but external login or verification pages may still require manual attention.
 - If a run reports a blocked, login, consent, or verification page, resolve it in Chrome, reload the extension/page if needed, then resume the saved workflow instead of starting from scratch.

@@ -15,6 +15,16 @@ let sessionHistoryCategory = "all";
 let activeToolRunId = "";
 
 const WORKFLOW_CHECKPOINTS_KEY = "agentWorkflowCheckpoints";
+const APPROVED_PROVIDER_ORIGINS = new Set([
+  "https://api.openai.com",
+  "https://api.anthropic.com",
+  "https://dashscope.aliyuncs.com",
+  "https://openrouter.ai",
+  "https://www.thinktv.ai",
+  "https://api.siliconflow.cn",
+  "https://api.groq.com",
+  "https://github.com",
+]);
 
 function optionalHostPattern(value = "") {
   const raw = String(value || "").trim();
@@ -25,11 +35,14 @@ function optionalHostPattern(value = "") {
   } catch (_) {
     throw new Error(`无效的自定义 URL：${raw}`);
   }
-  if (!["https:", "http:"].includes(parsed.protocol)) {
-    throw new Error("自定义服务只允许 http(s) URL。");
+  if (parsed.protocol !== "https:") {
+    throw new Error("Provider 与版本清单只允许 HTTPS URL。");
   }
   if (parsed.username || parsed.password) {
     throw new Error("自定义服务 URL 不得包含用户名或密码。");
+  }
+  if (!APPROVED_PROVIDER_ORIGINS.has(parsed.origin)) {
+    throw new Error(`当前扩展未声明 ${parsed.origin} 的访问权限；请在发布清单中经过审查后显式加入，不允许运行时请求任意域名。`);
   }
   return `${parsed.origin}/*`;
 }

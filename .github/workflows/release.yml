@@ -12,8 +12,8 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 22
           cache: npm
@@ -21,8 +21,17 @@ jobs:
       - run: npm run test:release
       - run: npm run release:readiness
       - run: npm run package:extension
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/etsy-growth-agent-*.zip
-            dist/release-manifest.json
+      - name: Verify tag matches extension version
+        shell: bash
+        run: |
+          expected="v$(node -p \"require('./package.json').version\")"
+          test "$GITHUB_REF_NAME" = "$expected"
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/etsy-growth-agent-*.zip \
+            dist/release-manifest.json \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes

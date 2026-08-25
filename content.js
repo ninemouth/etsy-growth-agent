@@ -2219,7 +2219,7 @@
     // Create Shadow DOM Container
     const container = document.createElement("div");
     container.id = "etsy-assistant-root";
-    const shadow = container.attachShadow({ mode: "open" });
+    const shadow = container.attachShadow({ mode: "closed" });
     document.body.appendChild(container);
 
     // Initial theme loading
@@ -3262,119 +3262,24 @@
     // Create Settings Flyout Drawer
     const settingsDrawer = document.createElement("div");
     settingsDrawer.className = "settings-drawer hidden";
+    // Credentials and provider settings must live on an extension-origin page.
+    // The page overlay contains no credential or provider input fields.
+    settingsDrawer.dataset.extensionOriginOnly = "true";
     settingsDrawer.innerHTML = `
       <div class="chat-header">
         <div class="chat-title-group">
-          <span class="chat-title">助手与大模型参数配置</span>
+          <span class="chat-title">安全配置入口</span>
         </div>
       </div>
       <div class="settings-body">
-        <div class="settings-section-title">Etsy 个人访问 API 配置</div>
-        <div class="form-group">
-          <label class="form-label">活动店铺切换</label>
-          <select class="form-input" id="etsy-active-shop-select">
-            <option value="">-- 未绑定店铺 --</option>
-          </select>
-        </div>
-        
-        <div class="form-group" style="margin-top: -5px; margin-bottom: 15px;">
-          <div id="etsy-drawer-shops-list" style="display:flex; flex-direction:column; gap:4px; margin-bottom:10px;">
-            <!-- list of bound shops -->
-          </div>
-          <button class="eye-btn" id="etsy-drawer-toggle-add-btn" type="button" style="display:block; width:100%; border:1px dashed var(--border-main); padding:6px; font-size:11px; border-radius:4px; text-align:center; cursor:pointer; background:none; color:var(--text-color);">➕ 添加个人访问凭证</button>
-        </div>
-
-        <div id="etsy-drawer-add-shop-form" class="hidden" style="border:1px solid var(--border-main); border-radius:6px; padding:10px; background:rgba(255,255,255,0.02); margin-bottom:15px; display:flex; flex-direction:column; gap:8px;">
-          <div style="font-size:11px; font-weight:600; margin-bottom:4px; color:var(--text-color)">➕ Etsy 个人访问凭证</div>
-          <input type="text" class="form-input" id="etsy-new-name" placeholder="店铺备注名，如: Handmade Gift Shop">
-          <div class="form-row" style="display:flex; gap:8px;">
-            <input type="text" class="form-input" id="etsy-new-client-id" placeholder="Etsy Shop ID" style="flex:1;">
-            <input type="password" class="form-input" id="etsy-new-api-key" placeholder="API Key: keystring:shared_secret" style="flex:1;">
-          </div>
-          <input type="password" class="form-input" id="etsy-new-oauth-token" placeholder="OAuth Access Token（订单/Receipts 等私有数据需要）">
-          <input type="password" class="form-input" id="etsy-new-refresh-token" placeholder="Refresh Token（可选，用于 Access Token 过期后自动续期）">
-          <div style="font-size:10px; line-height:1.5; color:var(--text-secondary);">个人访问版本仅用于当前本地浏览器。Listings 可只用 API Key；订单、Receipts、私有店铺数据需要 OAuth Bearer token；建议同时保存 refresh token。</div>
-          <div class="form-row" style="display:flex; gap:8px;">
-            <select class="form-input" id="etsy-new-wh-type" style="flex:1;">
-              <option value="Etsy 自发货">Etsy 自发货 (跨境自集运)</option>
-              <option value="第三方海外仓">第三方海外仓 (欧美本土仓)</option>
-            </select>
-            <button class="eye-btn" id="etsy-drawer-save-shop-btn" type="button" style="flex:1; background:#005bff; color:#fff; border:none; border-radius:4px; font-size:11px; font-weight:600; cursor:pointer; height:32px;">保存凭证</button>
-          </div>
-        </div>
-
-        <div class="form-group" style="margin-bottom:15px;">
-          <label class="form-label">目标毛利率 (%)</label>
-          <input type="number" class="form-input" id="etsy-target-margin" value="20" min="5" max="90">
-        </div>
-
-        <div class="settings-section-title">大模型参数配置 (LLM Config)</div>
-        <div class="form-group">
-          <label class="form-label">LLM Provider</label>
-          <select class="form-input" id="llm-provider">
-            <option value="qwen">Qwen (通义千问)</option>
-            <option value="anthropic">Anthropic</option>
-            <option value="openrouter">OpenRouter</option>
-            <option value="thinktv">ThinkTV</option>
-            <option value="custom">Custom (自定义 OpenAI 端点)</option>
-          </select>
-        </div>
-
-        <div class="form-group hidden" id="custom-url-container">
-          <label class="form-label">自定义 API Endpoint</label>
-          <input type="text" class="form-input" id="llm-base-url" placeholder="https://www.thinktv.ai/v1">
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">LLM API Key</label>
-          <div class="password-input-wrapper">
-            <input type="password" class="form-input" id="llm-api-key" placeholder="输入接口 API Key">
-            <button class="eye-btn" id="llm-api-key-toggle" type="button" title="显示密钥">👁️</button>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">推理模型 (Model)</label>
-          <input type="text" class="form-input" id="llm-model" value="qwen3.5-plus">
-          <div class="quick-chips" id="llm-model-chips">
-            <span class="chip" data-val="qwen3.7-max">qwen3.7-max</span>
-            <span class="chip" data-val="qwen3.6-plus">qwen3.6-plus</span>
-            <span class="chip" data-val="qwen3.5-plus">qwen3.5-plus</span>
-            <span class="chip" data-val="qwen-vl-max">qwen-vl-max</span>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">生图模型 (Image Gen Model)</label>
-          <input type="text" class="form-input" id="image-gen-model" value="qwen-image-2.0">
-          <div class="quick-chips" id="image-gen-model-chips">
-            <span class="chip" data-val="qwen-image-2.0">qwen-image-2.0</span>
-            <span class="chip" data-val="wanx2.1-t2i-turbo">wanx2.1-t2i-turbo</span>
-            <span class="chip" data-val="wanx2.1-i2i-turbo">wanx2.1-i2i-turbo</span>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label" style="display:flex; justify-content:space-between;">
-            <span>采样温度 (Temperature)</span>
-            <span id="temp-val-display" style="color:#005bff; font-weight:700;">0.2</span>
-          </label>
-          <input type="range" class="form-range" id="llm-temperature" min="0" max="1.5" step="0.05" value="0.2">
-        </div>
-
-        <div class="settings-section-title">界面配置 (UI Options)</div>
-        <div class="form-group">
-          <label class="form-label">界面主题 (Theme)</label>
-          <select class="form-input" id="settings-theme">
-            <option value="system">跟随系统 (System)</option>
-            <option value="dark">深色模式 (Dark)</option>
-            <option value="light">浅色模式 (Light)</option>
-          </select>
-        </div>
+        <div class="settings-section-title">扩展侧边栏配置</div>
+        <p style="font-size:12px; line-height:1.7; color:var(--text-secondary); margin:0;">
+          Etsy 凭证、模型 Base URL 与 API Key 只在扩展自己的侧边栏页面中录入和显示，不注入 Etsy 页面。
+        </p>
       </div>
       <div class="settings-footer">
         <button class="settings-btn cancel" id="settings-cancel">取消</button>
-        <button class="settings-btn save" id="settings-save">保存</button>
+        <button class="settings-btn save" id="settings-save">打开扩展侧边栏</button>
       </div>
     `;
     shadow.appendChild(settingsDrawer);
@@ -4982,6 +4887,11 @@
     }
 
     settingsBtn.addEventListener("click", () => {
+      if (settingsDrawer.dataset.extensionOriginOnly === "true") {
+        chrome.runtime.sendMessage({ type: "OPEN_SIDEPANEL" });
+        settingsDrawer.classList.add("hidden");
+        return;
+      }
       settingsDrawer.classList.toggle("hidden");
       chatOverlay.classList.add("hidden");
       
@@ -5091,6 +5001,11 @@
     });
 
     shadow.getElementById("settings-save").addEventListener("click", () => {
+      if (settingsDrawer.dataset.extensionOriginOnly === "true") {
+        chrome.runtime.sendMessage({ type: "OPEN_SIDEPANEL" });
+        settingsDrawer.classList.add("hidden");
+        return;
+      }
       const activeShopId = shadow.getElementById("etsy-active-shop-select").value;
       const margin = shadow.getElementById("etsy-target-margin").value;
       const themeVal = shadow.getElementById("settings-theme").value;
