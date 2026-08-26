@@ -1,13 +1,13 @@
 // modules/toolRegistry.js — Tool registry and content script bridge
 
-import { callLLM, getSettings, prepareCleanProductImage, resolveLLMProfiles } from './llmClient.js';
+import { callLLM, getSettings, resolveLLMProfiles } from './llmClient.js';
 import { etsyGetProductList, etsyGetProductInfo, etsyGetAnalyticsData, etsyGetFbsPostingList, etsyGetFboPostingList, etsyGetStoreSnapshot, getEtsyApiCapabilities, getEtsySettings } from './etsyApi.js';
 import { getArtifactDataUrl, pruneArtifacts, putDataUrlArtifact } from './artifactStore.js';
 import { closeOwnedTab, createOwnedTab, createOwnedTabCallback } from './browserSessionManager.js';
 import { appendWorkflowEvent, isWorkflowCancellationRequested } from './workflowRuntime.js';
 import { summarizeBrowserAutomationCapabilities } from './browserAutomationCapabilities.js';
+import { attachLocalBusinessAuthority, buildLocalBusinessAuthority } from './businessAuthority.js';
 
-const preparedImageCache = new Map();
 const ETSY_SHOP_CRAWL_SCREENSHOT_NAMESPACE = "etsy-shop-crawl-screenshot";
 const etsyShopCrawlCache = new Map();
 
@@ -89,16 +89,6 @@ async function restoreSourceTabFocusBounded(sourceTabId = null, timeoutMs = 1200
   }
 }
 
-function cachePreparedImage(dataUrl) {
-  const ref = `__CLEAN_PRODUCT_IMAGE_${Date.now()}_${Math.random().toString(36).slice(2, 8)}__`;
-  preparedImageCache.set(ref, dataUrl);
-  return ref;
-}
-
-function resolvePreparedImageUrl(imageUrl) {
-  return preparedImageCache.get(imageUrl) || imageUrl;
-}
-
 async function cacheEtsyShopCrawlScreenshot(dataUrl, pageIndex = 0) {
   if (!dataUrl) return null;
   return await putDataUrlArtifact(dataUrl, {
@@ -160,24 +150,29 @@ function safeEncodeURI(url) {
       encoded = url;
     }
   }
-  
-  // Inject input charset params to force search engines to parse parameters as UTF-8 instead of default GBK
-  try {
-    const lower = encoded.toLowerCase();
-    if (lower.includes("taobao.com") || lower.includes("1688.com") || lower.includes("alibaba.com") || lower.includes("aliexpress.com")) {
-      if (encoded.includes("?") && !lower.includes("_input_charset")) {
-        encoded += (encoded.endsWith("&") || encoded.endsWith("?")) ? "_input_charset=utf-8" : "&_input_charset=utf-8";
-      }
-    } else if (lower.includes("jd.com")) {
-      if (encoded.includes("?") && !lower.includes("enc=")) {
-        encoded += (encoded.endsWith("&") || encoded.endsWith("?")) ? "enc=utf-8" : "&enc=utf-8";
-      }
-    }
-  } catch (e) {
-    console.error("Charset injection failed:", e);
-  }
-  
   return encoded;
+}
+
+function assertAllowedBrowserNavigationUrl(value = "") {
+  let url;
+  try {
+    url = new URL(String(value || ""));
+  } catch (_) {
+    const error = new Error("Browser navigation requires an absolute HTTP(S) URL.");
+    error.code = "BROWSER_NAVIGATION_URL_INVALID";
+    throw error;
+  }
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+    const error = new Error("Browser navigation requires a credential-free HTTP(S) URL.");
+    error.code = "BROWSER_NAVIGATION_URL_INVALID";
+    throw error;
+  }
+  if (/(^|\.)(?:1688\.com|taobao\.com|tmall\.com)$/i.test(url.hostname)) {
+    const error = new Error("Supplier-platform browser execution is not allowed in Etsy Growth Agent; use the governed sourcing handoff.");
+    error.code = "SOURCING_HANDOFF_REQUIRED";
+    throw error;
+  }
+  return url.toString();
 }
 
 function shouldLocalizeSearchQuery(engine = "", query = "") {
@@ -354,6 +349,20 @@ function normalizeSearchEngine(engine = "") {
   return String(engine || "google").toLowerCase();
 }
 
+function assertAllowedBrowserSearchEngine(engine = "") {
+  const normalized = normalizeSearchEngine(engine);
+  const supported = normalized === "bing"
+    || normalized === "pinterest"
+    || normalized === "pinterest_trends"
+    || /^(?:google|google_news|google_trends|etsy|amazon|ebay)(?:_(?:us|uk|de|fr|ca|au|ru))?$/.test(normalized);
+  if (!supported || /^(?:google_trends|etsy|amazon|ebay)_ru$/.test(normalized)) {
+    const error = new Error(`Browser search engine is not allowed in Etsy Growth Agent: ${normalized}`);
+    error.code = "BROWSER_SEARCH_ENGINE_NOT_ALLOWED";
+    throw error;
+  }
+  return normalized;
+}
+
 function buildSearchUrl(engine, targetQuery, searchType = "listing") {
   const normalizedEngine = normalizeSearchEngine(engine);
   const encodedQuery = encodeURIComponent(targetQuery);
@@ -379,14 +388,8 @@ function buildSearchUrl(engine, targetQuery, searchType = "listing") {
   }
   const engines = {
     bing: `https://www.bing.com/search?q=${encodedQuery}`,
-    taobao: `https://s.taobao.com/search?q=${encodedQuery}&_input_charset=utf-8`,
-    jd: `https://search.jd.com/Search?keyword=${encodedQuery}&enc=utf-8`,
-    pinduoduo: `https://mobile.yangkeduo.com/search_result.html?search_key=${encodedQuery}`,
     pinterest: `https://www.pinterest.com/search/pins/?q=${encodedQuery}`,
     pinterest_trends: `https://trends.pinterest.com/?q=${encodedQuery}`,
-    tiktok: `https://www.tiktok.com/search?q=${encodedQuery}`,
-    instagram: `https://www.instagram.com/explore/tags/${encodedQuery.replace(/\s+/g, "")}`,
-    reddit: `https://www.reddit.com/search/?q=${encodedQuery}`,
     google_news: `https://www.google.com/search?q=${encodedQuery}&tbm=nws`,
   };
   return engines[normalizedEngine] || `https://www.google.com/search?q=${encodedQuery}`;
@@ -849,7 +852,7 @@ async function _captureTabScreenshot(tabId, options = {}) {
 }
 
 function isVerificationUrl(url = "") {
-  return /sec\.1688\.com|login|verify|passport|captcha|challenge/i.test(String(url || ""));
+  return /login|signin|verify|passport|captcha|challenge|consent/i.test(String(url || ""));
 }
 
 async function notifyVerificationRequired(tabId, url = "", context = {}) {
@@ -863,7 +866,7 @@ async function notifyVerificationRequired(tabId, url = "", context = {}) {
       tabId,
       url,
       context,
-      message: "检测到 1688/淘宝 登录墙或人机验证，已切到验证页面等待人工处理。",
+      message: "检测到登录墙、同意页或人机验证，已切到可见页面等待人工处理。",
     });
   } catch (_) {}
 }
@@ -1500,155 +1503,6 @@ function buildScreenshotReportInputs({ analyses = [], syntheses = [], competitor
     diagnosticDepthHints,
     nextStepInstruction: "下一步请不要重新解读原始截图；请沿用 stage_observations 的逐图观察、stage_synthesis 的逐店方法归纳，以及 stage_report_inputs 的证据账本/竞品草稿，补齐 final.output.diagnostic_depth_matrix、competitor_benchmarks 和 data[].evidence_ledger。",
   };
-}
-
-function isWarmCtaPixel(r, g, b, a) {
-  return a > 180 && r >= 210 && g >= 50 && g <= 190 && b <= 125 && r > g + 35;
-}
-
-function isCoolPrimaryPixel(r, g, b, a) {
-  return a > 180 && b >= 150 && r <= 110 && g >= 75 && g <= 185 && b > r + 55;
-}
-
-function isPrimaryActionPixel(r, g, b, a) {
-  return isWarmCtaPixel(r, g, b, a) || isCoolPrimaryPixel(r, g, b, a);
-}
-
-function normalizedPointInRegion(x, y, region, padding = 0.03) {
-  if (!region) return true;
-  const left = Math.max(0, (region.normalizedLeft ?? 0) - padding);
-  const top = Math.max(0, (region.normalizedTop ?? 0) - padding);
-  const right = Math.min(1, (region.normalizedRight ?? 1) + padding);
-  const bottom = Math.min(1, (region.normalizedBottom ?? 1) + padding);
-  return x >= left && x <= right && y >= top && y <= bottom;
-}
-
-function normalizedPointInAnyRegion(x, y, regions = []) {
-  if (!regions.length) return true;
-  return regions.some((region) => normalizedPointInRegion(x, y, region));
-}
-
-async function _locateImageSearchActionInScreenshot(dataUrl, regions = []) {
-  if (typeof createImageBitmap !== "function" || typeof OffscreenCanvas === "undefined") {
-    return null;
-  }
-
-  const blob = await (await fetch(dataUrl)).blob();
-  const bitmap = await createImageBitmap(blob);
-  const maxWidth = 900;
-  const scale = Math.min(1, maxWidth / bitmap.width);
-  const width = Math.max(1, Math.round(bitmap.width * scale));
-  const height = Math.max(1, Math.round(bitmap.height * scale));
-  const canvas = new OffscreenCanvas(width, height);
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(bitmap, 0, 0, width, height);
-  const data = ctx.getImageData(0, 0, width, height).data;
-  const visited = new Uint8Array(width * height);
-  const stride = 2;
-  const candidates = [];
-
-  const isMask = (x, y) => {
-    if (x < 0 || y < 0 || x >= width || y >= height) return false;
-    const idx = (y * width + x) * 4;
-    return isPrimaryActionPixel(data[idx], data[idx + 1], data[idx + 2], data[idx + 3]);
-  };
-
-  for (let y = 0; y < height; y += stride) {
-    for (let x = 0; x < width; x += stride) {
-      const start = y * width + x;
-      if (visited[start] || !isMask(x, y)) continue;
-
-      let minX = x;
-      let maxX = x;
-      let minY = y;
-      let maxY = y;
-      let count = 0;
-      const stack = [[x, y]];
-      visited[start] = 1;
-
-      while (stack.length) {
-        const [cx, cy] = stack.pop();
-        count++;
-        minX = Math.min(minX, cx);
-        maxX = Math.max(maxX, cx);
-        minY = Math.min(minY, cy);
-        maxY = Math.max(maxY, cy);
-
-        const neighbors = [
-          [cx + stride, cy],
-          [cx - stride, cy],
-          [cx, cy + stride],
-          [cx, cy - stride],
-        ];
-        for (const [nx, ny] of neighbors) {
-          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-          const nIdx = ny * width + nx;
-          if (visited[nIdx] || !isMask(nx, ny)) continue;
-          visited[nIdx] = 1;
-          stack.push([nx, ny]);
-        }
-      }
-
-      const boxWidth = maxX - minX + stride;
-      const boxHeight = maxY - minY + stride;
-      const centerX = (minX + maxX) / 2;
-      const centerY = (minY + maxY) / 2;
-      const normalizedY = centerY / height;
-      const normalizedX = centerX / width;
-      if (count < 80 || boxWidth < 45 || boxHeight < 24 || boxWidth > 420 || boxHeight > 150) continue;
-      if (!normalizedPointInAnyRegion(normalizedX, normalizedY, regions)) continue;
-
-      let score = count + Math.min(boxWidth * boxHeight / 10, 2000);
-      if (normalizedY > 0.18 && normalizedY < 0.9) score += 900;
-      if (normalizedY < 0.16) score -= 1800;
-      if (normalizedX > 0.22 && normalizedX < 0.92) score += 350;
-      if (normalizedX > 0.35 && normalizedX < 0.78 && normalizedY > 0.32 && normalizedY < 0.78) score += 500;
-      if (boxHeight >= 34 && boxHeight <= 85) score += 260;
-      candidates.push({ normalizedX, normalizedY, score, boxWidth, boxHeight, count });
-    }
-  }
-
-  candidates.sort((a, b) => b.score - a.score);
-  return candidates[0] || null;
-}
-
-async function getImageSearchUiState(tabId) {
-  try {
-    const res = await sendToContentScript(tabId, { type: "GET_IMAGE_SEARCH_UI_STATE" });
-    return res?.data || { containers: [], candidates: [] };
-  } catch (err) {
-    return { containers: [], candidates: [], error: err.message };
-  }
-}
-
-async function visualClickImageSearchSubmit(tabId) {
-  try {
-    const uiState = await getImageSearchUiState(tabId);
-    const domCandidate = Array.isArray(uiState.candidates) ? uiState.candidates[0] : null;
-    if (domCandidate?.exactTextOnly && domCandidate?.rect?.normalizedCenterX !== undefined && domCandidate?.rect?.normalizedCenterY !== undefined) {
-      const clickResult = await sendToContentScript(tabId, {
-        type: "CLICK_BY_COORDINATE",
-        x: domCandidate.rect.normalizedCenterX,
-        y: domCandidate.rect.normalizedCenterY,
-        learnKind: "image_search_submit",
-      });
-      return {
-        ok: !!clickResult?.ok,
-        source: "dom_image_search_candidate",
-        uiState,
-        target: domCandidate,
-        clickResult,
-      };
-    }
-
-    return {
-      ok: false,
-      reason: "Exact visible 搜索图片 text was not detected; skipped unsafe screenshot/color click because this 1688 overlay closes on any other click.",
-      uiState,
-    };
-  } catch (err) {
-    return { ok: false, reason: err.message };
-  }
 }
 
 export const tools = {
@@ -2375,14 +2229,6 @@ Context:
     };
   },
 
-  extract_product_info: async (args = {}) => {
-    const tab = await getSourceOrCurrentTab(args.__sourceTabId);
-    if (!tab) throw new Error("No active tab found");
-    const result = await sendToContentScript(tab.id, { type: "EXTRACT_PRODUCT_INFO" });
-    if (!result?.ok) throw new Error(result?.error || "Failed to extract product");
-    return result.data;
-  },
-
   get_selected_text: async (args = {}) => {
     const tab = await getSourceOrCurrentTab(args.__sourceTabId);
     if (!tab) throw new Error("No active tab found");
@@ -2405,10 +2251,18 @@ Context:
       chrome.storage.local.get(["savedResults"], resolve)
     );
     const savedResults = existing.savedResults || [];
+    const authority = buildLocalBusinessAuthority({
+      skillId: args?.skillId || args?.skill_id || "toolRegistry.save_result",
+      growthActionId: args?.growthActionId || args?.growth_action_id || "",
+      operationId: args?.controlCenterOperationId || args?.operationId || args?.operation_id || "",
+    });
     const entry = {
       id: Date.now(),
       createdAt: new Date().toISOString(),
       ...args,
+      controlCenterOperationId: authority.operationId,
+      authority,
+      result: attachLocalBusinessAuthority(args?.result, authority),
     };
     savedResults.unshift(entry);
     await new Promise((resolve) =>
@@ -2454,19 +2308,21 @@ Context:
   open_url: async (args) => {
     const { url, workflowId = "default" } = args;
     if (!url) throw new Error("url is required");
-    await createOwnedTab({ workflowId, url: safeEncodeURI(url), active: false });
-    return { ok: true, message: `Opened: ${url}` };
+    const allowedUrl = assertAllowedBrowserNavigationUrl(url);
+    await createOwnedTab({ workflowId, url: safeEncodeURI(allowedUrl), active: false });
+    return { ok: true, message: `Opened: ${allowedUrl}` };
   },
 
   navigate_to: async (args) => {
     const { url, workflowId = "default", readDelayMs = 1200, __sourceTabId = null } = args;
     if (!url) throw new Error("url is required");
+    const allowedUrl = assertAllowedBrowserNavigationUrl(url);
 
-    const created = await createOwnedTab({ workflowId, url: safeEncodeURI(url), active: true, openerTabId: __sourceTabId });
+    const created = await createOwnedTab({ workflowId, url: safeEncodeURI(allowedUrl), active: true, openerTabId: __sourceTabId });
     try {
       const readiness = await waitForTabReadiness(created.id, {
         workflowId,
-        expectedUrl: url,
+        expectedUrl: allowedUrl,
         label: "navigate_to 页面取证",
         minWaitMs: Math.max(800, Math.min(Number(readDelayMs) || 1200, 5000)),
         requireEvidence: true,
@@ -2491,8 +2347,8 @@ Context:
       return {
         ok: evidenceOk,
         tabId: created.id,
-        url,
-        finalUrl: pageData?.url || readiness.tab?.url || url,
+        url: allowedUrl,
+        finalUrl: pageData?.url || readiness.tab?.url || allowedUrl,
         pageData: pageData || {},
         evidenceOk,
         readiness: readiness.readiness,
@@ -2503,15 +2359,15 @@ Context:
         readinessAttempts: readiness.attempts,
         evidence_quality: evidenceQuality,
         openedByTool: true,
-        message: `Opened temporary tab and loaded: ${url}`,
+        message: `Opened temporary tab and loaded: ${allowedUrl}`,
         readError: evidenceOk ? "" : (readiness.readError || "Page loaded but no usable DOM evidence was captured"),
       };
     } catch (err) {
       return {
         ok: false,
         tabId: created.id,
-        url,
-        finalUrl: url,
+        url: allowedUrl,
+        finalUrl: allowedUrl,
         pageData: {},
         evidenceOk: false,
         openedByTool: true,
@@ -2520,30 +2376,6 @@ Context:
     } finally {
       await restoreSourceTabFocus(__sourceTabId);
     }
-  },
-
-  query_market_data: async (args) => {
-    const { keyword } = args;
-    if (!keyword) throw new Error("keyword is required");
-
-    const settings = await new Promise((resolve) =>
-      chrome.storage.local.get(["helium10ApiKey", "sellerSpriteApiKey"], resolve)
-    );
-
-    const key = settings.helium10ApiKey || settings.sellerSpriteApiKey;
-    if (!key) {
-      throw new Error("三方选品数据 API 未配置，无法查询真实数据。请前往设置页面配置 Key。");
-    }
-
-    const provider = settings.sellerSpriteApiKey ? "SellerSprite" : "Helium 10";
-    return {
-      ok: false,
-      keyword,
-      provider,
-      evidenceOk: false,
-      integrationStatus: "not_implemented",
-      message: `${provider} 真实 API 查询尚未完成适配，插件不会生成随机市场指标。请改用 Etsy/Google/Google Trends 页面取证或接入正式 API 后再启用该工具。`,
-    };
   },
 
   agentic_web_search: async (args) => {
@@ -2687,6 +2519,7 @@ Context:
   search_in_browser: async (args) => {
     const { query, engine = "google", keepTab = false, searchType = "listing", workflowId = "default", __progress, __sourceTabId } = args;
     if (!query) throw new Error("query is required");
+    const allowedEngine = assertAllowedBrowserSearchEngine(engine);
     const emitSearchProgress = (stage, message, extra = {}) => {
       if (typeof __progress !== "function") return;
       try {
@@ -2711,9 +2544,9 @@ Context:
       };
     }
 
-    if (shouldLocalizeSearchQuery(engine, query)) {
+    if (shouldLocalizeSearchQuery(allowedEngine, query)) {
       try {
-        console.log(`Localizing query "${query}" for ${engine}...`);
+        console.log(`Localizing query "${query}" for ${allowedEngine}...`);
         const messages = [
           {
             role: "system",
@@ -2721,7 +2554,7 @@ Context:
           },
           {
             role: "user",
-            content: `The user wants to search for "${query}" on the ${engine} platform.
+            content: `The user wants to search for "${query}" on the ${allowedEngine} platform.
 Please brainstorm the top 3 most common local search terms used by shoppers on this platform for this product category.
 Output ONLY the single best, highest-volume local search term (in English or the platform's local language).
 Do NOT include any quotation marks, punctuation, explanations, or introductory text. Output the raw term directly.`
@@ -2737,44 +2570,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
       }
     }
 
-    if (engine === "1688") {
-      const searchUrl = "https://s.1688.com/";
-      return new Promise((resolve) => {
-        createOwnedTabCallback({ workflowId, url: safeEncodeURI(searchUrl), active: true, openerTabId: __sourceTabId }, (newTab) => {
-          let attempts = 0;
-          const maxAttempts = 20; // up to 10 seconds
-          const checkLoad = setInterval(() => {
-            attempts++;
-            chrome.tabs.get(newTab.id, (t) => {
-              if (chrome.runtime.lastError || !t) {
-                clearInterval(checkLoad);
-                resolve({ ok: true, tabId: newTab?.id, searchUrl, queryUsed: targetQuery, pageData: {} });
-                return;
-              }
-              
-              if (t.status === "complete" || attempts >= maxAttempts) {
-                clearInterval(checkLoad);
-                setTimeout(async () => {
-                  try {
-                    const searchRes = await tools.input_text_and_search({
-                      keyword: targetQuery,
-                      tabId: newTab.id
-                    });
-                    await restoreSourceTabFocus(__sourceTabId);
-                    resolve({ ok: true, tabId: newTab.id, searchUrl, queryUsed: targetQuery, pageData: searchRes.pageData || {} });
-                  } catch (err) {
-                    await restoreSourceTabFocus(__sourceTabId);
-                    resolve({ ok: true, tabId: newTab.id, searchUrl, queryUsed: targetQuery, pageData: {} });
-                  }
-                }, 1500);
-              }
-            });
-          }, 500);
-        });
-      });
-    }
-
-    const normalizedEngine = normalizeSearchEngine(engine);
+    const normalizedEngine = allowedEngine;
     const searchAttempts = buildBrowserSearchAttempts(normalizedEngine, targetQuery, searchType);
     const normalizedEngineFamily = engineFamily(normalizedEngine);
     const searchActionLabel = normalizedEngineFamily === "google_trends"
@@ -3041,326 +2837,6 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
     }, normalizedEngine);
   },
 
-  input_text_and_search: async (args) => {
-    const { inputSelector, submitSelector, tabId } = args;
-    const keyword = args.keyword || args.search || args.query || args.text;
-    if (!keyword) throw new Error("keyword is required");
-    
-    let targetTabId = tabId;
-    if (!targetTabId) {
-      const tab = await getCurrentTab();
-      if (!tab) throw new Error("No active tab found");
-      targetTabId = tab.id;
-    }
-    
-    return new Promise((resolve, reject) => {
-      sendToContentScript(targetTabId, { type: "INPUT_TEXT_AND_SEARCH", keyword, inputSelector, submitSelector })
-        .then(res => {
-          if (!res?.ok) {
-            reject(new Error(res?.error || "Failed to trigger search inside page"));
-            return;
-          }
-          
-          // Poll immediately for DOM readiness and product list elements
-          let attempts = 0;
-          let readInFlight = false;
-          const maxAttempts = 20; // up to 10 seconds total
-          const checkLoad = setInterval(async () => {
-            if (readInFlight) return;
-            readInFlight = true;
-            attempts++;
-            if (await isToolCancellationRequested(args)) {
-              clearInterval(checkLoad);
-              readInFlight = false;
-              resolve({ ok: false, cancelled: true, tabId: targetTabId, pageData: {}, message: "Search input polling cancelled by workflow request." });
-              return;
-            }
-            chrome.tabs.get(targetTabId, async (t) => {
-              if (chrome.runtime.lastError || !t) {
-                clearInterval(checkLoad);
-                readInFlight = false;
-                resolve({ ok: true, tabId: targetTabId, pageData: {}, message: "Tab closed or not found" });
-                return;
-              }
-              
-              const currentUrl = t.url || "";
-              const isVerification = currentUrl.includes("sec.1688.com") || currentUrl.includes("login") || currentUrl.includes("verify") || currentUrl.includes("passport");
-              if (isVerification) {
-                clearInterval(checkLoad);
-                await notifyVerificationRequired(targetTabId, currentUrl, { stage: "text_search_result", tool: "input_text_and_search" });
-                readInFlight = false;
-                resolve({
-                  ok: false,
-                  code: "VERIFICATION_REQUIRED",
-                  verification_required: true,
-                  userActionRequired: true,
-                  tabId: targetTabId,
-                  isCaptcha: true,
-                  pageData: {},
-                  message: "Search redirected to verification wall. Complete verification and resume the workflow.",
-                });
-                readInFlight = false;
-                return;
-              }
-
-              try {
-                const data = await readCompletePageData(targetTabId, { type: "READ_CURRENT_PAGE" });
-                const pageData = data?.data || {};
-                const hasProducts = (pageData.productLinks && pageData.productLinks.length > 0) ||
-                  (pageData.productCards && pageData.productCards.length > 0);
-                
-                if (hasProducts || attempts >= maxAttempts) {
-                  clearInterval(checkLoad);
-                  readInFlight = false;
-                  resolve({ ok: true, tabId: targetTabId, pageData, message: hasProducts ? "Search performed and results loaded." : "Search completed but timeout waiting for product links." });
-                }
-              } catch (err) {
-                if (attempts >= maxAttempts) {
-                  clearInterval(checkLoad);
-                  readInFlight = false;
-                  resolve({ ok: true, tabId: targetTabId, pageData: {}, message: "Search performed but failed to read result page DOM" });
-                }
-              }
-              readInFlight = false;
-            });
-          }, 500);
-        })
-        .catch(err => {
-          reject(err);
-        });
-    });
-  },
-
-  prepare_clean_product_image: async (args) => {
-    const { imageUrl, prompt } = args;
-    if (!imageUrl) throw new Error("imageUrl is required");
-
-    try {
-      const result = await prepareCleanProductImage(resolvePreparedImageUrl(imageUrl), prompt);
-      const cleaned = result.cleanedImageUrl || imageUrl;
-      if (cleaned && String(cleaned).startsWith("data:")) {
-        const cleanedImageRef = cachePreparedImage(cleaned);
-        return {
-          ...result,
-          sourceImageUrl: String(result.sourceImageUrl || imageUrl).startsWith("data:") ? "__SOURCE_IMAGE_DATA__" : (result.sourceImageUrl || imageUrl),
-          cleanedImageUrl: "__PREPARED_CLEAN_PRODUCT_IMAGE__",
-          cleanedImageRef,
-          image_search_argument: { imageUrl: cleanedImageRef },
-          message: `${result.message || "已准备搜图图"} 请将 image_search_argument.imageUrl 传给 image_search_1688 或 image_search_taobao。`,
-        };
-      }
-      return {
-        ...result,
-        sourceImageUrl: String(result.sourceImageUrl || imageUrl).startsWith("data:") ? "__SOURCE_IMAGE_DATA__" : (result.sourceImageUrl || imageUrl),
-        image_search_argument: { imageUrl: cleaned },
-      };
-    } catch (err) {
-      const fallbackImageUrl = String(imageUrl).startsWith("data:") ? cachePreparedImage(imageUrl) : imageUrl;
-      return {
-        ok: false,
-        fallbackToOriginal: true,
-        cleanedImageUrl: String(imageUrl).startsWith("data:") ? "__ORIGINAL_IMAGE_DATA__" : imageUrl,
-        image_search_argument: { imageUrl: fallbackImageUrl },
-        error: err.message,
-        message: "干净搜图图准备失败，继续使用原始目标主图，禁止因此改走文本搜索。",
-      };
-    }
-  },
-
-  image_search_1688: async (args) => {
-    const { engine = "1688", workflowId = "default" } = args;
-    const imageUrl = resolvePreparedImageUrl(args.imageUrl);
-    if (!imageUrl) throw new Error("imageUrl is required");
-
-    const normalizedEngine = String(engine).toLowerCase();
-    const searchUrl = normalizedEngine === "taobao"
-      ? "https://s.taobao.com/search"
-      : "https://s.1688.com/";
-    return new Promise((resolve, reject) => {
-      createOwnedTabCallback({ workflowId, url: safeEncodeURI(searchUrl), active: true }, (newTab) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
-        }
-
-        waitForTabReadiness(newTab.id, {
-          workflowId,
-          expectedUrl: searchUrl,
-          label: `${normalizedEngine === "taobao" ? "Taobao" : "1688"} 以图搜图入口页`,
-          minWaitMs: 1800,
-          timeoutMs: 16000,
-          requireEvidence: false,
-        }).then(async (readiness) => {
-          if (readiness.readiness === "tab_missing") {
-            resolve({ ok: true, tabId: newTab?.id, searchUrl, pageData: {}, message: "1688 tab closed or not found", readiness });
-            return;
-          }
-          if (readiness.verification_required || readiness.code === "VERIFICATION_REQUIRED") {
-            resolve({
-              ok: false,
-              code: "VERIFICATION_REQUIRED",
-              verification_required: true,
-              userActionRequired: true,
-              tabId: newTab?.id,
-              searchUrl,
-              pageData: {},
-              readiness,
-              message: "检测到 1688/淘宝 登录墙或人机验证，已自动切到该页面；请完成验证后点击继续工作流。",
-            });
-            return;
-          }
-          try {
-            const result = await tools.image_search_in_browser({ imageUrl, tabId: newTab.id });
-            resolve({ ...result, searchUrl, imageSearchEntry: normalizedEngine === "taobao" ? "taobao" : "1688", readiness });
-          } catch (err) {
-            resolve({ ok: false, tabId: newTab.id, searchUrl, pageData: {}, error: err.message, readiness });
-          }
-        });
-      });
-    });
-  },
-
-  image_search_taobao: async (args) => {
-    return tools.image_search_1688({ ...args, engine: "taobao" });
-  },
-
-  image_search_in_browser: async (args) => {
-    const imageUrl = resolvePreparedImageUrl(args.imageUrl);
-    const { tabId } = args;
-    if (!imageUrl) throw new Error("imageUrl is required");
-
-    let targetTabId = tabId;
-    if (!targetTabId) {
-      const tab = await getCurrentTab();
-      if (!tab) throw new Error("No active tab found");
-      targetTabId = tab.id;
-    }
-
-    // Download image from background Service Worker and encode to base64
-    let base64 = "";
-    try {
-      const response = await fetch(imageUrl);
-      const arrayBuffer = await response.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
-      let binary = "";
-      for (let i = 0; i < bytes.byteLength; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      base64 = btoa(binary);
-    } catch (err) {
-      throw new Error(`Failed to fetch and convert image to base64: ${err.message}`);
-    }
-
-	    return new Promise((resolve, reject) => {
-	      sendToContentScript(targetTabId, { type: "IMAGE_SEARCH_IN_BROWSER", base64 })
-	        .then(async res => {
-	          if (!res?.ok) {
-	            reject(new Error(res?.error || "Failed to upload image for search"));
-	            return;
-	          }
-          let uploadResult = res;
-
-          const runVisualSubmitFallback = async () => {
-            if (uploadResult.submitClicked) return null;
-            const visualResult = await visualClickImageSearchSubmit(targetTabId);
-            uploadResult = {
-              ...uploadResult,
-              visualSubmitFallback: visualResult,
-              submitClicked: !!visualResult.ok,
-            };
-            return visualResult;
-          };
-
-          // If DOM/text based submission missed the button, fall back to screenshot-based recognition once.
-          await runVisualSubmitFallback();
-
-	          // Poll immediately for DOM readiness and product list elements
-          let attempts = 0;
-          let retriedVisualSubmitAfterNoResults = false;
-          const maxAttempts = 20; // up to 10 seconds total
-          const checkLoad = setInterval(async () => {
-            attempts++;
-            chrome.tabs.get(targetTabId, async (t) => {
-	              if (chrome.runtime.lastError || !t) {
-	                clearInterval(checkLoad);
-	                resolve({ ok: true, tabId: targetTabId, pageData: {}, uploadResult, submitClicked: !!uploadResult.submitClicked, message: "Tab closed or not found" });
-	                return;
-	              }
-
-              const currentUrl = t.url || "";
-              const isVerification = currentUrl.includes("sec.1688.com") || currentUrl.includes("login") || currentUrl.includes("verify") || currentUrl.includes("passport");
-              if (isVerification) {
-                clearInterval(checkLoad);
-                await notifyVerificationRequired(targetTabId, currentUrl, { stage: "image_search_result", tool: "image_search_in_browser" });
-                resolve({
-                  ok: false,
-                  code: "VERIFICATION_REQUIRED",
-                  verification_required: true,
-                  userActionRequired: true,
-                  tabId: targetTabId,
-                  isCaptcha: true,
-                  pageData: {},
-                  uploadResult,
-                  submitClicked: !!uploadResult.submitClicked,
-                  message: "Image search redirected to verification wall. Complete verification and resume the workflow.",
-                });
-                return;
-              }
-
-              try {
-                const data = await readCompletePageData(targetTabId, { type: "READ_CURRENT_PAGE" });
-                const pageData = data?.data || {};
-                const hasProducts = (pageData.productLinks && pageData.productLinks.length > 0) ||
-                  (pageData.productCards && pageData.productCards.length > 0);
-
-                if (!hasProducts && !retriedVisualSubmitAfterNoResults && attempts >= 4) {
-                  retriedVisualSubmitAfterNoResults = true;
-                  const visualResult = await visualClickImageSearchSubmit(targetTabId);
-                  uploadResult = {
-                    ...uploadResult,
-                    visualSubmitAfterNoResults: visualResult,
-                    submitClicked: !!uploadResult.submitClicked || !!visualResult.ok,
-                  };
-                  if (visualResult.ok) return;
-                }
-
-	                if (hasProducts || attempts >= maxAttempts) {
-	                  clearInterval(checkLoad);
-	                  resolve({
-                      ok: !!hasProducts,
-                      tabId: targetTabId,
-                      pageData,
-                      uploadResult,
-                      submitClicked: !!uploadResult.submitClicked,
-                      imageSearchIncomplete: !hasProducts,
-                      requiresImageSearchRetry: !hasProducts,
-                      message: hasProducts ? "Image search performed and results loaded." : "Image search did not reach product results; do not fall back to text search yet. Retry image-search submission or ask for manual verification if the upload overlay disappeared."
-                    });
-	                }
-	              } catch (err) {
-	                if (attempts >= maxAttempts) {
-	                  clearInterval(checkLoad);
-	                  resolve({
-                      ok: false,
-                      tabId: targetTabId,
-                      pageData: {},
-                      uploadResult,
-                      submitClicked: !!uploadResult.submitClicked,
-                      imageSearchIncomplete: true,
-                      requiresImageSearchRetry: true,
-                      message: "Image search did not produce readable product results; do not fall back to text search yet."
-                    });
-	                }
-	              }
-            });
-          }, 500);
-        })
-        .catch(err => {
-          reject(err);
-        });
-    });
-  },
-
   click_by_coordinate: async (args) => {
     const { x, y, tabId, learnKind, __sourceTabId = null } = args;
     if (x === undefined || y === undefined) throw new Error("x and y coordinates are required");
@@ -3380,9 +2856,10 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
   open_new_tab: async (args) => {
     const { url, readDelayMs = 1500, maxAttempts = 20, workflowId = "default", __sourceTabId = null } = args;
     if (!url) throw new Error("url is required");
+    const allowedUrl = assertAllowedBrowserNavigationUrl(url);
     
     return new Promise((resolve, reject) => {
-      createOwnedTabCallback({ workflowId, url: safeEncodeURI(url), active: true, openerTabId: __sourceTabId }, async (tab) => {
+      createOwnedTabCallback({ workflowId, url: safeEncodeURI(allowedUrl), active: true, openerTabId: __sourceTabId }, async (tab) => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
           return;
@@ -3390,7 +2867,7 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
         try {
           const readiness = await waitForTabReadiness(tab.id, {
             workflowId,
-            expectedUrl: url,
+            expectedUrl: allowedUrl,
             label: "open_new_tab 页面取证",
             minWaitMs: Math.max(1000, Math.min(Number(readDelayMs) || 1500, 5000)),
             timeoutMs: Math.max(4000, Math.min((Number(maxAttempts) || 20) * 650, 26000)),
@@ -3417,8 +2894,8 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
           resolve({
             ok: evidenceOk,
             tabId: tab.id,
-            url: readiness.tab?.url || url,
-            finalUrl: pageData.url || readiness.tab?.url || url,
+            url: readiness.tab?.url || allowedUrl,
+            finalUrl: pageData.url || readiness.tab?.url || allowedUrl,
             timedOut: Boolean(readiness.timedOut),
             isCaptcha: Boolean(readiness.isCaptcha),
             evidenceOk,
@@ -3437,8 +2914,8 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
           resolve({
             ok: false,
             tabId: tab.id,
-            url,
-            finalUrl: url,
+            url: allowedUrl,
+            finalUrl: allowedUrl,
             evidenceOk: false,
             pageData: {},
             readError: err.message,
@@ -3475,121 +2952,6 @@ Do NOT include any quotation marks, punctuation, explanations, or introductory t
     return data.activeAdPlan || null;
   },
 
-  query_fastmoss_data: async (args) => {
-    const { action, parameter = "" } = args;
-    if (!action) throw new Error("action is required");
-
-    const settings = await new Promise((resolve) =>
-      chrome.storage.local.get(["fastmossApiKey"], resolve)
-    );
-
-    if (!settings.fastmossApiKey) {
-      throw new Error("FastMoss API Key 未配置，无法进行 TikTok Shop 达人与爆品数据审计。请前往设置页面配置 Key。");
-    }
-
-    try {
-      if (action === "trending_products") {
-        return {
-          ok: true,
-          action,
-          provider: "FastMoss TikTok Shop Open API",
-          products: [
-            {
-              product_id: "1728394029482",
-              product_name: "超轻感智能防摔气囊马甲 (适老健康线)",
-              weekly_sales: 8420,
-              weekly_sales_growth: "+324%",
-              price_usd: "59.99",
-              gpm_average: "48.50",
-              main_category: "Home Health / Smart Wear"
-            },
-            {
-              product_id: "1728394029483",
-              product_name: "定制立体声波音频纯银项链",
-              weekly_sales: 5410,
-              weekly_sales_growth: "+185%",
-              price_usd: "29.90",
-              gpm_average: "38.20",
-              main_category: "Jewelry / Custom Gifts"
-            },
-            {
-              product_id: "1728394029484",
-              product_name: "微型炮弹多功能锌合金开瓶器",
-              weekly_sales: 4210,
-              weekly_sales_growth: "+148%",
-              price_usd: "18.99",
-              gpm_average: "32.10",
-              main_category: "Home & Kitchen / Cool Gadgets"
-            }
-          ]
-        };
-      } else if (action === "influencer_affiliates") {
-        return {
-          ok: true,
-          action,
-          provider: "FastMoss TikTok Shop Open API",
-          parameter,
-          affiliates: [
-            {
-              username: "grace_home_finds",
-              fans: "1.2M",
-              gpm: "$45.20",
-              monthly_sales_usd: "85,400",
-              audience_match_rate: "94%"
-            },
-            {
-              username: "gadget_review_king",
-              fans: "820K",
-              gpm: "$38.50",
-              monthly_sales_usd: "42,100",
-              audience_match_rate: "89%"
-            },
-            {
-              username: "moms_cool_gadget",
-              fans: "420K",
-              gpm: "$41.10",
-              monthly_sales_usd: "28,600",
-              audience_match_rate: "92%"
-            }
-          ]
-        };
-      } else if (action === "viral_videos") {
-        return {
-          ok: true,
-          action,
-          provider: "FastMoss TikTok Shop Open API",
-          parameter,
-          videos: [
-            {
-              video_id: "v1209384029",
-              views: "3.4M",
-              likes: "248K",
-              estimated_sales_qty: "1,240",
-              video_hook: "“这玩意儿竟然救了我爸一命！别划开，如果你家里也有 60 岁以上的老人...”",
-              script_summary: "痛点开门见山展示老人摔倒 -> 瞬时弹出气囊特写 -> 细节上身演示 -> 呼吁拿样/限时降价 -> 评论区跳转挂车。"
-            },
-            {
-              video_id: "v1209384030",
-              views: "1.8M",
-              likes: "112K",
-              estimated_sales_qty: "820",
-              video_hook: "“这绝对是我在 2026 年买过最赛博朋克的开瓶器了...”",
-              script_summary: "开箱特写锌合金厚重声 -> 用迫击炮开啤酒提气感 -> 情感连结（送男朋友的黑科技礼品） -> 点击左下角直接拿样。"
-            }
-          ]
-        };
-      } else {
-        return {
-          ok: true,
-          action,
-          provider: "FastMoss TikTok Shop Open API",
-          message: "Data query completed for action " + action
-        };
-      }
-    } catch (err) {
-      throw new Error(`FastMoss API 请求失败: ${err.message}`);
-    }
-  },
 };
 
 // ── Ecommerce Monitor Helper Functions ──

@@ -57,11 +57,6 @@
     return Math.abs(hash).toString(36);
   }
 
-  function cssEscape(value) {
-    if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(value);
-    return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
-  }
-
   function simulateHumanClick(el, options = {}) {
     if (!el) return false;
     const target = options.exactTarget ? el : (getClickableActionTarget(el) || el);
@@ -130,131 +125,6 @@
     } catch (_) {}
     if (target && isVisibleElement(target) && !isFileUploadLikeElement(target)) return target;
     return null;
-  }
-
-  function interactionMemoryKey(kind) {
-    return `ecommerce_growth_agent.interaction.${location.hostname}.${kind}`;
-  }
-
-  function storageGet(key) {
-    return new Promise((resolve) => {
-      if (typeof chrome === "undefined" || !chrome.storage?.local) {
-        resolve(null);
-        return;
-      }
-      chrome.storage.local.get([key], (data) => resolve(data?.[key] || null));
-    });
-  }
-
-  function storageSet(key, value) {
-    return new Promise((resolve) => {
-      if (typeof chrome === "undefined" || !chrome.storage?.local) {
-        resolve(false);
-        return;
-      }
-      chrome.storage.local.set({ [key]: value }, () => resolve(true));
-    });
-  }
-
-  function buildStableSelector(el) {
-    if (!el || !el.tagName) return "";
-    if (el.id) return `#${cssEscape(el.id)}`;
-
-    const attrs = ["aria-label", "title", "name", "type", "role"];
-    const attrSelector = attrs
-      .map((attr) => {
-        const value = el.getAttribute?.(attr);
-        return value ? `[${attr}="${String(value).replace(/"/g, '\\"')}"]` : "";
-      })
-      .find(Boolean);
-    if (attrSelector) return `${el.tagName.toLowerCase()}${attrSelector}`;
-
-    const className = typeof el.className === "string" ? el.className : "";
-    const classes = className.split(/\s+/).filter(Boolean).slice(0, 3);
-    if (classes.length > 0) return `${el.tagName.toLowerCase()}.${classes.map(cssEscape).join(".")}`;
-
-    const parent = el.parentElement;
-    if (!parent) return el.tagName.toLowerCase();
-    const siblings = Array.from(parent.children).filter((child) => child.tagName === el.tagName);
-    const nth = siblings.indexOf(el) + 1;
-    return `${buildStableSelector(parent)} > ${el.tagName.toLowerCase()}:nth-of-type(${Math.max(nth, 1)})`;
-  }
-
-  async function rememberInteraction(kind, el) {
-    if (!el || !isVisibleElement(el)) return false;
-    const rect = el.getBoundingClientRect();
-    const memory = {
-      selector: buildStableSelector(el),
-      text: (el.innerText || el.value || el.title || el.getAttribute?.("aria-label") || "").trim().slice(0, 80),
-      normalizedX: (rect.left + rect.width / 2) / Math.max(window.innerWidth, 1),
-      normalizedY: (rect.top + rect.height / 2) / Math.max(window.innerHeight, 1),
-      width: rect.width,
-      height: rect.height,
-      learnedAt: Date.now(),
-      href: location.href,
-    };
-    return await storageSet(interactionMemoryKey(kind), memory);
-  }
-
-  async function _clickRememberedInteraction(kind) {
-    const memory = await storageGet(interactionMemoryKey(kind));
-    if (!memory) return false;
-
-    let el = null;
-    if (memory.selector) {
-      try {
-        el = document.querySelector(memory.selector);
-      } catch (_) {}
-    }
-    if (!isVisibleElement(el) && Number.isFinite(memory.normalizedX) && Number.isFinite(memory.normalizedY)) {
-      const x = Math.min(Math.max(memory.normalizedX * window.innerWidth, 1), window.innerWidth - 1);
-      const y = Math.min(Math.max(memory.normalizedY * window.innerHeight, 1), window.innerHeight - 1);
-      el = document.elementFromPoint(x, y);
-    }
-    if (!isVisibleElement(el)) return false;
-    return simulateHumanClick(el);
-  }
-
-  function getElementLabel(el) {
-    return `${el?.innerText || ""} ${el?.value || ""} ${el?.title || ""} ${el?.getAttribute?.("aria-label") || ""} ${el?.className || ""}`;
-  }
-
-  function isImageSearchSubmitLike(el) {
-    if (!el) return false;
-    const label = getElementLabel(el);
-    return /搜图|搜索图片|图片搜索|以图搜索|以图搜款|找同款|开始搜索|确认|确定|上传|search|find similar/i.test(label) &&
-      !/取消|关闭|重置|清空|delete|remove|close|cancel|reset/i.test(label);
-  }
-
-  function parseRgbColor(color) {
-    const match = String(color || "").match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
-    if (!match) return null;
-    return { r: Number(match[1]), g: Number(match[2]), b: Number(match[3]) };
-  }
-
-  function isWarmPrimaryColor(color) {
-    const rgb = parseRgbColor(color);
-    if (!rgb) return /orange|orangered|#ff|#f5/i.test(String(color || ""));
-    return rgb.r >= 210 && rgb.g >= 45 && rgb.g <= 185 && rgb.b <= 110 && rgb.r > rgb.g + 35;
-  }
-
-  function looksLikeVisualPrimaryButton(el) {
-    if (!isVisibleElement(el)) return false;
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 45 || rect.height < 24 || rect.width > 360 || rect.height > 140) return false;
-
-    const style = window.getComputedStyle(el);
-    const warm = isWarmPrimaryColor(style.backgroundColor) ||
-      isWarmPrimaryColor(style.borderColor) ||
-      isWarmPrimaryColor(style.color);
-    const pointer = style.cursor === "pointer" ||
-      el.tagName === "BUTTON" ||
-      el.tagName === "A" ||
-      el.getAttribute("role") === "button" ||
-      typeof el.onclick === "function";
-    const label = getElementLabel(el);
-    const reject = /最近搜索|热门搜索|采购车|消息|订单|下载插件|首页|我的阿里|取消|关闭|删除|清空|reset|cancel|close/i.test(label);
-    return warm && pointer && !reject;
   }
 
   function getMetaImageUrl() {
@@ -1563,242 +1433,6 @@
     };
   }
 
-  function extractProductInfo() {
-    const page = readCurrentPage();
-    return {
-      title: page.h1 || page.title,
-      price: page.price,
-      rating: page.rating,
-      reviewCount: page.reviewCount,
-      description: page.description || page.metaDescription,
-      images: page.images.slice(0, 5).map((i) => i.src),
-      targetImageUrl: page.targetImageUrl,
-      url: page.url,
-    };
-  }
-
-  function findSearchInput() {
-    const commonInputs = [
-      'input#q', 'input#alisearch-keywords', 'input#key',
-      'input[name="q"]', 'input[name="keywords"]', 'input[name="keyword"]',
-      'input[type="search"]', 'input[placeholder*="搜索"]', 'input[placeholder*="Search"]',
-      'input.search-input', 'input.alisearch-input'
-    ];
-    for (const sel of commonInputs) {
-      const el = document.querySelector(sel);
-      if (el && isVisibleElement(el)) return el;
-    }
-    return null;
-  }
-
-  async function clickImageSearchSubmitButton() {
-    const candidates = findImageSearchSubmitCandidates();
-
-    candidates.sort((a, b) => b.score - a.score);
-    const bestCandidate = candidates.find((candidate) => candidate.exactTextOnly);
-    const best = bestCandidate?.el || null;
-    if (!best) return { clicked: false, method: "not_found" };
-    const clicked = simulateHumanClick(best, { exactTarget: true });
-    if (clicked) await rememberInteraction("image_search_submit", best);
-    return {
-      clicked,
-      method: "exact_search_image_text",
-      text: normalizeText(best.innerText || best.title || best.getAttribute("aria-label") || "", 80),
-    };
-  }
-
-  function getRectPayload(el) {
-    const rect = el.getBoundingClientRect();
-    return {
-      x: Math.round(rect.left),
-      y: Math.round(rect.top),
-      width: Math.round(rect.width),
-      height: Math.round(rect.height),
-      normalizedLeft: Number((rect.left / Math.max(window.innerWidth, 1)).toFixed(4)),
-      normalizedTop: Number((rect.top / Math.max(window.innerHeight, 1)).toFixed(4)),
-      normalizedRight: Number((rect.right / Math.max(window.innerWidth, 1)).toFixed(4)),
-      normalizedBottom: Number((rect.bottom / Math.max(window.innerHeight, 1)).toFixed(4)),
-      normalizedCenterX: Number(((rect.left + rect.width / 2) / Math.max(window.innerWidth, 1)).toFixed(4)),
-      normalizedCenterY: Number(((rect.top + rect.height / 2) / Math.max(window.innerHeight, 1)).toFixed(4)),
-    };
-  }
-
-  function findImageSearchContainers() {
-    const containers = new Set();
-    const selectors = [
-      '[role="dialog"]',
-      '[aria-modal="true"]',
-      '[class*="dialog"]',
-      '[class*="modal"]',
-      '[class*="popup"]',
-      '[class*="upload"]',
-      '[class*="imgupload"]',
-      '[class*="image-search"]',
-      '[class*="search-img"]',
-      '[class*="searchByImage"]',
-      '[class*="s-search-upload"]',
-    ];
-    selectors.forEach((sel) => {
-      document.querySelectorAll(sel).forEach((el) => {
-        if (isVisibleElement(el)) containers.add(el);
-      });
-    });
-
-    document.querySelectorAll('input[type="file"]').forEach((input) => {
-      let el = input.parentElement;
-      for (let i = 0; i < 5 && el; i++, el = el.parentElement) {
-        if (isVisibleElement(el)) {
-          containers.add(el);
-          const rect = el.getBoundingClientRect();
-          if (rect.width >= 180 && rect.height >= 120) break;
-        }
-      }
-    });
-
-    document.querySelectorAll("img").forEach((img) => {
-      const src = getBestImageSrc(img);
-      const rect = img.getBoundingClientRect();
-      const context = `${src} ${img.className || ""} ${img.id || ""} ${img.alt || ""}`.toLowerCase();
-      if (!isVisibleElement(img) || rect.width < 60 || rect.height < 60) return;
-      if (!/blob:|data:|upload|image|pic|preview|crop|search/.test(context)) return;
-      let el = img.parentElement;
-      for (let i = 0; i < 5 && el; i++, el = el.parentElement) {
-        if (isVisibleElement(el)) {
-          containers.add(el);
-          const cRect = el.getBoundingClientRect();
-          if (cRect.width >= 220 && cRect.height >= 160) break;
-        }
-      }
-    });
-
-    return Array.from(containers).filter((el) => {
-      const rect = el.getBoundingClientRect();
-      return rect.width >= 120 && rect.height >= 80 && rect.top < window.innerHeight && rect.bottom > 0;
-    });
-  }
-
-  function elementInsideAny(el, containers) {
-    return containers.some((container) => container === el || container.contains(el));
-  }
-
-  function findImageSearchSubmitCandidates() {
-    const containers = findImageSearchContainers();
-    const exactTextElements = Array.from(document.querySelectorAll("button, a, span, div, input, [role='button']"))
-      .filter((el) => isVisibleElement(el))
-      .filter((el) => {
-        const text = normalizeText(el.innerText || el.value || el.title || el.getAttribute?.("aria-label") || "", 20);
-        return text === "搜索图片" && elementInsideAny(el, containers);
-      });
-    const elements = Array.from(document.querySelectorAll([
-      'button',
-      'a',
-      'input[type="button"]',
-      'input[type="submit"]',
-      'div[role="button"]',
-      'span[role="button"]',
-      '[class*="submit"]',
-      '[class*="confirm"]',
-      '[class*="primary"]',
-      '[class*="btn"]',
-      '[class*="button"]',
-    ].join(",")));
-    const candidates = [];
-    const seenTargets = new Set();
-
-    for (const el of exactTextElements) {
-      if (seenTargets.has(el) || isFileUploadLikeElement(el)) continue;
-      seenTargets.add(el);
-      candidates.push({
-        el,
-        score: 10000,
-        text: "搜索图片",
-        rect: getRectPayload(el),
-        inImageUi: true,
-        explicitImageSearch: true,
-        exactTextOnly: true,
-      });
-    }
-
-    for (const rawEl of elements) {
-      if (!isVisibleElement(rawEl)) continue;
-      const el = getClickableActionTarget(rawEl) || rawEl;
-      if (seenTargets.has(el) || !isVisibleElement(el) || isFileUploadLikeElement(el)) continue;
-      seenTargets.add(el);
-
-      const label = normalizeText(getElementLabel(el), 180);
-      const rawLabel = normalizeText(getElementLabel(rawEl), 180);
-      const combinedLabel = `${label} ${rawLabel}`;
-      const text = normalizeText(el.innerText || el.value || el.title || el.getAttribute?.("aria-label") || "", 80);
-      const inImageUi = elementInsideAny(el, containers) || elementInsideAny(rawEl, containers);
-      const rawExplicitImageSearch = /搜索图片|图片搜索|以图搜索|以图搜款|找同款|搜图|开始搜索|确认搜索/i.test(combinedLabel);
-      const safeConfirmInImageUi = inImageUi && /确认|确定|上传|开始|搜索/i.test(combinedLabel) && !/^搜索$/i.test(text);
-      const reject = /取消|关闭|返回|重置|清空|删除|delete|remove|close|cancel|reset|back/i.test(combinedLabel);
-      if (reject) continue;
-      if (!rawExplicitImageSearch && !safeConfirmInImageUi) continue;
-      if (!inImageUi && !rawExplicitImageSearch) continue;
-
-      let score = rawExplicitImageSearch ? 2000 : 900;
-      if (inImageUi) score += 800;
-      if (/搜索图片|图片搜索|以图搜款|找同款|搜图/i.test(combinedLabel)) score += 600;
-      if (/确认搜索|开始搜索/i.test(combinedLabel)) score += 360;
-      if (/^搜索$/i.test(text)) score -= 1200;
-      const rect = el.getBoundingClientRect();
-      if (rect.top < 100) score -= 800;
-      if (looksLikeVisualPrimaryButton(el)) score += 180;
-
-      candidates.push({ el, score, text, rect: getRectPayload(el), inImageUi, explicitImageSearch: rawExplicitImageSearch });
-    }
-
-    return candidates;
-  }
-
-  function getImageSearchUiState() {
-    const containers = findImageSearchContainers().map((el) => ({
-      rect: getRectPayload(el),
-      text: normalizeText(el.innerText || "", 180),
-      className: String(el.className || "").slice(0, 120),
-    }));
-    const candidates = findImageSearchSubmitCandidates()
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 6)
-      .map((candidate) => ({
-        score: candidate.score,
-        text: candidate.text,
-        rect: candidate.rect,
-        inImageUi: candidate.inImageUi,
-        explicitImageSearch: candidate.explicitImageSearch,
-        exactTextOnly: !!candidate.exactTextOnly,
-      }));
-    return { containers, candidates };
-  }
-
-  function uniqueElements(elements) {
-    const seen = new Set();
-    return elements.filter((el) => {
-      if (!el || seen.has(el)) return false;
-      seen.add(el);
-      return true;
-    });
-  }
-
-  function getSafeImagePasteTargets(fileInput) {
-    const containers = findImageSearchContainers();
-    const active = document.activeElement;
-    const activeInImageUi = active && containers.some((container) => container === active || container.contains(active));
-    const fileInputParents = [];
-    let el = fileInput?.parentElement || null;
-    for (let i = 0; i < 4 && el; i++, el = el.parentElement) {
-      if (isVisibleElement(el)) fileInputParents.push(el);
-    }
-
-    return uniqueElements([
-      fileInput,
-      ...fileInputParents,
-      ...containers,
-      activeInImageUi ? active : null,
-    ]).filter((target) => target && !isFileUploadLikeElement(target));
-  }
-
   // Listen for messages from background.js
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     try {
@@ -1812,15 +1446,43 @@
           behavior: "smooth"
         });
         sendResponse({ ok: true });
-      } else if (message.type === "EXTRACT_PRODUCT_INFO") {
-        sendResponse({ ok: true, data: extractProductInfo() });
       } else if (message.type === "GET_SELECTED_TEXT") {
         sendResponse({
           ok: true,
           data: { selectedText: window.getSelection()?.toString()?.trim() || "" },
         });
-      } else if (message.type === "GET_IMAGE_SEARCH_UI_STATE") {
-        sendResponse({ ok: true, data: getImageSearchUiState() });
+      } else if (message.type === "APPLY_APPROVED_ETSY_DRAFT") {
+        try {
+          const result = globalThis.EtsyDraftDomWriter?.applyApprovedDraft(message.listingDraft, {
+            documentImpl: document,
+            locationHref: window.location.href,
+            EventImpl: Event,
+          });
+          if (!result) throw new Error("The deterministic Etsy draft writer is unavailable; reload the extension and Etsy editor page.");
+          sendResponse({ ok: true, result });
+        } catch (error) {
+          sendResponse({ ok: false, error: error.message, errorCode: "ETSY_DRAFT_DOM_WRITE_BLOCKED" });
+        }
+      } else if (message.type === "PREPARE_PRIVACY_SAFE_SCREENSHOT") {
+        try {
+          const result = globalThis.EtsyScreenshotPrivacyMask?.prepare({ documentImpl:document, locationHref:window.location.href });
+          if (!result) throw new Error("The screenshot privacy mask is unavailable; reload the extension and page.");
+          if (result.blocked) {
+            sendResponse({ ok:true, result });
+          } else {
+            requestAnimationFrame(() => requestAnimationFrame(() => sendResponse({ ok:true, result })));
+          }
+        } catch (error) {
+          sendResponse({ ok:false, error:error.message, errorCode:"SCREENSHOT_PRIVACY_MASK_UNAVAILABLE" });
+        }
+      } else if (message.type === "RESTORE_PRIVACY_SAFE_SCREENSHOT") {
+        try {
+          const result = globalThis.EtsyScreenshotPrivacyMask?.restore(message.token);
+          if (!result) throw new Error("The screenshot privacy mask is unavailable.");
+          sendResponse({ ok:true, result });
+        } catch (error) {
+          sendResponse({ ok:false, error:error.message, errorCode:"SCREENSHOT_PRIVACY_RESTORE_FAILED" });
+        }
       } else if (message.type === "CLICK_BY_TEXT") {
         closePopups();
         const textToFind = (message.text || "").trim().toLowerCase();
@@ -1845,230 +1507,8 @@
           }
         }
         sendResponse({ ok: clicked, message: clicked ? `Clicked text: ${message.text}` : `Text not found or not clickable: ${message.text}` });
-      } else if (message.type === "INPUT_TEXT_AND_SEARCH") {
-        const { keyword, inputSelector, submitSelector } = message;
-        if (!keyword) {
-          sendResponse({ ok: false, error: "keyword is required" });
-          return;
-        }
-
-        let inputEl = inputSelector ? document.querySelector(inputSelector) : findSearchInput();
-        if (!inputEl) {
-          sendResponse({ ok: false, error: "Could not find search input field on the page" });
-          return;
-        }
-
-        (async () => {
-          inputEl.focus();
-          try {
-            const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-            nativeSetter.call(inputEl, "");
-          } catch (_) {
-            inputEl.value = "";
-          }
-          inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-
-          for (let i = 0; i < keyword.length; i++) {
-            const char = keyword[i];
-            const currentText = keyword.slice(0, i + 1);
-            inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: char, charCode: char.charCodeAt(0), keyCode: char.charCodeAt(0), bubbles: true }));
-            try {
-              const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-              nativeSetter.call(inputEl, currentText);
-            } catch (_) {
-              inputEl.value = currentText;
-            }
-            inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-            inputEl.dispatchEvent(new Event('change', { bubbles: true }));
-            inputEl.dispatchEvent(new KeyboardEvent('keyup', { key: char, charCode: char.charCodeAt(0), keyCode: char.charCodeAt(0), bubbles: true }));
-            await new Promise(r => setTimeout(r, 30 + Math.random() * 70));
-          }
-
-          let submitEl = submitSelector ? document.querySelector(submitSelector) : null;
-          if (!submitEl) {
-            const commonSubmits = [
-              '.alisearch-action', '.btn-search', 'button[type="submit"]',
-              'button.search-btn', 'input[type="submit"]', '.search-button',
-              'div[class*="search"] button', 'span[class*="search"] button'
-            ];
-            for (const sel of commonSubmits) {
-              const el = document.querySelector(sel);
-              if (el && isVisibleElement(el)) {
-                submitEl = el;
-                break;
-              }
-            }
-          }
-          if (!submitEl) {
-            const buttons = Array.from(document.querySelectorAll('button, a, div, span'));
-            for (const btn of buttons) {
-              const txt = (btn.innerText || "").trim();
-              if ((txt === '搜索' || txt === 'Search' || txt === '🔍') && isVisibleElement(btn)) {
-                submitEl = btn;
-                break;
-              }
-            }
-          }
-
-          if (submitEl) {
-            simulateHumanClick(submitEl);
-            sendResponse({ ok: true, clickedButton: true });
-          } else if (inputEl.form) {
-            inputEl.form.submit();
-            sendResponse({ ok: true, submittedForm: true });
-          } else {
-            const eventOptions = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
-            inputEl.dispatchEvent(new KeyboardEvent('keydown', eventOptions));
-            inputEl.dispatchEvent(new KeyboardEvent('keypress', eventOptions));
-            inputEl.dispatchEvent(new KeyboardEvent('keyup', eventOptions));
-            sendResponse({ ok: true, pressedEnter: true });
-          }
-        })();
-
-        return true;
-      } else if (message.type === "IMAGE_SEARCH_IN_BROWSER") {
-        const { base64 } = message;
-        if (!base64) {
-          sendResponse({ ok: false, error: "base64 is required" });
-          return;
-        }
-
-        (async () => {
-          try {
-            let fileInput = null;
-            const commonFileInputs = [
-              'input[type="file"].upload-pic',
-              'input[type="file"].s-search-upload',
-              'input[accept*="image"]',
-              'input[type="file"]'
-            ];
-
-            for (const sel of commonFileInputs) {
-              const el = document.querySelector(sel);
-              if (el) {
-                fileInput = el;
-                break;
-              }
-            }
-
-            if (!fileInput) {
-              const cameraSelectors = [
-                '.camera-icon', '.s-search-upload', '.search-imgupload',
-                '[class*="camera"]', '[class*="imgupload"]', '.search-imgupload-input'
-              ];
-              let cameraBtn = null;
-              for (const sel of cameraSelectors) {
-                const el = document.querySelector(sel);
-                if (el && isVisibleElement(el)) {
-                  cameraBtn = el;
-                  break;
-                }
-              }
-              if (cameraBtn) {
-                try {
-                  simulateHumanClick(cameraBtn);
-                } catch (e) {
-                  console.warn("Clicking cameraBtn failed due to browser security policy:", e.message);
-                }
-                await new Promise(r => setTimeout(r, 800));
-                for (const sel of commonFileInputs) {
-                  const el = document.querySelector(sel);
-                  if (el) {
-                    fileInput = el;
-                    break;
-                  }
-                }
-              }
-            }
-
-            const response = await fetch(`data:image/jpeg;base64,${base64}`);
-            const blob = await response.blob();
-            const file = new File([blob], "image_search.jpg", { type: "image/jpeg" });
-            const dataTransfer = new DataTransfer();
-            dataTransfer.items.add(file);
-
-            let dispatchedFallbackEvents = 0;
-
-            if (!fileInput) {
-              const fallbackTargets = getSafeImagePasteTargets(null);
-              if (fallbackTargets.length === 0) {
-                sendResponse({ ok: false, error: "Could not find image search upload input or safe image-search paste/drop target on the page" });
-                return;
-              }
-
-              for (const target of fallbackTargets) {
-                try {
-                  target.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer }));
-                  target.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer }));
-                  target.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer }));
-                  const pasteEvent = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dataTransfer });
-                  target.dispatchEvent(pasteEvent);
-                  dispatchedFallbackEvents++;
-                } catch (e) {
-                  console.warn("Safe image-search paste/drop fallback failed:", e.message);
-                }
-              }
-
-              await new Promise(r => setTimeout(r, 900));
-              const submitResult = await clickImageSearchSubmitButton();
-              sendResponse({
-                ok: dispatchedFallbackEvents > 0,
-                message: dispatchedFallbackEvents > 0
-                  ? "Dispatched safe image-search paste/drop fallback events"
-                  : "Could not dispatch image-search fallback events",
-                fallbackOnly: true,
-                fallbackTargets: fallbackTargets.length,
-                submitClicked: !!submitResult.clicked,
-                submitMethod: submitResult.method,
-                submitText: submitResult.text || "",
-              });
-              return;
-            }
-
-            try {
-              fileInput.files = dataTransfer.files;
-              fileInput.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
-              fileInput.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
-              if (typeof fileInput.onchange === 'function') fileInput.onchange();
-            } catch (e) {
-              console.warn("File input assignment failed or was ignored:", e.message);
-            }
-
-            try {
-              const dropTargets = getSafeImagePasteTargets(fileInput);
-              for (const target of dropTargets) {
-                target.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer }));
-              }
-            } catch (e) {
-              console.warn("Drop event upload fallback failed:", e.message);
-            }
-
-            try {
-              const pasteTargets = getSafeImagePasteTargets(fileInput);
-              for (const target of pasteTargets) {
-                const pasteEvent = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dataTransfer });
-                target.dispatchEvent(pasteEvent);
-              }
-            } catch (e) {
-              console.warn("Clipboard paste upload fallback failed:", e.message);
-            }
-
-            await new Promise(r => setTimeout(r, 900));
-            const submitResult = await clickImageSearchSubmitButton();
-            sendResponse({
-              ok: true,
-              message: "Successfully dispatched image search upload events",
-              submitClicked: !!submitResult.clicked,
-              submitMethod: submitResult.method,
-              submitText: submitResult.text || "",
-            });
-          } catch (err) {
-            sendResponse({ ok: false, error: err.message });
-          }
-        })();
-        return true;
       } else if (message.type === "CLICK_BY_COORDINATE") {
-        const { x, y, learnKind } = message;
+        const { x, y } = message;
         if (x === undefined || y === undefined) {
           sendResponse({ ok: false, error: "x and y coordinates are required" });
           return;
@@ -2108,25 +1548,18 @@
           if (isFileInput) {
             sendResponse({
               ok: false,
-              error: "Proactively blocked click_by_coordinate on file upload/camera elements to avoid Chrome security exceptions. Please use the dedicated 'image_search_in_browser' tool instead."
+              error: "File upload and camera interactions are forbidden in Etsy Growth Agent."
             });
             return;
           }
 
-          const clicked = simulateHumanClick(element, { exactTarget: learnKind === "image_search_submit" });
-          const learnedInteraction = learnKind || (isImageSearchSubmitLike(element) ? "image_search_submit" : "");
-          if (clicked && learnedInteraction) {
-            rememberInteraction(learnedInteraction, element).catch((err) => {
-              console.warn("Failed to remember interaction:", err.message);
-            });
-          }
+          const clicked = simulateHumanClick(element);
 
           sendResponse({
             ok: clicked,
             message: `Clicked element at (${Math.round(clientX)}, ${Math.round(clientY)})`,
             tag: element.tagName,
             text: (element.innerText || element.value || element.title || "").slice(0, 100),
-            learnedInteraction,
           });
         } catch (err) {
           sendResponse({ ok: false, error: err.message });
@@ -4250,7 +3683,7 @@
       }
     };
 
-    const addMessage = (sender, content, isMarkdown = false, extraData = null, skillId = "") => {
+    const addMessage = (sender, content, isMarkdown = false, _extraData = null, _skillId = "") => {
       const container = shadow.getElementById("chat-messages-container");
       const msgDiv = document.createElement("div");
       msgDiv.className = `msg ${sender}`;
@@ -4262,79 +3695,6 @@
         bubbleDiv.className = "bubble md-report";
         bubbleDiv.innerHTML = parseMarkdownToHTML(content);
         
-        // Add interactive sourcing cards only for the dedicated sourcing workflow.
-        if (shouldRenderSourcingData(skillId, extraData)) {
-          const cardsWrapper = document.createElement("div");
-          cardsWrapper.className = "sourcing-cards-wrapper";
-          cardsWrapper.style.cssText = "display: flex; flex-direction: column; gap: 8px; margin-top: 10px; width: 100%;";
-          
-          extraData.filter(itemLooksLikeSourcing).forEach((item, idx) => {
-            const ledger = item.financial_ledger || {};
-            const purchaseLink = item.product_link || item.link || "";
-            const card = document.createElement("div");
-            card.className = "sourcing-card";
-            card.style.cssText = "display: flex; gap: 10px; padding: 8px; border: 1px solid var(--border-main); border-radius: 8px; background: var(--input-bg); align-items: center; position: relative;";
-            
-            const imgUrl = item.candidate_image_url || "icons/icon128.png";
-            const linkHtml = isRealPurchaseLink(purchaseLink)
-              ? `<a href="${purchaseLink}" target="_blank" style="font-size: 9px; color: #005bff; text-decoration: none; font-weight: 600;">采购直达</a>`
-              : `<span style="font-size: 9px; color: var(--text-secondary);">未获得真实采购详情页</span>`;
-            card.innerHTML = `
-              <img src="${imgUrl}" style="width: 40px; height: 40px; border-radius: 4px; object-fit: cover; flex-shrink: 0;">
-              <div style="flex: 1; min-width: 0; text-align: left;">
-                <div style="font-weight: 600; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-color);">${item.title || '对标货源 #' + (idx + 1)}</div>
-                <div style="font-size: 10px; margin-top: 3px; color: var(--text-secondary);">
-                  单价: ¥${ledger.sourcing_cost || ledger.sourcing_cost_cny || '0'} | 利润率: <span style="font-weight: bold; color: ${parseFloat(ledger.margin_rate || ledger.margin) >= 20 ? '#10b981' : '#ef4444'};">${ledger.margin_rate || ledger.margin || '0'}%</span>
-                </div>
-                <div style="margin-top: 3px;">
-                  ${linkHtml}
-                </div>
-              </div>
-            `;
-            
-            const saveBtn = document.createElement("button");
-            saveBtn.innerText = "💾 保存";
-            saveBtn.style.cssText = "background: #005bff; color: white; border: none; border-radius: 4px; padding: 4px 8px; font-size: 10px; cursor: pointer; transition: all 0.2s; outline: none; flex-shrink: 0;";
-            
-            saveBtn.addEventListener("click", async () => {
-              saveBtn.disabled = true;
-              saveBtn.innerText = "⏳ 写入中";
-              try {
-                const existing = await new Promise(r => chrome.storage.local.get(["savedResults"], r));
-                const savedResults = existing.savedResults || [];
-                
-                const singleEntry = {
-                  id: Date.now(),
-                  createdAt: new Date().toISOString(),
-                  skillId: "sourcing_finder",
-                  skillName: "手动保存货源",
-                  pageUrl: window.location.href,
-                  pageTitle: document.title,
-                  result: {
-                    overview: "自对话框手动保存的对标货源",
-                    data: [item]
-                  }
-                };
-                
-                savedResults.unshift(singleEntry);
-                await new Promise(r => chrome.storage.local.set({ savedResults: savedResults.slice(0, 100) }, r));
-                
-                saveBtn.style.background = "#10b981";
-                saveBtn.innerText = "已保存 ✓";
-              } catch (err) {
-                console.error("Save failed:", err);
-                saveBtn.disabled = false;
-                saveBtn.innerText = "❌ 失败";
-                saveBtn.style.background = "#ef4444";
-              }
-            });
-            
-            card.appendChild(saveBtn);
-            cardsWrapper.appendChild(card);
-          });
-          
-          bubbleDiv.appendChild(cardsWrapper);
-        }
       } else {
         bubbleDiv.innerText = content;
       }

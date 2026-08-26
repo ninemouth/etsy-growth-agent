@@ -33,11 +33,9 @@ const shopOptimizerSkillSource = fs.readFileSync(path.join(root, "skills", "etsy
 const genericObjectSkillSource = fs.readFileSync(path.join(root, "skills", "generic_object_analyzer.skill.md"), "utf8");
 const baseAuditorSkillSource = fs.readFileSync(path.join(root, "skills", "base_report_auditor.skill.md"), "utf8");
 const productOpportunitySkillSource = fs.readFileSync(path.join(root, "skills", "etsy_product_opportunity_explorer.skill.md"), "utf8");
-const sourcingSkillSource = fs.readFileSync(path.join(root, "skills", "etsy_sourcing_finder.skill.md"), "utf8");
 const operationsSkillSource = fs.readFileSync(path.join(root, "skills", "etsy_operations_tracker.skill.md"), "utf8");
 const remainingBusinessSkillSource = [
   productOpportunitySkillSource,
-  sourcingSkillSource,
   operationsSkillSource,
   fs.readFileSync(path.join(root, "skills", "etsy_keyword_analysis.skill.md"), "utf8"),
   fs.readFileSync(path.join(root, "skills", "etsy_listing_generator.skill.md"), "utf8"),
@@ -54,6 +52,10 @@ const runtimeBundleSource = [html, js, sidepanelHtmlSource, sidepanelSource, css
   /示例 SKU 队列/,
   /模拟指标/,
   /source-dot\.mock/,
+  /FastMoss API Key/,
+  /Helium 10 API Key/,
+  /卖家精灵 API Key/,
+  /targetImageInputs/,
 ].forEach((pattern) => {
   assert.doesNotMatch(runtimeBundleSource, pattern, `runtime plugin UI must not keep mock data hook: ${pattern}`);
 });
@@ -63,11 +65,7 @@ assert.doesNotMatch(
   /monthly_search_volume:\s*Math\.floor|monthly_sales_estimate:\s*Math\.floor|competition_index:\s*Math\.floor|magnet_score:\s*Math\.floor/,
   "runtime market-data tools must not generate random business metrics"
 );
-assert.match(
-  toolRegistrySource,
-  /integrationStatus:\s*"not_implemented"[\s\S]*不会生成随机市场指标/,
-  "unimplemented third-party market-data integrations must return an explicit unavailable status"
-);
+assert.doesNotMatch(toolRegistrySource, /query_market_data|integrationStatus:\s*"not_implemented"/, "unimplemented third-party market-data tools must be absent rather than expose a misleading credential surface");
 
 assert.match(agentLoopSource, /type:\s*"tool_heartbeat"/, "long-running tool calls should emit heartbeat progress");
 assert.match(agentLoopSource, /type:\s*"tool_stage"/, "browser tools should emit concrete stage progress after the tool has actually started");
@@ -82,7 +80,7 @@ assert.match(agentLoopSource, /QUALITY_RETRY_LIMIT\s*=\s*2/, "quality repair mus
 assert.match(agentLoopSource, /inFlightToolRuns[\s\S]*toolRunKey[\s\S]*timed out after/, "tool work must be deduplicated and bounded by a tool-level timeout");
 assert.match(agentLoopSource, /type:\s*"reuse_tool_result"[\s\S]*tool_result_reused/, "Etsy business evidence searches must reuse an existing engine/query result instead of reopening a tab");
 assert.match(agentLoopSource, /isReusableSearchEvidence[\s\S]*screenshotRef[\s\S]*hasValidGoogleSearchEvidence/, "search evidence reuse should accept screenshot/page evidence, not only strict ok:true results");
-assert.match(agentLoopSource, /toolName === "search_in_browser"[\s\S]*!isSourcingSkill\(skillId\)/, "duplicate search reuse should protect all non-sourcing Etsy business skills, not only trends");
+assert.match(agentLoopSource, /getEtsyBrowserWorkflowGuardResult[\s\S]*if \(toolName === "search_in_browser"\)[\s\S]*searchEvidenceKey\(toolArgs\)[\s\S]*reuse_tool_result/, "duplicate search reuse should protect all Etsy business skills without a sourcing-runtime exception");
 assert.match(agentLoopSource, /PLATFORM_TRENDS_ALLOWED_TOOLS[\s\S]*platform_trends_tool_whitelist_guard/, "trend workflows must reject unrelated tools before evidence collection drifts");
 assert.match(agentLoopSource, /validatePlatformTrendToolResult[\s\S]*step_quality_blocked/, "trend tool results must pass a per-step evidence gate before the next LLM turn");
 assert.match(agentLoopSource, /quality_gate_blocked[\s\S]*不得交付为成功报告/, "reports that still fail validation after retries must be blocked, not delivered");
@@ -181,10 +179,16 @@ assert.match(agentLoopSource, /__sourceTabId:\s*tabId/, "agent loop should pass 
 assert.match(toolRegistrySource, /getSourceOrCurrentTab[\s\S]*read_current_page/, "current-page tools should prefer the workflow source tab over whichever temporary tab is active");
 assert.match(toolRegistrySource, /restoreSourceTabFocus[\s\S]*search_tab_closed/, "browser searches should restore focus to the source shop tab after closing temporary evidence tabs");
 assert.match(toolRegistrySource, /protectedSourceTab[\s\S]*Refused to close source tab/, "close_tab must refuse to close the original source tab");
-assert.match(toolRegistrySource, /navigate_to[\s\S]*createOwnedTab\(\{ workflowId,\s*url:\s*safeEncodeURI\(url\),\s*active:\s*true,\s*openerTabId:\s*__sourceTabId \}\)[\s\S]*waitForTabReadiness\(created\.id/, "navigate_to must open a workflow-owned temporary tab and wait for readiness instead of replacing the source shop tab");
+assert.match(toolRegistrySource, /navigate_to[\s\S]*assertAllowedBrowserNavigationUrl\(url\)[\s\S]*createOwnedTab\(\{ workflowId,\s*url:\s*safeEncodeURI\(allowedUrl\),\s*active:\s*true,\s*openerTabId:\s*__sourceTabId \}\)[\s\S]*waitForTabReadiness\(created\.id/, "navigate_to must validate the URL, open a workflow-owned temporary tab and wait for readiness instead of replacing the source shop tab");
 assert.doesNotMatch(toolRegistrySource, /navigate_to[\s\S]{0,900}chrome\.tabs\.update\([^)]*url:/, "navigate_to must not update the current/source tab URL");
 assert.match(toolRegistrySource, /createOwnedTabCallback[\s\S]*search_in_browser[\s\S]*google_trends/, "browser search tabs should use workflow ownership");
-assert.match(toolRegistrySource, /image_search_1688[\s\S]*createOwnedTabCallback/, "image search tabs should use workflow ownership");
+for (const retiredTool of ["extract_product_info", "input_text_and_search", "prepare_clean_product_image", "image_search_1688", "image_search_taobao", "image_search_in_browser"]) {
+  assert.doesNotMatch(toolRegistrySource, new RegExp(`\\n\\s{2}${retiredTool}:\\s*async`), `${retiredTool} must not remain registered in the Etsy runtime`);
+}
+assert.doesNotMatch(toolRegistrySource, /query_fastmoss_data|weekly_sales:\s*8420|FastMoss TikTok Shop Open API/, "unimplemented FastMoss data must not return fabricated production metrics");
+assert.doesNotMatch(toolRegistrySource, /query_market_data|helium10ApiKey|sellerSpriteApiKey/, "unimplemented paid market-data integrations must not expose a misleading runtime or credential surface");
+assert.doesNotMatch(agentLoopSource, /用户已手动关闭“不卖原则”|宽容寻源环境/, "the runtime must not offer a global safety-filter bypass");
+assert.match(backgroundSource, /negativeFilter:\s*true/, "background must keep risk filtering enabled even if a client message is forged");
 assert.match(toolRegistrySource, /etsy_crawl_page_started[\s\S]*etsy_crawl_page_completed[\s\S]*etsy_crawl_completed/, "Etsy crawl should expose durable stage events rather than one opaque tool call");
 assert.match(toolRegistrySource, /etsy_screenshot_observation_started[\s\S]*etsy_screenshot_observation_completed/, "screenshot analysis should expose durable per-page stage events");
 assert.match(sidepanelSource, /msg\.type === "llm_started"/, "sidepanel should show LLM request payload telemetry");
@@ -215,7 +219,7 @@ assert.match(toolRegistrySource, /function shouldLocalizeSearchQuery[\s\S]*retur
 assert.match(agentLoopSource, /__toolRunState[\s\S]*cancelled[\s\S]*inFlightToolRuns\.delete\(key\)/, "timed-out tools should receive a soft cancellation token and stop leaking late browser stages");
 assert.match(toolRegistrySource, /__toolRunState\?\.cancelled[\s\S]*搜索工具在创建临时标签页前已被当前工具超时取消/, "browser searches should check the soft cancellation token before opening tabs");
 assert.match(backgroundSource, /GET_CURRENCY_RATES[\s\S]*REFRESH_CURRENCY_RATES[\s\S]*SAVE_CURRENCY_RATES/, "background should expose shared currency-rate management endpoints");
-assert.match(toolRegistrySource, /code:\s*"VERIFICATION_REQUIRED"[\s\S]*notifyVerificationRequired/, "1688/Taobao verification walls should return an explicit resumable verification code");
+assert.match(toolRegistrySource, /code:\s*"VERIFICATION_REQUIRED"[\s\S]*notifyVerificationRequired/, "browser verification walls should return an explicit resumable verification code");
 assert.match(sidepanelSource, /captcha-resume-btn[\s\S]*我已完成验证[\s\S]*instruction\.value = "继续"/, "sidepanel verification banner should provide a resume action after manual verification");
 assert.match(html, /manual-funnel-card[\s\S]*Search Analytics CSV[\s\S]*manual-funnel-save-btn/, "dashboard should expose manual Search Analytics funnel completion controls");
 assert.match(js, /MANUAL_FUNNEL_STORAGE_KEY[\s\S]*parseSearchAnalyticsCsv[\s\S]*buildManualFunnelSnapshot/, "dashboard should parse and persist manual Etsy backend funnel data");
@@ -583,7 +587,6 @@ assert.doesNotMatch(remainingBusinessSkillSource, /俄文|俄语|озон|Ozon|C
 assert.doesNotMatch(operationsSkillSource, /Session View 提升|Conv to Cart 提升|加购率提升至少 X/, "operations tracker must not use personal-API-unsupported analytics as validated examples");
 assert.match(operationsSkillSource, /当前个人卖家 API 不提供这些指标/, "operations tracker must state the personal Etsy API analytics boundary");
 assert.match(productOpportunitySkillSource, /经证据验证的机会假设/, "opportunity skill should frame opportunities as evidence-backed hypotheses, not guaranteed blue-ocean winners");
-assert.match(sourcingSkillSource, /英文\/目的地语言/, "sourcing skill should use Etsy destination-language packaging, not Ozon/RU packaging assumptions");
 assert.doesNotMatch(js, /第三方海外仓备货可行性/, "dashboard opportunity cards should not push warehouse feasibility before maturity evidence");
 assert.match(agentLoopSource, /涉及配送\/物流\/时效判断，但缺少实时物流主题 google_search 证据/, "critic should reject logistics claims without realtime logistics search evidence");
 assert.match(agentLoopSource, /选品机会书\/选品机会分析/, "critic should reject shop optimizer reports that are framed as opportunity books");

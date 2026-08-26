@@ -606,6 +606,41 @@
       <section id="view-tasks" class="view-tasks-pane view-pane">
         <div class="grid-card" style="margin-bottom:20px;">
           <div class="card-header">
+            <div>
+              <h3>🧾 Control Center Etsy 草稿任务</h3>
+              <p style="margin:6px 0 0;color:var(--text2);font-size:12px;">仅处理已批准的 <code>upload_draft</code>；在指定 AdsPower Etsy Profile 的可见页面保存草稿后，再回写 draft ID/URL。公共发布始终关闭。</p>
+            </div>
+            <button id="etsy-task-refresh" class="btn btn-outline" type="button">刷新任务</button>
+          </div>
+          <div class="card-body" style="display:grid;gap:12px;">
+            <div id="etsy-task-status" class="empty-state" style="text-align:left;align-items:flex-start;">尚未读取 etsy_adspower 任务。</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;">
+              <button id="etsy-task-claim" class="btn btn-primary" type="button" disabled>领取任务</button>
+              <button id="etsy-task-preflight" class="btn btn-outline" type="button" disabled>执行版本预检</button>
+              <button id="etsy-task-apply-draft" class="btn btn-outline" type="button" disabled>填充获批字段</button>
+              <button id="etsy-task-pause" class="btn btn-outline" type="button" disabled>暂停等待验证</button>
+              <button id="etsy-task-reconcile" class="btn btn-outline" type="button" disabled>只读对账</button>
+            </div>
+            <div id="etsy-task-draft" class="empty-state" style="text-align:left;align-items:flex-start;">预检通过后显示 exact Listing 草稿摘要。</div>
+            <div class="form-inline-row" style="flex-wrap:wrap;gap:10px;">
+              <input id="etsy-task-listing-id" class="form-input" type="text" style="flex:1;min-width:180px;" placeholder="可见 Etsy draft ID">
+              <input id="etsy-task-listing-url" class="form-input" type="url" style="flex:2;min-width:300px;" placeholder="https://www.etsy.com/.../listing/draft-id">
+              <input id="etsy-task-failure-reason" class="form-input" type="text" style="flex:2;min-width:260px;" placeholder="不可恢复失败原因（可选）">
+            </div>
+            <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text2);">
+              <input id="etsy-task-visible-confirmation" type="checkbox">
+              <span>我已在指定 AdsPower Profile 的可见 Etsy 页面确认草稿已保存，并核对了上面的 draft ID/URL；这不是公开发布。</span>
+            </label>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;">
+              <button id="etsy-task-record-uploaded" class="btn btn-primary" type="button" disabled>确认草稿并回写</button>
+              <button id="etsy-task-record-failed" class="btn btn-danger" type="button" disabled>记录不可恢复失败</button>
+            </div>
+            <div id="etsy-task-message" class="empty-state" style="text-align:left;align-items:flex-start;display:none;"></div>
+          </div>
+        </div>
+
+        <div class="grid-card" style="margin-bottom:20px;">
+          <div class="card-header">
             <h3>➕ 添加新监控任务</h3>
           </div>
           <div class="card-body form-inline-row" style="flex-wrap: wrap; gap: 10px;">

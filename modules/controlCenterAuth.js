@@ -2,6 +2,7 @@ import { createDeviceProof, encodeDeviceProof, getInstallationIdentity } from ".
 
 const DEFAULT_CONTROL_CENTER_ORIGIN = "https://www.marqel.shop";
 export const CLIENT_ID = "etsy-growth-agent";
+export const CLIENT_TYPE = "etsy_adspower";
 const DEVICE_NAME = "Etsy Growth Agent（AdsPower Etsy 运营）";
 const SESSION_KEY = "marqelControlCenterSession";
 const REFRESH_TOKEN_KEY = "marqelControlCenterRefreshToken";
@@ -52,6 +53,25 @@ async function request(path, options = {}, session = null) {
   return payload;
 }
 
+export async function controlCenterRequest(path, options = {}) {
+  let session = await getActiveSession({ revalidate: false });
+  if (!session?.accessToken) throw new Error("请先完成 Marqel V2 设备授权，再访问 Control Center 任务。");
+  try {
+    return await request(path, {
+      ...options,
+      headers: { Authorization: `Bearer ${session.accessToken}`, ...(options.headers || {}) },
+    }, session);
+  } catch (error) {
+    if (error.status !== 401) throw error;
+    const stored = await readStoredSession();
+    session = await refreshStoredSession(stored);
+    return request(path, {
+      ...options,
+      headers: { Authorization: `Bearer ${session.accessToken}`, ...(options.headers || {}) },
+    }, session);
+  }
+}
+
 function publicSession(session = {}, extra = {}) {
   return {
     accessToken: session.accessToken,
@@ -71,7 +91,7 @@ function publicDeviceRequest(pending = {}) {
     userCode: pending.userCode || "",
     expiresAt: pending.expiresAt || 0,
     intervalSeconds: Number(pending.intervalSeconds || 5),
-    clientType: pending.clientType || "chrome_extension",
+    clientType: pending.clientType || CLIENT_TYPE,
     clientId: pending.clientId || CLIENT_ID,
     reused: Boolean(pending.reused),
   };
@@ -215,7 +235,7 @@ export async function startDeviceAuthorization({ reopen = false } = {}) {
   const result = await request("/api/auth/device/start", {
     method: "POST",
     body: JSON.stringify({
-      clientType: "chrome_extension",
+      clientType: CLIENT_TYPE,
       clientId: CLIENT_ID,
       deviceName: DEVICE_NAME,
       installationPublicKey: identity.publicKey,
@@ -229,7 +249,7 @@ export async function startDeviceAuthorization({ reopen = false } = {}) {
     verificationUriComplete: result.verificationUriComplete,
     expiresAt: Date.now() + Number(result.expiresInSeconds || 600) * 1000,
     intervalSeconds: Number(result.intervalSeconds || 5),
-    clientType: result.clientType || "chrome_extension",
+    clientType: result.clientType || CLIENT_TYPE,
     clientId: result.clientId || CLIENT_ID,
     installationKeyId: result.installationKeyId || identity.keyId,
   });

@@ -10,12 +10,11 @@ const content = read("content.js");
 const manifest = JSON.parse(read("manifest.json"));
 const shop = read("skills/etsy_global_shop_optimizer.skill.md");
 const trends = read("skills/etsy_platform_trends.skill.md");
-const sourcing = read("skills/etsy_sourcing_finder.skill.md");
 const reviews = read("skills/etsy_review_analyzer.skill.md");
 
 const requiredCapabilityIds = [
   "address_navigation",
-  "keyboard_input_search",
+  "governed_search_navigation",
   "filter_sort_pagination",
   "dom_collection_cleaning",
   "multimodal_screenshot",
@@ -47,12 +46,13 @@ assert.match(toolRegistry, /captureVisibleTab[\s\S]*captureMode:\s*"captureVisib
 assert.equal(manifest.permissions.includes("debugger"), false, "release manifest must not request Chrome debugger access");
 assert.equal(manifest.host_permissions.includes("<all_urls>"), false, "release manifest must not request blanket host access at install time");
 assert.equal((manifest.web_accessible_resources || []).length, 0, "internal skills and icons must not be web-accessible resources");
-assert.match(content, /INPUT_TEXT_AND_SEARCH[\s\S]*KeyboardEvent[\s\S]*pressedEnter/, "content script must support keyboard-like input and Enter fallback");
-assert.match(content, /CLICK_BY_COORDINATE[\s\S]*file upload\/camera|Proactively blocked click_by_coordinate on file upload\/camera elements/, "coordinate clicking must block unsafe file upload targets");
+for (const retiredMessageType of ["INPUT_TEXT_AND_SEARCH", "GET_IMAGE_SEARCH_UI_STATE", "IMAGE_SEARCH_IN_BROWSER", "EXTRACT_PRODUCT_INFO"]) {
+  assert.doesNotMatch(content, new RegExp(`message\\.type === ["']${retiredMessageType}["']`), `${retiredMessageType} must not remain reachable in the Etsy content script`);
+}
+assert.match(content, /CLICK_BY_COORDINATE[\s\S]*File upload and camera interactions are forbidden/, "coordinate clicking must block unsafe file upload targets");
 assert.match(content, /READ_CURRENT_PAGE[\s\S]*readCurrentPage/, "content script must expose DOM collection");
 assert.match(shop, /DOM 文本审计双轨制|双轨分析模式/, "shop diagnosis must preserve DOM plus visual dual-track audit");
 assert.match(trends, /Google Trends[\s\S]*趋势图解读/, "trend skill must require Trends screenshot visual interpretation");
-assert.match(sourcing, /image_search_1688|image_search_taobao/, "sourcing skill should keep image-search-first paths");
 assert.match(reviews, /review|评论|差评/i, "review analyzer should remain review-evidence oriented");
 
 console.log("browser-capability-contract-smoke: ok");

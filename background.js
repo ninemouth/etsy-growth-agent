@@ -25,7 +25,6 @@ import {
 import { cleanupOwnedTabs, protectWorkflowTab } from './modules/browserSessionManager.js';
 import { getArtifactDataUrl } from './modules/artifactStore.js';
 import { buildEvidenceBundle } from './modules/evidenceBundle.js';
-import { buildEtsyOutreachHandoff } from './modules/etsyCampaignAdapter.js';
 import { summarizeEvidenceQuality } from './modules/evidenceQuality.js';
 import {
   appendTaskLog,
@@ -49,8 +48,10 @@ import {
   shouldClarifyResearchScope,
 } from './modules/researchScope.js';
 import { getCurrencyRates, saveCurrencyRates } from './modules/currencyRates.js';
-import { getActiveSession, getPendingDeviceAuthorization, pollDeviceAuthorization, reportBrowserExtensionInstallation, requireActiveSession, signOut, startDeviceAuthorization, syncClientConfig } from './modules/controlCenterAuth.js';
+import { controlCenterRequest, getActiveSession, getPendingDeviceAuthorization, pollDeviceAuthorization, reportBrowserExtensionInstallation, signOut, startDeviceAuthorization, syncClientConfig } from './modules/controlCenterAuth.js';
 import { buildCrossBorderSourcingHandoff, isCrossBorderSourcingRequest } from './modules/crossBorderSourcingHandoff.js';
+import { createEtsyAdsPowerTaskAdapter } from './modules/etsyAdsPowerTaskAdapter.js';
+import { attachLocalBusinessAuthority, buildLocalBusinessAuthority } from './modules/businessAuthority.js';
 
 function clientConfigSummary(config = null) {
   if (!config) return null;
@@ -99,9 +100,164 @@ setInterval(() => {
 let activeWorkflowRuns = 0;
 const TASK_LOG_RETENTION_ALARM = "etsy_task_log_retention";
 const DEVICE_AUTH_ALARM = "marqel_device_auth_poll";
+const ETSY_TASK_HEARTBEAT_ALARM = "marqel_etsy_adspower_task_heartbeat";
+const etsyAdsPowerTasks = createEtsyAdsPowerTaskAdapter({
+  request: controlCenterRequest,
+  storage: chrome.storage.local,
+});
+
+function sendTabMessage(tabId, message) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, message, (response) => {
+      if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+      if (!response?.ok) {
+        const error = new Error(response?.error || "The Etsy page rejected the governed draft write.");
+        error.code = response?.errorCode || "ETSY_DRAFT_DOM_WRITE_BLOCKED";
+        return reject(error);
+      }
+      resolve(response.result);
+    });
+  });
+}
+
+function classifyEtsyTelemetryRoute(value = "") {
+  try {
+    const url = new URL(String(value || ""));
+    if (url.protocol !== "https:" || !/(^|\.)etsy\.com$/i.test(url.hostname)) return "non_etsy";
+    if (/\/(?:account|signin|login|checkout|cart|payment|billing|security|messages?|conversations?|orders?)(?:\/|$)/i.test(url.pathname)) return "sensitive_blocked";
+    if (/\/(?:your\/shops\/[^/]+\/(?:listing|listings|tools\/listings)|your\/listings|listing-manager|shop-manager\/listings|listing-editor)(?:\/|$)/i.test(url.pathname)) return "listing_editor";
+    if (/\/shop\//i.test(url.pathname)) return "public_shop";
+    if (/\/listing\//i.test(url.pathname)) return "public_listing";
+    if (/\/your\/shops\//i.test(url.pathname)) return "seller_workspace";
+    return "other_etsy";
+  } catch (_) {
+    return "invalid_or_missing";
+  }
+}
+
+function countDraftFieldStatuses(fieldResults = {}) {
+  const counts = { appliedVerified: 0, manualRequired: 0, notRequested: 0 };
+  for (const entry of Object.values(fieldResults || {})) {
+    if (entry?.status === "applied_verified") counts.appliedVerified += 1;
+    else if (entry?.status === "manual_required") counts.manualRequired += 1;
+    else counts.notRequested += 1;
+  }
+  return counts;
+}
+
+function recordEtsyDomTelemetry(event, context = {}, severity = "info") {
+  logTaskEvent({
+    severity,
+    category: "etsy_dom_telemetry",
+    event,
+    message: "Privacy-safe Etsy DOM telemetry event.",
+    context,
+  });
+}
+
+async function applyApprovedEtsyDraftToVisiblePage() {
+  let tab = null;
+  try {
+    const verified = await etsyAdsPowerTasks.preflight();
+    [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) throw new Error("No active Etsy listing editor tab is available.");
+    const result = await sendTabMessage(tab.id, { type: "APPLY_APPROVED_ETSY_DRAFT", listingDraft: verified.listingDraft });
+    if (result.contractVersion !== "etsy-approved-draft-dom-write.v1"
+      || result.listingDraftId !== verified.listingDraft.id
+      || result.operationId !== verified.task.operationId
+      || result.saveTriggered !== false
+      || result.publicPublishPerformed !== false) {
+      const error = new Error("The Etsy page returned an inconsistent draft-only write result; stop before saving.");
+      error.code = "ETSY_DRAFT_DOM_WRITE_RESULT_INVALID";
+      throw error;
+    }
+    await etsyAdsPowerTasks.checkpoint({
+      stage: "approved_fields_applied_pending_human_save",
+      pageUrl: result.sourceUrl,
+      nextHumanAction: "Review every approved field, complete manual-only images/tags/category if needed, then visibly save as draft. Do not publish.",
+    });
+    recordEtsyDomTelemetry("draft_write_completed", {
+      contractVersion: result.contractVersion,
+      selectorSetVersion: result.selectorSetVersion || "unknown",
+      routeClass: classifyEtsyTelemetryRoute(result.sourceUrl),
+      fieldsApplied: Number(result.fieldsApplied || 0),
+      fieldStatusCounts: countDraftFieldStatuses(result.fieldResults),
+      imageStatus: result.imageStatus || "unknown",
+      saveTriggered: result.saveTriggered === true,
+      publicPublishPerformed: result.publicPublishPerformed === true,
+    });
+    return result;
+  } catch (error) {
+    recordEtsyDomTelemetry("draft_write_blocked", {
+      routeClass: classifyEtsyTelemetryRoute(tab?.url || ""),
+      errorCode: String(error?.code || "ETSY_DRAFT_DOM_WRITE_BLOCKED").slice(0, 80),
+    }, "warn");
+    throw error;
+  }
+}
+
+async function capturePrivacySafeEtsyViewport(tab) {
+  const isEtsy = /^https:\/\/([a-z0-9-]+\.)*etsy\.com\//i.test(String(tab?.url || ""));
+  if (!isEtsy) return chrome.tabs.captureVisibleTab(tab.windowId, { format:"jpeg", quality:60 });
+  let prepared = null;
+  try {
+    prepared = await sendTabMessage(tab.id, { type:"PREPARE_PRIVACY_SAFE_SCREENSHOT" });
+    if (prepared.contractVersion !== "etsy-screenshot-privacy-mask.v1" || prepared.blocked || !prepared.token) {
+      const error = new Error(prepared.blocked
+        ? "Screenshots are forbidden on Etsy account, order, message, checkout, payment, or security routes."
+        : "The Etsy screenshot privacy mask did not return a valid token.");
+      error.code = prepared.blocked ? "SCREENSHOT_SENSITIVE_ROUTE_FORBIDDEN" : "SCREENSHOT_PRIVACY_MASK_INVALID";
+      throw error;
+    }
+    const capture = await chrome.tabs.captureVisibleTab(tab.windowId, { format:"jpeg", quality:60 });
+    recordEtsyDomTelemetry("privacy_safe_capture_completed", {
+      contractVersion: prepared.contractVersion,
+      policyVersion: prepared.policyVersion || "unknown",
+      routeClass: classifyEtsyTelemetryRoute(tab.url),
+      maskedCount: Math.max(0, Math.min(Number(prepared.maskedCount || 0), 10_000)),
+    });
+    return capture;
+  } catch (error) {
+    recordEtsyDomTelemetry("privacy_safe_capture_blocked", {
+      policyVersion: prepared?.policyVersion || "unknown",
+      routeClass: classifyEtsyTelemetryRoute(tab?.url || ""),
+      maskedCount: Math.max(0, Math.min(Number(prepared?.maskedCount || 0), 10_000)),
+      errorCode: String(error?.code || "SCREENSHOT_PRIVACY_MASK_UNAVAILABLE").slice(0, 80),
+    }, "warn");
+    throw error;
+  } finally {
+    if (prepared?.token) {
+      await sendTabMessage(tab.id, { type:"RESTORE_PRIVACY_SAFE_SCREENSHOT", token:prepared.token })
+        .catch((error) => {
+          recordEtsyDomTelemetry("privacy_mask_restore_failed", {
+            policyVersion: prepared?.policyVersion || "unknown",
+            routeClass: classifyEtsyTelemetryRoute(tab?.url || ""),
+            errorCode: String(error?.code || "SCREENSHOT_PRIVACY_MASK_RESTORE_FAILED").slice(0, 80),
+          }, "error");
+          console.warn("Could not restore screenshot privacy masks:", error.message);
+        });
+    }
+  }
+}
+
+const ETSY_TASK_MESSAGE_HANDLERS = Object.freeze({
+  ETSY_TASK_NEXT: () => etsyAdsPowerTasks.next(),
+  ETSY_TASK_RESUMABLE: () => etsyAdsPowerTasks.resumable(),
+  ETSY_TASK_CLAIM: (message) => etsyAdsPowerTasks.claim(message.taskId),
+  ETSY_TASK_RESUME: (message) => etsyAdsPowerTasks.resume(message.task || null),
+  ETSY_TASK_ACTIVE: () => etsyAdsPowerTasks.active(),
+  ETSY_TASK_PREFLIGHT: () => etsyAdsPowerTasks.preflight(),
+  ETSY_TASK_APPLY_APPROVED_DRAFT: () => applyApprovedEtsyDraftToVisiblePage(),
+  ETSY_TASK_HEARTBEAT: () => etsyAdsPowerTasks.heartbeat(),
+  ETSY_TASK_CHECKPOINT: (message) => etsyAdsPowerTasks.checkpoint(message.checkpoint || {}),
+  ETSY_TASK_PAUSE_FOR_VERIFICATION: (message) => etsyAdsPowerTasks.pauseForVerification(message.checkpoint || {}),
+  ETSY_TASK_RECORD_UPLOADED: (message) => etsyAdsPowerTasks.recordUploaded(message.readback || {}),
+  ETSY_TASK_RECORD_FAILED: (message) => etsyAdsPowerTasks.recordFailed(message.readback || {}),
+  ETSY_TASK_RECONCILE: () => etsyAdsPowerTasks.reconcile(),
+});
 
 function logTaskEvent({ workflowId = "", sessionId = "", skillId = "", severity = "info", category = "workflow", event = "event", message = "", context = {} } = {}) {
-  appendTaskLog({ workflowId, sessionId, skillId, severity, category, event, message, context })
+  return appendTaskLog({ workflowId, sessionId, skillId, severity, category, event, message, context })
     .catch((err) => console.warn("Could not persist task log:", err.message));
 }
 
@@ -137,6 +293,11 @@ async function getCurrentTab() {
 }
 
 async function loadSkill(skillPath) {
+  if (skillPath === "skills/etsy_sourcing_finder.skill.md") {
+    const error = new Error("Legacy supplier sourcing is not executable in Etsy Growth Agent; use cross-border-sourcing-orchestrator.");
+    error.code = "SOURCING_HANDOFF_REQUIRED";
+    throw error;
+  }
   const url = chrome.runtime.getURL(skillPath);
   const response = await fetch(url);
   if (!response.ok) {
@@ -396,37 +557,6 @@ async function exportEvidenceBundle(reportId) {
     exportedAt: new Date().toISOString(),
     artifact_manifest: artifactManifest,
   };
-}
-
-const ETSY_OUTREACH_HANDOFFS_KEY = "etsyOutreachHandoffs";
-
-async function buildAndStoreEtsyOutreachHandoff(payload = {}) {
-  const storage = await new Promise((resolve) => chrome.storage.local.get([
-    ETSY_OUTREACH_HANDOFFS_KEY,
-    "activeShopId",
-    "etsyShops",
-  ], resolve));
-  const activeShop = (storage.etsyShops || []).find((shop) =>
-    shop.id === storage.activeShopId || shop.shopId === storage.activeShopId
-  ) || {};
-  const handoff = buildEtsyOutreachHandoff({
-    ...payload,
-    shop: {
-      id: activeShop.shopId || activeShop.id || "",
-      name: activeShop.name || "",
-      ...(payload.shop || {}),
-    },
-  });
-  const existing = storage[ETSY_OUTREACH_HANDOFFS_KEY] || [];
-  const next = [handoff, ...existing.filter((item) => item.handoff_id !== handoff.handoff_id)].slice(0, 100);
-  await new Promise((resolve) => chrome.storage.local.set({ [ETSY_OUTREACH_HANDOFFS_KEY]: next }, resolve));
-  logTaskEvent({
-    category: "campaign",
-    event: "outreach_handoff_created",
-    message: "Created approved Etsy campaign handoff for downstream promotion planning.",
-    context: { handoffId: handoff.handoff_id, campaignId: handoff.campaign.id, listingId: handoff.source.listing_id },
-  });
-  return handoff;
 }
 
 async function listSkills() {
@@ -917,9 +1047,6 @@ chrome.runtime.onConnect.addListener((port) => {
             }
           }
 
-          if (message.targetImageUrl) {
-            pageContext.targetImageUrl = message.targetImageUrl;
-          }
           if (Array.isArray(pageContext.images) && pageContext.images.length > 0) {
             pageContext.targetImageCandidates = pageContext.images
               .map((img) => img.src)
@@ -945,11 +1072,12 @@ chrome.runtime.onConnect.addListener((port) => {
 
           // Step 2: Capture screenshot for Vision models
           try {
-            const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 60 });
+            const dataUrl = await capturePrivacySafeEtsyViewport(tab);
             if (dataUrl) {
               pageContext.screenshot = dataUrl;
             }
           } catch (err) {
+            if (["SCREENSHOT_SENSITIVE_ROUTE_FORBIDDEN", "SCREENSHOT_PRIVACY_MASK_INVALID", "SCREENSHOT_PRIVACY_MASK_UNAVAILABLE"].includes(err.code)) throw err;
             console.warn("Could not capture screenshot:", err.message);
           }
 
@@ -1145,7 +1273,7 @@ chrome.runtime.onConnect.addListener((port) => {
             sendProgress,
             continueSession: shouldContinueSession || shouldResumeFromCheckpoint,
             highRandomness: message.highRandomness,
-            negativeFilter: message.negativeFilter,
+            negativeFilter: true,
             resumeState: shouldResumeFromCheckpoint ? existingCheckpoint : null,
             workflowId: checkpointKey,
             workflowGeneration: lease.generation,
@@ -1214,6 +1342,12 @@ chrome.runtime.onConnect.addListener((port) => {
           }
 
           if (!isCancelled) {
+            const businessAuthority = buildLocalBusinessAuthority({
+              skillId: matchedSkills.join("+"),
+              growthActionId: message.growthActionId || "",
+              operationId: message.controlCenterOperationId || message.operationId || "",
+            });
+            const governedResult = attachLocalBusinessAuthority(result.result, businessAuthority);
             if (matchedSkills.some((skillPath) => skillPath.includes("etsy_compliance_auditor"))) {
               await saveComplianceDecision({
                 pageUrl: tab.url || pageContext.url || "",
@@ -1227,7 +1361,7 @@ chrome.runtime.onConnect.addListener((port) => {
               const existing = await new Promise((r) => chrome.storage.local.get(["savedResults"], r));
               const savedResults = existing.savedResults || [];
               
-              const reportOutput = result.result && typeof result.result === "object" ? result.result : {};
+              const reportOutput = governedResult && typeof governedResult === "object" ? governedResult : {};
               const researchScope = reportOutput.research_scope || pageContext.research_scope || {};
               const evidenceQuality = summarizeEvidenceQuality({
                 output: reportOutput,
@@ -1244,9 +1378,11 @@ chrome.runtime.onConnect.addListener((port) => {
                 growthActionId: message.growthActionId || "",
                 growthRunId: message.growthRunId || "",
                 growthCaseId: message.growthCaseId || "",
+                controlCenterOperationId: businessAuthority.operationId,
+                authority: businessAuthority,
                 research_scope: researchScope,
                 evidence_quality: evidenceQuality,
-                result: result.result // The parsed final output object containing overview, analysis, and data items
+                result: governedResult // Local browser evidence/preview with an explicit non-canonical authority envelope.
               };
               newEntry.evidence_bundle = buildEvidenceBundle({
                 savedEntry: newEntry,
@@ -1270,6 +1406,7 @@ chrome.runtime.onConnect.addListener((port) => {
               type: "SUCCESS",
               result: {
                 ...result,
+                result: governedResult,
                 skillId: matchedSkills.join("+"),
                 skillName: matchedNames.join(" + "),
                 savedEntry,
@@ -1355,6 +1492,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (Object.hasOwn(ETSY_TASK_MESSAGE_HANDLERS, message.type)) {
+    Promise.resolve(ETSY_TASK_MESSAGE_HANDLERS[message.type](message))
+      .then((result) => sendResponse({ ok: true, result }))
+      .catch((error) => sendResponse({ ok: false, error: error.message, errorCode: error.code || "ETSY_TASK_ERROR" }));
+    return true;
+  }
+
   if (message.type === "AUTH_LOGIN") {
     startDeviceAuthorization()
       .then((result) => sendResponse({ ok: true, result }))
@@ -1387,7 +1531,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "AUTH_LOGOUT") {
-    signOut().then(() => sendResponse({ ok: true })).catch((err) => sendResponse({ ok: false, error: err.message }));
+    Promise.all([signOut(), etsyAdsPowerTasks.clearActive()]).then(() => sendResponse({ ok: true })).catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }
 
@@ -1431,21 +1575,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     exportEvidenceBundle(message.id || message.reportId)
       .then((data) => sendResponse({ ok: true, data }))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
-    return true;
-  }
-
-  if (message.type === "BUILD_ETSY_OUTREACH_HANDOFF") {
-    requireActiveSession()
-      .then(() => buildAndStoreEtsyOutreachHandoff(message.payload || {}))
-      .then((data) => sendResponse({ ok: true, data }))
-      .catch((err) => sendResponse({ ok: false, error: err.message }));
-    return true;
-  }
-
-  if (message.type === "LIST_ETSY_OUTREACH_HANDOFFS") {
-    chrome.storage.local.get([ETSY_OUTREACH_HANDOFFS_KEY], (data) => {
-      sendResponse({ ok: true, data: data[ETSY_OUTREACH_HANDOFFS_KEY] || [] });
-    });
     return true;
   }
 
@@ -1701,6 +1830,20 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     } catch { /* Dashboard exposes the actionable error on the next explicit check. */ }
     return;
   }
+  if (alarm.name === ETSY_TASK_HEARTBEAT_ALARM) {
+    try {
+      await etsyAdsPowerTasks.heartbeat();
+    } catch (error) {
+      logTaskEvent({
+        severity: "warn",
+        category: "etsy_adspower",
+        event: "task_lease_lost",
+        message: error.message,
+        context: { errorCode: error.code || "ETSY_TASK_HEARTBEAT_FAILED" },
+      });
+    }
+    return;
+  }
   if (alarm.name === TASK_LOG_RETENTION_ALARM) {
     const result = await pruneTaskLogs(TASK_LOG_RETENTION);
     logTaskEvent({
@@ -1915,6 +2058,7 @@ chrome.runtime.onInstalled.addListener(() => {
   ensureUpdateAlarm().catch((err) => console.warn("Failed to initialize update alarm:", err.message));
   ensureTaskLogRetentionAlarm().catch((err) => console.warn("Failed to initialize task log retention:", err.message));
   chrome.alarms.create(DEVICE_AUTH_ALARM, { periodInMinutes: 1 });
+  chrome.alarms.create(ETSY_TASK_HEARTBEAT_ALARM, { periodInMinutes: 5 });
   chrome.storage.local.get(["llmProvider"], (data) => {
     if (!data.llmProvider) {
       chrome.storage.local.set({
@@ -1931,6 +2075,7 @@ chrome.runtime.onInstalled.addListener(() => {
 
 ensureTaskLogRetentionAlarm().catch((err) => console.warn("Failed to run task log retention startup check:", err.message));
 chrome.alarms.create(DEVICE_AUTH_ALARM, { periodInMinutes: 1 });
+chrome.alarms.create(ETSY_TASK_HEARTBEAT_ALARM, { periodInMinutes: 5 });
 
 chrome.runtime.onUpdateAvailable.addListener((details) => {
   markRuntimeUpdateAvailable(details)

@@ -38,20 +38,23 @@ const handoff = buildEtsyOutreachHandoff({
   media: { images: ["https://i.etsystatic.com/example.jpg", "data:image/png;base64,blocked"], assetManifestRefs: ["asset://sellerpilot/demo"] },
   approval: { status: "approved", approvedBy: "operator@example.test", approvedAt: "2026-08-16T00:00:00.000Z", expiresAt: "2026-09-16T00:00:00.000Z" },
   evidence: { listingEvidenceRefs: ["artifact://listing/123"], adsRecommendation: advertising.channels.etsy_ads.recommendation },
+  authority: { contractVersion: "marqel-campaign-authority.v1", sourceSystem: "marqel-control-center", canonical: true, operationId: "operation-1", campaignId: "campaign-1", approvalId: "approval-1", targetRef: "recommendation-1", expectedUpdatedAt: "2026-08-16T00:00:00.000Z", readbackRef: "marqel://campaign-approvals/approval-1" },
   now: new Date("2026-08-16T01:00:00.000Z"),
 });
 assert.equal(handoff.schema_version, "promotion-object-handoff.v1");
 assert.equal(handoff.object.object_type, "product");
 assert.deepEqual(handoff.media.images, ["https://i.etsystatic.com/example.jpg"]);
 assert.equal(handoff.security_boundary.contains_credentials, false);
+assert.equal(handoff.source.operation_id, "operation-1");
+assert.equal(handoff.approval.authority.source_system, "marqel-control-center");
 assert.throws(() => buildEtsyOutreachHandoff({
   tenantId: "tenant-demo", listing: { id: "1", url: "https://www.etsy.com/listing/1/a", title: "A" }, campaign: { id: "c", objective: "test" }, claims: { approvedFacts: ["fact"] }, approval: { status: "draft" }, now: new Date("2026-08-16T01:00:00.000Z"),
-}), /approved/);
+}), /canonical Control Center Campaign approval readback/);
 
 const background = readFileSync(new URL("../background.js", import.meta.url), "utf8");
-assert.match(background, /BUILD_ETSY_OUTREACH_HANDOFF/);
-assert.match(background, /LIST_ETSY_OUTREACH_HANDOFFS/);
+assert.doesNotMatch(background, /BUILD_ETSY_OUTREACH_HANDOFF/);
+assert.doesNotMatch(background, /LIST_ETSY_OUTREACH_HANDOFFS/);
 const dashboard = readFileSync(new URL("../dashboard.js", import.meta.url), "utf8");
-assert.match(dashboard, /createOutreachHandoffFromSku/);
-assert.match(dashboard, /推广交接/);
+assert.match(dashboard, /openCanonicalCampaignWorkflow/);
+assert.match(dashboard, /Campaign Operator/);
 console.log("etsy campaign adapter smoke passed");

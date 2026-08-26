@@ -3,7 +3,7 @@
 export async function getSettings() {
   return new Promise((resolve) => {
     chrome.storage.local.get(
-      ["apiKey", "llmProvider", "llmModel", "llmFallbackModels", "llmProfiles", "imageGenerationModel", "imageProvider", "imageBaseUrl", "imageApiKey", "llmVisionModel", "llmBaseUrl", "temperature", "helium10ApiKey", "sellerSpriteApiKey", "fastmossApiKey"],
+      ["apiKey", "llmProvider", "llmModel", "llmFallbackModels", "llmProfiles", "imageGenerationModel", "imageProvider", "imageBaseUrl", "imageApiKey", "llmVisionModel", "llmBaseUrl", "temperature"],
       resolve
     );
   });

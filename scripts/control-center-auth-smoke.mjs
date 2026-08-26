@@ -36,7 +36,7 @@ globalThis.fetch = async (url) => {
       verificationUriComplete: "https://www.marqel.shop/device-approval.html?user_code=87654321",
       expiresInSeconds: 600,
       intervalSeconds: 5,
-      clientType: "chrome_extension",
+      clientType: "etsy_adspower",
       clientId: "etsy-growth-agent",
     }), { status: 201, headers: { "Content-Type": "application/json" } });
   }
@@ -62,6 +62,7 @@ const { getPendingDeviceAuthorization, pollDeviceAuthorization, signOut, startDe
 const started = await startDeviceAuthorization();
 assert.equal(started.status, "approval_required");
 assert.equal(started.clientId, "etsy-growth-agent");
+assert.equal(started.clientType, "etsy_adspower");
 assert.equal(started.userCode, "87654321");
 assert.equal(Object.hasOwn(started, "deviceCode"), false);
 assert.equal(Object.hasOwn(started, "verificationUriComplete"), false);

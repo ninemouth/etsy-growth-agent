@@ -5,7 +5,6 @@ let selectedSkill = null;
 let isRunning = false;
 let currentResultObj = null;
 let currentExcelData = null;
-let pastedTargetImageDataUrl = "";
 let activeGrowthAction = null;
 let availableSkills = [];
 let sessionMode = "new";
@@ -566,11 +565,6 @@ function selectSkill(skill, cardEl) {
     $("instruction").classList.remove("hidden");
   }
 
-  const imageInputs = $("targetImageInputs");
-  if (imageInputs) {
-    imageInputs.classList.toggle("hidden", !isImageSourcingSkill(skill));
-  }
-  
   $("runBtn").disabled = false;
 }
 
@@ -627,69 +621,6 @@ async function activateGrowthAction(actionId, runId = "") {
       await new Promise((r) => chrome.storage.local.set({ growthActionRuns: runs }, r));
     }
   }
-}
-
-function isImageSourcingSkill(skill) {
-  return !!skill && [
-    "domestic_sourcing_finder",
-    "tiktok_shop_fastmoss_analyzer",
-  ].includes(skill.id);
-}
-
-function readFileAsDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error || new Error("图片读取失败"));
-    reader.readAsDataURL(file);
-  });
-}
-
-async function getTargetImageUrlForRun() {
-  if (!isImageSourcingSkill(selectedSkill)) return "";
-
-  const urlInput = $("targetImageUrl");
-  const fileInput = $("targetImageFile");
-  const status = $("targetImageStatus");
-  const pastedUrl = urlInput?.value?.trim() || "";
-  const file = fileInput?.files?.[0];
-
-  if (pastedUrl) return pastedUrl;
-  if (pastedTargetImageDataUrl) return pastedTargetImageDataUrl;
-  if (!file) return "";
-
-  if (status) {
-    status.textContent = "已读取本地商品图，将优先用于以图搜源。";
-    status.classList.remove("hidden");
-  }
-  return await readFileAsDataUrl(file);
-}
-
-function handleTargetImagePaste(event) {
-  if (!isImageSourcingSkill(selectedSkill)) return;
-  const items = Array.from(event.clipboardData?.items || []);
-  const imageItem = items.find((item) => item.type && item.type.startsWith("image/"));
-  if (!imageItem) return;
-
-  const file = imageItem.getAsFile();
-  if (!file) return;
-
-  readFileAsDataUrl(file)
-    .then((dataUrl) => {
-      pastedTargetImageDataUrl = dataUrl;
-      const status = $("targetImageStatus");
-      if (status) {
-        status.textContent = "已接收剪贴板商品图，将作为以图搜源兜底图。";
-        status.classList.remove("hidden");
-      }
-    })
-    .catch((err) => {
-      const status = $("targetImageStatus");
-      if (status) {
-        status.textContent = `剪贴板图片读取失败：${err.message}`;
-        status.classList.remove("hidden");
-      }
-    });
 }
 
 function toggleDropdown(forceState) {
@@ -937,8 +868,6 @@ async function runSkill() {
       userInstruction = $("instruction").value.trim();
     }
 
-    const targetImageUrl = await getTargetImageUrlForRun();
-
     const legacyContinueInstruction = isCheckpointFollowupInstruction(userInstruction);
     let resumeSessionKey = getActiveResumeSessionKey();
     if (!resumeSessionKey && legacyContinueInstruction) {
@@ -956,11 +885,10 @@ async function runSkill() {
       growthActionId: activeGrowthAction?.id || "",
       workflowSessionId,
       userInstruction: userInstruction,
-      targetImageUrl,
       continueSession: Boolean(shouldContinueSession),
       forceNewSession: !shouldContinueSession,
       highRandomness: $("highRandomnessCheckbox").checked,
-      negativeFilter: $("negativeFilterCheckbox").checked,
+      negativeFilter: true,
       screenshotDisclosureConfirmed: true,
     });
 
@@ -1694,7 +1622,7 @@ async function loadLibrary() {
 // ── Settings ──
 async function loadSettings() {
   const s = await new Promise((r) =>
-    chrome.storage.local.get(["apiKey", "llmProvider", "llmModel", "llmFallbackModels", "imageGenerationModel", "imageProvider", "imageBaseUrl", "imageApiKey", "llmBaseUrl", "temperature", "helium10ApiKey", "sellerSpriteApiKey", "fastmossApiKey"], r)
+    chrome.storage.local.get(["apiKey", "llmProvider", "llmModel", "llmFallbackModels", "imageGenerationModel", "imageProvider", "imageBaseUrl", "imageApiKey", "llmBaseUrl", "temperature"], r)
   );
 
   if (s.llmProvider) $("llmProvider").value = s.llmProvider;
@@ -1710,27 +1638,8 @@ async function loadSettings() {
     $("temperature").value = s.temperature;
     $("tempValue").textContent = s.temperature;
   }
-  if (s.helium10ApiKey) $("helium10ApiKey").value = s.helium10ApiKey;
-  if (s.sellerSpriteApiKey) $("sellerSpriteApiKey").value = s.sellerSpriteApiKey;
-  if (s.fastmossApiKey) $("fastmossApiKey").value = s.fastmossApiKey;
-
   updateProviderUI(s.llmProvider || "openai");
-  updateApiStatusUI(s.helium10ApiKey, s.sellerSpriteApiKey, s.fastmossApiKey);
   await refreshUpdateStatus();
-}
-
-function updateApiStatusUI(h10Key, ssKey, fmKey) {
-  const badge = $("apiStatusBadge");
-  if (!badge) return;
-  if (h10Key || ssKey || fmKey) {
-    badge.textContent = "三方数据: 已激活";
-    badge.style.background = "#d1fae5";
-    badge.style.color = "#065f46";
-  } else {
-    badge.textContent = "三方数据: 未激活";
-    badge.style.background = "#f1f5f9";
-    badge.style.color = "#64748b";
-  }
 }
 
 function updateProviderUI(provider) {
@@ -1875,9 +1784,6 @@ async function saveSettings() {
   const imageApiKey = $("imageApiKey").value.trim();
   const llmBaseUrl = $("llmBaseUrl").value.trim();
   const temperature = $("temperature").value;
-  const helium10ApiKey = $("helium10ApiKey").value.trim();
-  const sellerSpriteApiKey = $("sellerSpriteApiKey").value.trim();
-  const fastmossApiKey = $("fastmossApiKey").value.trim();
 
   const msg = $("settingsMsg");
 
@@ -1911,25 +1817,17 @@ async function saveSettings() {
       imageBaseUrl,
       imageApiKey,
       llmBaseUrl, 
-      temperature,
-      helium10ApiKey,
-      sellerSpriteApiKey,
-      fastmossApiKey
+      temperature
     }, r)
   );
 
   $("apiKey").type = "password";
   $("imageApiKey").type = "password";
-  $("helium10ApiKey").type = "password";
-  $("sellerSpriteApiKey").type = "password";
-  $("fastmossApiKey").type = "password";
   document.activeElement?.blur?.();
 
   msg.textContent = "✓ 设置已保存";
   msg.className = "settings-msg success";
   msg.classList.remove("hidden");
-  
-  updateApiStatusUI(helium10ApiKey, sellerSpriteApiKey, fastmossApiKey);
   
   setTimeout(() => msg.classList.add("hidden"), 2000);
 }
@@ -1981,23 +1879,6 @@ function bindEvents() {
   $("applyUpdateBtn")?.addEventListener("click", applyPendingUpdate);
 
   $("llmProvider").addEventListener("change", (e) => updateProviderUI(e.target.value));
-
-  if ($("targetImageFile")) {
-    $("targetImageFile").addEventListener("change", () => {
-      const status = $("targetImageStatus");
-      const file = $("targetImageFile").files?.[0];
-      if (!status) return;
-      if (file) {
-        pastedTargetImageDataUrl = "";
-        status.textContent = `已选择：${file.name}`;
-        status.classList.remove("hidden");
-      } else {
-        status.classList.add("hidden");
-      }
-    });
-  }
-
-  document.addEventListener("paste", handleTargetImagePaste);
 
   $("temperature").addEventListener("input", (e) => {
     $("tempValue").textContent = e.target.value;

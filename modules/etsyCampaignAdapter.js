@@ -198,13 +198,24 @@ function cleanMedia(values) {
  * Creates a provider-neutral handoff. It excludes all credentials, browser
  * sessions, AdsPower endpoints, screenshots/data URLs and mutation commands.
  */
-export function buildEtsyOutreachHandoff({ tenantId, shop = {}, listing = {}, campaign = {}, claims = {}, media = {}, approval = {}, evidence = {}, now = new Date() } = {}) {
+export function buildEtsyOutreachHandoff({ tenantId, shop = {}, listing = {}, campaign = {}, claims = {}, media = {}, approval = {}, evidence = {}, authority = {}, now = new Date() } = {}) {
   const issuedAt = now.toISOString();
   const expiresAt = approval.expiresAt || campaign.expiresAt || "";
   if (!tenantId) throw new Error("tenantId is required for an outreach handoff.");
   if (!listing.id || !listing.url || !listing.title) throw new Error("listing.id, listing.url, and listing.title are required.");
   if (!/^https:\/\/www\.etsy\.com\//.test(listing.url)) throw new Error("listing.url must be a public https://www.etsy.com/ URL.");
   if (!campaign.id || !campaign.objective) throw new Error("campaign.id and campaign.objective are required.");
+  if (authority.contractVersion !== "marqel-campaign-authority.v1"
+    || authority.sourceSystem !== "marqel-control-center"
+    || authority.canonical !== true
+    || !authority.operationId
+    || authority.campaignId !== campaign.id
+    || !authority.approvalId
+    || !authority.targetRef
+    || !authority.expectedUpdatedAt
+    || !String(authority.readbackRef || "").startsWith("marqel://")) {
+    throw new Error("A canonical Control Center Campaign approval readback is required; local Growth Agent approval is not authoritative.");
+  }
   if (approval.status !== "approved") throw new Error("Only explicitly approved campaigns may be handed to outreach.");
   if (!approval.approvedBy || !approval.approvedAt || !expiresAt) throw new Error("approval.approvedBy, approval.approvedAt, and expiresAt are required.");
   if (approval.revoked === true) throw new Error("A revoked campaign cannot be handed to outreach.");
@@ -216,13 +227,13 @@ export function buildEtsyOutreachHandoff({ tenantId, shop = {}, listing = {}, ca
   const images = cleanMedia(media.images);
   return {
     schema_version: HANDOFF_VERSION, handoff_id: `etsy-outreach-${campaign.id}-${listing.id}-${Date.now()}`, issued_at: issuedAt,
-    source: { system: "etsy-growth-agent", tenant_id: String(tenantId), shop_id: String(shop.id || ""), shop_name: String(shop.name || ""), listing_id: String(listing.id), campaign_id: String(campaign.id) },
+    source: { system: "etsy-growth-agent", tenant_id: String(tenantId), shop_id: String(shop.id || ""), shop_name: String(shop.name || ""), listing_id: String(listing.id), campaign_id: String(campaign.id), operation_id: String(authority.operationId) },
     object: { object_id: `etsy-listing-${listing.id}`, object_type: "product", source_url: listing.url, title: listing.title, summary: String(listing.summary || ""), language: String(listing.language || "en"), target_audiences: cleanTextList(campaign.targetAudiences), tags: cleanTextList(listing.tags) },
     claim_policy: { approved_facts: approvedFacts, do_not_claim: doNotClaim, must_disclose: mustDisclose },
     media: { images, asset_manifest_refs: cleanTextList(media.assetManifestRefs), usage_rights: String(media.usageRights || "operator_confirmed") },
     campaign: { id: String(campaign.id), objective: String(campaign.objective), target_regions: cleanTextList(campaign.targetRegions), allowed_channels: cleanTextList(campaign.allowedChannels), utm_campaign: String(campaign.utmCampaign || ""), status: "approved", expires_at: expiresAt, etsy_ads_recommendation: evidence.adsRecommendation || null },
-    approval: { status: "approved", approved_by: String(approval.approvedBy), approved_at: String(approval.approvedAt), expires_at: expiresAt, revoked: false },
-    evidence: { listing_evidence_refs: cleanTextList(evidence.listingEvidenceRefs), report_ids: cleanTextList(evidence.reportIds), freshness_at: String(evidence.freshnessAt || issuedAt), provenance: "etsy-growth-agent local evidence and explicit operator approval" },
+    approval: { status: "approved", approved_by: String(approval.approvedBy), approved_at: String(approval.approvedAt), expires_at: expiresAt, revoked: false, authority: { contract_version: authority.contractVersion, source_system: authority.sourceSystem, campaign_id: authority.campaignId, approval_id: authority.approvalId, target_ref: authority.targetRef, expected_updated_at: authority.expectedUpdatedAt, readback_ref: authority.readbackRef } },
+    evidence: { listing_evidence_refs: cleanTextList(evidence.listingEvidenceRefs), report_ids: cleanTextList(evidence.reportIds), freshness_at: String(evidence.freshnessAt || issuedAt), provenance: "Control Center canonical Campaign approval plus Etsy Growth Agent local evidence" },
     security_boundary: { public_submit_automation: "disabled", contains_credentials: false, contains_browser_session: false, cloud_authorization_verified: false, note: "Downstream services must verify the tenant session and entitlement with the cloud authorization center before creating a live run." },
   };
 }

@@ -12,7 +12,7 @@ const valid = {
     operator: "release-tester",
     executedAt: "2026-08-22T00:00:00.000Z",
   },
-  matrix: ["RB-01", "RB-02", "RB-03", "RB-04", "RB-05", "RB-06"].map((id) => ({
+  matrix: ["RB-01", "RB-02", "RB-03", "RB-04", "RB-05", "RB-06", "RB-07"].map((id) => ({
     id, result: "passed", blocker: "", evidence: [{ kind: "evidence_bundle", ref: `artifact://${id}` }],
   })),
 };

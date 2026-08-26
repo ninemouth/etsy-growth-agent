@@ -14,7 +14,9 @@ Repository: https://github.com/ninemouth/etsy-growth-agent
 - Cross-platform supplier sourcing handoff to the Marqel Etsy Codex Orchestrator (the legacy sourcing report reader remains read-only).
 - Competitor/review analysis focused on buyer expectations, packaging, delivery promise, personalization quality, and IP/compliance risk.
 - Optional Etsy personal-access Open API adapter for active listings and authorized receipts when a Shop ID, API key, OAuth access token, and optional refresh token are configured locally.
-- Etsy Campaign Adapter: imports user-triggered visible Etsy Ads / Offsite Ads evidence, produces approval-required recommendations, and exports approved, credential-free promotion handoffs for downstream services.
+- Etsy Campaign Adapter: imports user-triggered visible Etsy Ads / Offsite Ads evidence as non-canonical input for the Control Center and `etsy-campaign-operator`; it does not approve campaigns, change budgets, or publish Outreach handoffs locally.
+- Governed Etsy draft executor: fills only deterministic fields from an exact approved `etsy-listing-draft.v1` on an allowlisted Etsy editor route, verifies the DOM write, and leaves tokenized tags, images, Save, and Publish visibly manual.
+- Privacy-safe DOM observability: records selector/policy versions, route classes, field-status counts, mask counts, and bounded error codes in local task logs without storing page URLs, business identifiers, approved content, screenshots, or credentials.
 - Marqel Control Center V2 session: Agent execution requires an active Marqel session; first use starts an `etsy-growth-agent` device request that a Web member must approve. The extension can use approved organization defaults or local overrides from its extension-origin side panel, and never collects a Marqel password.
 
 ## Project Structure
@@ -54,7 +56,7 @@ This project keeps the browser automation, dashboard, workflow canvas, report li
 - Runtime routing uses `etsy_*` skills and tool names.
 - The dashboard currency and listing logic are centered on USD-style Etsy economics.
 - Compliance guidance focuses on Etsy IP policy, personalization claims, CE/CPC/FDA/category-specific obligations, and gift-market delivery promises.
-- Supplier sourcing is a runtime handoff boundary. The old `etsy_sourcing_finder` file and legacy report rendering remain only for migration compatibility; it is not listed, routable, or injectable by the active extension.
+- Supplier sourcing is a runtime handoff boundary. The old `etsy_sourcing_finder` Skill file has been physically removed; direct legacy loads fail closed and sourcing intent is handed to the cross-border Orchestrator. Historical sourcing report rendering remains read-only for evidence migration.
 - Etsy API integration is modeled as a personal-access/local-browser setup, not a multi-tenant SaaS authorization flow. Public listing reads use the configured API key. Private shop data such as receipts/orders requires an OAuth access token; when a refresh token is also saved, the adapter can refresh an expired access token before retrying the request.
 
 ## Etsy Personal Access Credentials
@@ -76,6 +78,7 @@ Etsy Growth Agent works by reading the currently open browser page and, for some
 - Open Google Search and Google Trends once in the same Chrome profile, complete any consent, region, language, or verification prompts, then keep the session available for trend and market-research workflows.
 - For 1688/Taobao supplier tasks, use Codex `$cross-border-sourcing-orchestrator` and the ordinary Chrome `supplier-sourcing-chrome-runner`; do not use this extension as the supplier-platform runner. Platform login and CAPTCHA prompts remain human-handled.
 - The model tool surface is read-only for page evidence. Generic clicks, form input/submission, image upload/search, purchase, publish, account, Ads, and other high-consequence actions are denied centrally and remain human-controlled.
+- Supplier URLs, 1688/Taobao search engines, legacy image-search/input handlers, and unimplemented paid market-data credentials/tools are absent from the active runtime. Risk filtering is always enabled; exceptions must be requested and explained one risk at a time.
 - For any Agent run, sign in through the Dashboard's `Marqel Access` control first. The open-source plugin can be configured locally without an account, but it will fail closed before execution when the shared Marqel session is missing or inactive.
 - Keep the original Etsy shop or listing page open while the workflow runs. The extension protects and restores the source tab, but external login or verification pages may still require manual attention.
 - If a run reports a blocked, login, consent, or verification page, resolve it in Chrome, reload the extension/page if needed, then resume the saved workflow instead of starting from scratch.
@@ -110,10 +113,10 @@ The governed catalog publishes a record with this shape:
 ```json
 {
   "id": "etsy-growth-agent",
-  "currentVersion": "1.2.2",
-  "minimumSupportedVersion": "1.2.2",
+  "currentVersion": "1.2.3",
+  "minimumSupportedVersion": "1.2.3",
   "minimumChromeVersion": "114",
-  "releaseState": "source_only_blocked"
+  "releaseState": "blocked_until_rb_01_to_rb_07_pass"
 }
 ```
 
@@ -149,14 +152,14 @@ See `operations/architecture_audit.md` for the current runtime risk register and
 
 1. Keep `manifest.json` and `package.json` versions aligned and use the Node version pinned in `.nvmrc`.
 2. Run `npm run test:release`; this executes lint and every `test:*` smoke suite.
-3. Complete all six real-browser acceptance items and record `real-browser-acceptance.v2` evidence in `operations/acceptance/real_browser_acceptance_matrix.json`.
+3. Complete all seven real-browser acceptance items (including the governed Etsy draft task/readback path) and record `real-browser-acceptance.v2` evidence in `operations/acceptance/real_browser_acceptance_matrix.json`.
 4. Run `npm run release:readiness`. It fails closed on a dirty tree, version/tag mismatch, excessive permissions, missing acceptance evidence, or runtime changes after the tested commit.
 5. Run `npm run package:extension` to create a reproducible ZIP plus `dist/release-manifest.json` with source and SHA-256 provenance.
 6. Push the reviewed commit and create the exact tag `v<manifest.version>`; GitHub Actions repeats the full release gate before publishing assets.
 
 ## Privacy
 
-The extension is designed for local browser execution. LLM provider credentials are stored in `chrome.storage.local`; Etsy login credentials and cookies are not collected by the extension. Viewport screenshots require a fresh user disclosure confirmation before they can be sent to the configured model provider. See `DATA_GOVERNANCE.md` for the enforced boundary.
+The extension is designed for local browser execution. LLM provider credentials are stored in `chrome.storage.local`; Etsy login credentials and cookies are not collected by the extension. Viewport screenshots require a fresh user disclosure confirmation, block sensitive Etsy routes, and hide detected email, phone, address, order, credential, and payment fields before capture. This local mask reduces accidental disclosure but does not replace the organization/provider DPA and real-browser privacy acceptance. See `DATA_GOVERNANCE.md` for the enforced boundary.
 
 ## Promotion handoff
 
@@ -167,12 +170,12 @@ normalization, Etsy Ads/Offsite Ads guardrails, evidence-gated trend queue and
 creative-hypothesis safeguards now live here; all new Etsy development belongs
 in this repository.
 
-After a human approves a campaign, the extension may receive a
-`BUILD_ETSY_OUTREACH_HANDOFF` runtime message. It creates a
-`promotion-object-handoff.v1` package for Intelligent Outreach or another
-promotion service. The package contains the public Listing identity, approved
-facts, prohibited claims, required disclosures, approved media references,
-evidence references, campaign expiry and human approval record.
+Growth Agent no longer creates a campaign or Outreach handoff from a local
+prompt-based approval. Its dashboard routes the operator to the canonical
+`etsy-campaign-operator` and Control Center reviewer. A
+`promotion-object-handoff.v1` may be built only from a persisted Control Center
+Campaign approval readback carrying the exact operation, campaign, approval,
+target and version identifiers.
 
 It deliberately excludes passwords, cookies, OAuth/API tokens, AdsPower API
 keys, browser-control endpoints, screenshots/data URLs and every Etsy budget

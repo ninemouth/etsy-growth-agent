@@ -1,4 +1,4 @@
-const REQUIRED_ACCEPTANCE_IDS = ["RB-01", "RB-02", "RB-03", "RB-04", "RB-05", "RB-06"];
+const REQUIRED_ACCEPTANCE_IDS = ["RB-01", "RB-02", "RB-03", "RB-04", "RB-05", "RB-06", "RB-07"];
 
 export function validateAcceptanceRecord(record = {}, { manifestVersion = "" } = {}) {
   const errors = [];
