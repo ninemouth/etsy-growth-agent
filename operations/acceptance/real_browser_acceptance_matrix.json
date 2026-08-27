@@ -4,7 +4,7 @@
   "status": "not_run",
   "note": "组织内部 unpacked 扩展真实浏览器验收矩阵；需要在指定 AdsPower Etsy Profile 实机执行后填写 results。",
   "tested": {
-    "extensionVersion": "1.2.3",
+    "extensionVersion": "1.2.4",
     "sourceCommit": "",
     "chromeVersion": "",
     "platform": "",

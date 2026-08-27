@@ -74,6 +74,7 @@ This project does not currently implement the full OAuth consent screen or hoste
 
 Etsy Growth Agent works by reading the currently open browser page and, for some skills, opening temporary read-only evidence tabs for Etsy Search, Google Search, Google Trends, and public competitor/shop research. It does not execute supplier-platform actions. For reliable runs, prepare the browser session first:
 
+- Initial store positioning and assortment planning do not require an Etsy login. With a category, customer, use-case, store-concept, opportunity-pool, or supplier-capability seed, the Dashboard hands the request to Codex `$cross-border-store-assortment-architect`; only user input and public market evidence may be used, while private-shop metrics remain explicit missing evidence or assumptions. This stage must not dispatch sourcing, create Listings, or write to Etsy.
 - Sign in to Etsy in the same Chrome profile before running shop diagnosis, listing work, review analysis, or any workflow that depends on seller-visible pages.
 - Open Google Search and Google Trends once in the same Chrome profile, complete any consent, region, language, or verification prompts, then keep the session available for trend and market-research workflows.
 - For 1688/Taobao supplier tasks, use Codex `$cross-border-sourcing-orchestrator` and the ordinary Chrome `supplier-sourcing-chrome-runner`; do not use this extension as the supplier-platform runner. Platform login and CAPTCHA prompts remain human-handled.
@@ -115,8 +116,8 @@ The governed catalog publishes a record with this shape:
 ```json
 {
   "id": "etsy-growth-agent",
-  "currentVersion": "1.2.3",
-  "minimumSupportedVersion": "1.2.3",
+  "currentVersion": "1.2.4",
+  "minimumSupportedVersion": "1.2.4",
   "minimumChromeVersion": "114",
   "releaseState": "blocked_until_rb_01_to_rb_07_pass"
 }

@@ -369,7 +369,17 @@ function isStoreApiSurfaceActive() {
   );
 }
 
+const COLD_START_STORE_PLAN_COMMAND = `$cross-border-store-assortment-architect
+以 category_seed 或 store_concept_seed 开始首版 Etsy 店铺定位与组合规划。
+当前未登录 Etsy 店铺，只使用用户输入和公开市场证据；店铺私有指标全部列为 missingEvidence 或 assumption。
+先生成可审查的 Store Plan，不派发供应商任务，不创建 Listing，不执行 Etsy 写入。`;
+
 const GROWTH_ACTIONS = {
+  plan_new_store: {
+    title: "冷启动店铺定位与组合规划",
+    skillPath: "",
+    instruction: COLD_START_STORE_PLAN_COMMAND,
+  },
   diagnose_store_growth: {
     title: "全店增长体检",
     skillPath: "skills/etsy_global_shop_optimizer.skill.md",
@@ -428,6 +438,7 @@ const GROWTH_ACTIONS = {
 };
 
 const GROWTH_ACTION_CASE_TYPE = {
+  plan_new_store: "store_health",
   diagnose_store_growth: "store_health",
   diagnose_sku_funnel: "store_health",
   diagnose_visual_conversion: "listing_conversion",
@@ -1502,12 +1513,12 @@ function buildWorkflowTasks({ skuRows = [], opportunities = [], events = [], rep
       id: `seed_${activeShop?.id || "no_shop"}`,
       kind: "bootstrap",
       severity: "P0",
-      title: activeShop ? "先运行一次全店体检，生成第一批运营任务" : "先绑定 Etsy 个人访问 API 店铺，建立全量 SKU 体检基线",
-      reason: activeShop ? "当前还没有足够的 SKU 风险、机会、实验和监控事件。" : "没有 Etsy 个人访问 API 时只能做页面级诊断，无法形成全量经营任务流。",
-      actionText: activeShop ? "从 Etsy 店铺页点击右侧悬浮栏「店铺」或在此发起全店体检。" : "绑定 API Key / API Key 后同步 SKU analytics。",
-      actionId: activeShop ? "diagnose_store_growth" : "",
-      source: activeShop ? "启动建议" : "数据源缺口",
-      owner: "店铺配置",
+      title: activeShop ? "先运行一次全店体检，生成第一批运营任务" : "先建立冷启动店铺定位与组合计划",
+      reason: activeShop ? "当前还没有足够的 SKU 风险、机会、实验和监控事件。" : "初始定位与店铺规划不要求登录 Etsy；可先用用户输入和公开市场证据形成首版计划，店铺私有指标必须明确标为缺失证据或假设。",
+      actionText: activeShop ? "从 Etsy 店铺页点击右侧悬浮栏「店铺」或在此发起全店体检。" : "调用 Store Assortment Architect 生成可审查 Store Plan；暂不派发供应商任务、不创建 Listing、不执行 Etsy 写入。",
+      actionId: activeShop ? "diagnose_store_growth" : "plan_new_store",
+      source: activeShop ? "启动建议" : "冷启动规划入口",
+      owner: activeShop ? "店铺配置" : "经营负责人确认",
       dueLabel: "先做",
     }, taskState));
   }
@@ -1645,7 +1656,7 @@ function mergeGrowthCasesWithRoots(storedCases = [], tasks = [], reports = [], a
   });
 
   const roots = [
-    { type: "store_health", actionId: "diagnose_store_growth", taskKinds: ["store_positioning", "sku_health", "diagnosis_action", "bootstrap"] },
+    { type: "store_health", actionId: activeShop ? "diagnose_store_growth" : "plan_new_store", taskKinds: ["store_positioning", "sku_health", "diagnosis_action", "bootstrap"] },
     { type: "competitor_watch", actionId: "scan_competitor_changes", taskKinds: ["competitor_event"] },
     { type: "listing_conversion", actionId: "rewrite_listing", matcher: task => /visual|listing|review|conversion|加购|转化|改版|评论/.test(`${task.actionId || ""} ${task.title || ""} ${task.reason || ""}`) },
     { type: "platform_trends", actionId: "explore_platform_trends", matcher: task => task.kind === "platform_trend" || /platform_trends|trend|趋势|平台|类目|热卖|搜索|需求词/.test(`${task.actionId || ""} ${task.title || ""} ${task.reason || ""}`) },
@@ -1769,14 +1780,18 @@ function buildWorkflowRoots({ tasks = [], reports = [], events = [], experiments
     {
       id: "store_health",
       lane: foundation.needsRepositioning ? "foundation" : "diagnosis",
-      title: "店铺体检",
-      subtitle: foundation.needsRepositioning
+      title: activeShop ? "店铺体检" : "冷启动定位与店铺规划",
+      subtitle: !activeShop
+        ? "无需登录 Etsy；从品类、客户、场景或供应能力种子开始"
+        : foundation.needsRepositioning
         ? "体检结论：先处理定位/人群/商品矩阵"
-        : activeShop ? `${activeShop.name} 全店经营体检` : "绑定店铺后形成全店经营体检",
-      actionId: "diagnose_store_growth",
+        : `${activeShop.name} 全店经营体检`,
+      actionId: activeShop ? "diagnose_store_growth" : "plan_new_store",
       report: latestReportBy(reports, report => /global_shop_optimizer|optimizer/i.test(report.skillId || "")),
       taskFilter: task => ["store_positioning", "sku_health", "diagnosis_action", "bootstrap"].includes(task.kind),
-      narrative: foundation.needsRepositioning
+      narrative: !activeShop
+        ? "先用用户输入与公开市场证据形成可审查 Store Plan。未登录 Etsy 时，店铺私有指标必须记录为缺失证据或假设；该阶段不派发供应商任务、不创建 Listing，也不执行 Etsy 写入。"
+        : foundation.needsRepositioning
         ? "这不是一个独立的“定位重构状态”，而是店铺体检给出的 P0 结论：先判断店铺卖给谁、靠什么差异化、主价格带和商品矩阵是否成立，再决定哪些海报、标题、价格和 SKU 动作值得做。"
         : "从 Etsy 个人访问 API 全量 SKU 轻体检开始，AI 挑出高风险/高机会对象，并拆成改图、改标题、调价、补货、监控等人工确认任务。",
       foundation,
@@ -3257,6 +3272,14 @@ async function createGrowthCaseRun(actionId, sku = "", instructionOverride = "")
 }
 
 async function handleGrowthAction(actionId, sku = "") {
+  if (actionId === "plan_new_store") {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(COLD_START_STORE_PLAN_COMMAND).catch(() => {});
+    }
+    chrome.tabs.create({ url: "https://www.marqel.shop/store-plans.html?mode=cold_start" });
+    alert(`已打开 Marqel 店铺计划页，并复制冷启动规划指令。\n\n该阶段无需登录 Etsy；请在 Codex 中调用 $cross-border-store-assortment-architect。私有店铺指标会保持为缺失证据/假设，且不会派发供应商任务、创建 Listing 或执行 Etsy 写入。`);
+    return;
+  }
   const run = await createGrowthCaseRun(actionId, sku);
   await refreshAllData();
   openWorkflowPip({ rootId: GROWTH_ACTION_CASE_TYPE[actionId] || "store_health" });

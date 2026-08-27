@@ -572,6 +572,9 @@ assert.match(agentLoopSource, /stage_observations[\s\S]*stage_synthesis[\s\S]*st
 assert.match(agentLoopSource, /validateOperationsReport[\s\S]*baseline_window[\s\S]*attribution_confidence/, "operations reports should require baseline windows and attribution confidence");
 assert.match(agentLoopSource, /isReviewSkill[\s\S]*sampleCount[\s\S]*主要反馈/, "review reports should not generalize from insufficient samples");
 assert.match(js, /GROWTH_CONTRACT_VERSION/);
+assert.match(js, /COLD_START_STORE_PLAN_COMMAND[\s\S]*category_seed[\s\S]*未登录 Etsy 店铺[\s\S]*missingEvidence[\s\S]*不派发供应商任务/, "cold-start planning handoff should preserve evidence and downstream-action boundaries");
+assert.match(js, /title: activeShop \? "店铺体检" : "冷启动定位与店铺规划"[\s\S]*无需登录 Etsy[\s\S]*actionId: activeShop \? "diagnose_store_growth" : "plan_new_store"/, "workflow root should allow initial planning without an Etsy shop login");
+assert.match(js, /actionId === "plan_new_store"[\s\S]*store-plans\.html\?mode=cold_start[\s\S]*不会派发供应商任务、创建 Listing 或执行 Etsy 写入/, "cold-start action must hand off to the canonical planner without running a local growth agent");
 assert.match(js, /normalizeGrowthCaseRecord[\s\S]*runHistory[\s\S]*nextReviewAt[\s\S]*eventIds/, "growth cases should use a versioned stable contract");
 assert.match(toolRegistrySource, /growthCaseId = ""[\s\S]*event\.growthCaseId/, "monitor change events should retain their growth case association");
 assert.match(backgroundSource, /GET_ETSY_API_CONNECTION_STATUS/);
