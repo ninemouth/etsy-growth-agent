@@ -1,13 +1,20 @@
 {
   "schemaVersion": "real-browser-acceptance.v2",
-  "generatedAt": "2026-08-25T02:46:02.815Z",
+  "generatedAt": "2026-08-27T02:49:59.314Z",
   "status": "not_run",
-  "note": "真实浏览器验收矩阵；需要人工或 Chrome 实机执行后填写 results。",
+  "note": "组织内部 unpacked 扩展真实浏览器验收矩阵；需要在指定 AdsPower Etsy Profile 实机执行后填写 results。",
   "tested": {
     "extensionVersion": "1.2.3",
     "sourceCommit": "",
     "chromeVersion": "",
     "platform": "",
+    "osPlatform": "",
+    "browserProfileId": "",
+    "runtimeExtensionId": "",
+    "installMode": "unpacked",
+    "deviceClientType": "etsy_adspower",
+    "deviceClientId": "etsy-growth-agent",
+    "controlCenterInstallationState": "",
     "operator": "",
     "executedAt": ""
   },

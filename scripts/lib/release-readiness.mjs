@@ -11,7 +11,14 @@ export function validateAcceptanceRecord(record = {}, { manifestVersion = "" } =
   if (tested.extensionVersion !== manifestVersion) errors.push(`acceptance extensionVersion must equal ${manifestVersion}`);
   if (!/^[0-9a-f]{40}$/i.test(String(tested.sourceCommit || ""))) errors.push("acceptance tested.sourceCommit must be a full Git commit SHA");
   if (!String(tested.chromeVersion || "").trim()) errors.push("acceptance tested.chromeVersion is required");
-  if (!String(tested.platform || "").trim()) errors.push("acceptance tested.platform is required");
+  if (tested.platform !== "adspower_etsy") errors.push("acceptance tested.platform must be adspower_etsy");
+  if (!String(tested.osPlatform || "").trim()) errors.push("acceptance tested.osPlatform is required");
+  if (!String(tested.browserProfileId || "").trim()) errors.push("acceptance tested.browserProfileId is required");
+  if (!/^[a-p]{32}$/.test(String(tested.runtimeExtensionId || ""))) errors.push("acceptance tested.runtimeExtensionId must be a valid Chrome Extension ID");
+  if (tested.installMode !== "unpacked") errors.push("acceptance tested.installMode must be unpacked for the internal distribution policy");
+  if (tested.deviceClientType !== "etsy_adspower") errors.push("acceptance tested.deviceClientType must be etsy_adspower");
+  if (tested.deviceClientId !== "etsy-growth-agent") errors.push("acceptance tested.deviceClientId must be etsy-growth-agent");
+  if (tested.controlCenterInstallationState !== "current") errors.push("acceptance tested.controlCenterInstallationState must be current");
   if (!String(tested.operator || "").trim()) errors.push("acceptance tested.operator is required");
   if (!Number.isFinite(Date.parse(String(tested.executedAt || "")))) errors.push("acceptance tested.executedAt must be an ISO timestamp");
 

@@ -1,9 +1,9 @@
 # Etsy Growth Agent 真实浏览器业务流验收矩阵
 
-生成时间：2026-08-25T02:46:02.815Z
+生成时间：2026-08-27T02:49:59.314Z
 
-说明：该矩阵用于真实 Chrome/Etsy/Google Trends 环境验收，并验证供应商执行隔离。脚本本身不访问外网，也不把静态检查伪装成真机通过。
-通过后还必须在 JSON 中填写被测扩展版本、完整 Git SHA、Chrome 版本、平台、操作者、执行时间，并为每个验收项附上证据引用。
+说明：该矩阵用于指定 AdsPower Etsy Profile 的真实 Chrome/Etsy/Google Trends 环境验收，并验证供应商执行隔离。脚本本身不访问外网，也不把静态检查伪装成真机通过。
+本产品采用组织内部 unpacked 发行，不发布 Chrome Web Store；通过后必须在 JSON 中填写被测扩展版本、完整 Git SHA、Chrome 版本、OS、AdsPower Profile、运行时 Extension ID、V2 设备身份、Control 安装状态、操作者与执行时间，并为每个验收项附上证据引用。
 
 ## 验收项
 
@@ -95,5 +95,24 @@
 - 通过标准：
   - [ ] 删除只删除目标报告
   - [ ] 证据包 missing artifact 明确显示，不静默失败
+- 结论：未执行 / 通过 / 阻断
+- 阻断说明：
+
+### RB-07 Control Center Etsy 草稿任务与平台回读
+- 起始页面：指定 AdsPower Etsy Profile 的 Shop Manager Listing 页面
+- 触发入口：领取已批准的 etsy_adspower / upload_draft 任务
+- 必须留存证据：
+  - [ ] etsy_adspower/etsy-growth-agent exact device identity 与运行时版本上报
+  - [ ] next/resumable、claim、heartbeat、checkpoint 和 lease owner 记录
+  - [ ] exact operation_id、listingDraftId、批准版本与 publicPublishAllowed=false
+  - [ ] 确定性 DOM writer 对 title/description/price 等获批字段的逐字段验证结果；图片与 Save 保持人工
+  - [ ] 可见 Etsy 草稿 ID/URL、脱敏 JSON Artifact 和 etsy-adspower-readback.v1
+  - [ ] Control Center operation/task/listingDraft 与 Etsy 页面回读一致
+- 通过标准：
+  - [ ] 自动阶段只填充获批字段，不点击 Save/Publish/Submit、不上传图片；人工复核并保存后仍只形成草稿
+  - [ ] 截图在敏感 Etsy 路由拒绝，在允许路由默认遮罩 PII 并在捕获后恢复页面
+  - [ ] 错误 owner、租约丢失、stale draft、登录墙、CAPTCHA/MFA 与写后超时均 fail-closed
+  - [ ] 重复执行通过 checkpoint/readback reconciliation 避免重复提交
+  - [ ] externalActionPerformed=false 且平台草稿事实可审计
 - 结论：未执行 / 通过 / 阻断
 - 阻断说明：

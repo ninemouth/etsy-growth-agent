@@ -79,7 +79,7 @@ Etsy Growth Agent works by reading the currently open browser page and, for some
 - For 1688/Taobao supplier tasks, use Codex `$cross-border-sourcing-orchestrator` and the ordinary Chrome `supplier-sourcing-chrome-runner`; do not use this extension as the supplier-platform runner. Platform login and CAPTCHA prompts remain human-handled.
 - The model tool surface is read-only for page evidence. Generic clicks, form input/submission, image upload/search, purchase, publish, account, Ads, and other high-consequence actions are denied centrally and remain human-controlled.
 - Supplier URLs, 1688/Taobao search engines, legacy image-search/input handlers, and unimplemented paid market-data credentials/tools are absent from the active runtime. Risk filtering is always enabled; exceptions must be requested and explained one risk at a time.
-- For any Agent run, sign in through the Dashboard's `Marqel Access` control first. The open-source plugin can be configured locally without an account, but it will fail closed before execution when the shared Marqel session is missing or inactive.
+- For any Agent run, sign in through the Dashboard's `Marqel Access` control first. The internal unpacked extension can be configured locally without an account, but it will fail closed before execution when its dedicated `etsy_adspower` Marqel session is missing or inactive.
 - Keep the original Etsy shop or listing page open while the workflow runs. The extension protects and restores the source tab, but external login or verification pages may still require manual attention.
 - If a run reports a blocked, login, consent, or verification page, resolve it in Chrome, reload the extension/page if needed, then resume the saved workflow instead of starting from scratch.
 
@@ -93,18 +93,20 @@ Developer Mode users should reload the unpacked extension from `chrome://extensi
 4. Click "Load unpacked" and select this project directory.
 5. Open an Etsy listing, shop, or search page, then launch the extension side panel.
 
+## Distribution Policy
+
+Etsy Growth Agent is an organization-internal unpacked extension. It is not published to the Chrome Web Store and has no Web Store or self-hosted CRX auto-update path. The governed release unit is an immutable ZIP plus release manifest and SHA-256 digest. Operators extract each approved version to the canonical AdsPower Etsy Profile extension path, verify the digest, use Developer Mode `Load unpacked` only for the first install, and use `Reload` plus an Etsy page refresh for later versions. Moving the extracted directory or loading a second copy is prohibited because an unpacked runtime ID may otherwise drift.
+
+Production acceptance still requires an organization-owned manifest public key and protected private release key so the Extension ID remains stable across canonical reinstalls. The private key is never included in the unpacked directory, ZIP, browser profile, repository, logs, or Control Center report.
+
 ## Updates
 
-Chrome extension code updates are controlled by Chrome's extension update system:
-
-- Chrome Web Store releases update automatically through Chrome.
-- Self-hosted or enterprise CRX releases can update automatically when `update_url` is configured in the packaged extension manifest.
-- Developer Mode "Load unpacked" installs cannot silently replace their own source files. In this mode, Etsy Growth Agent can detect a newer open-source release and show update guidance, but the user must pull the latest code or reload the unpacked extension manually.
+Developer Mode `Load unpacked` installs cannot silently replace their own source files. Etsy Growth Agent can detect a newer governed catalog version and show update guidance, but an operator must obtain the exact approved ZIP, verify its SHA-256/release manifest, replace the canonical extracted directory, click `Reload`, and refresh Etsy tabs. No background process may mutate the unpacked extension directory.
 
 The extension includes update awareness in the side panel settings:
 
-- `Check for updates` calls Chrome's runtime update check.
-- `onUpdateAvailable` is recorded and applied automatically when no workflow is running.
+- `Check for updates` may call Chrome's runtime update check, but for unpacked installs the Marqel catalog comparison is authoritative.
+- `onUpdateAvailable` remains a compatibility signal only; it is not treated as proof that an unpacked source directory was updated.
 - The default version source is the Marqel browser-extension catalog at `/api/browser-extensions/catalog`; it distinguishes current source, minimum supported version, controlled-test artifacts, and production-ready releases.
 - Existing installations that still point at the obsolete GitHub `releases/latest` manifest are migrated to the governed catalog. A historical GitHub Release is not treated as the current supported version.
 
@@ -120,7 +122,7 @@ The governed catalog publishes a record with this shape:
 }
 ```
 
-The GitHub Action packages a ZIP only after the real-browser release gate passes. Until then, the current source remains visible while the catalog explicitly blocks production installation.
+The GitHub Action packages an internal ZIP only after the real-browser release gate passes. It does not publish to Chrome Web Store. Until then, the reviewed source remains available to the team while the catalog explicitly blocks production installation.
 
 ## Development
 
@@ -148,14 +150,14 @@ Task logs intentionally redact API keys, OAuth tokens, authorization headers, co
 
 See `operations/architecture_audit.md` for the current runtime risk register and library/custom-code review.
 
-## Open-Source Release Checklist
+## Internal Unpacked Release Checklist
 
 1. Keep `manifest.json` and `package.json` versions aligned and use the Node version pinned in `.nvmrc`.
 2. Run `npm run test:release`; this executes lint and every `test:*` smoke suite.
 3. Complete all seven real-browser acceptance items (including the governed Etsy draft task/readback path) and record `real-browser-acceptance.v2` evidence in `operations/acceptance/real_browser_acceptance_matrix.json`.
 4. Run `npm run release:readiness`. It fails closed on a dirty tree, version/tag mismatch, excessive permissions, missing acceptance evidence, or runtime changes after the tested commit.
 5. Run `npm run package:extension` to create a reproducible ZIP plus `dist/release-manifest.json` with source and SHA-256 provenance.
-6. Push the reviewed commit and create the exact tag `v<manifest.version>`; GitHub Actions repeats the full release gate before publishing assets.
+6. Push the reviewed commit and create the exact tag `v<manifest.version>`; GitHub Actions repeats the full release gate before publishing internal ZIP/release-manifest assets. Do not submit the extension to Chrome Web Store.
 
 ## Privacy
 
