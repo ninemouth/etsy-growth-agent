@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Etsy 运营增长助手",
-  "version": "1.2.2",
+  "version": "1.2.4",
   "minimum_chrome_version": "114",
   "description": "针对 Etsy 平台的智能店铺运营、Listing 改版、趋势研究与 Marqel 订阅鉴权工具。",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvP9S2L1b1MNSdbz8zvNJnRX0lKqnRcOiUH2oRpFNjhk8i8OAsKx5QZnVrVV5Hfdb4IQXdnIOKTX3aotmLTR37YCTP5vJp0QyNaz6HKUwUrzVk57v7j9LJuUJD7NFXZ4MyR0TbDuZCGrTPqh2KaW/MuQjWgViKwb6U4Jzj/0KqR5g+/jSa5pwjvhKbjCSzaBcUjImynxDrinuU6ftEi204BFX9KI5WJ2vynjZgCXlCmmaVsqbZSbQ2rMn/VWzYZBE2msg7KuQyjGd4/8+PsBUo4xQexdVVLTzD+hMZqMyZXMqcASsB3Y02UIMuxmGaF217BxjcC3BHeMGbGexYTuNbQIDAQAB",
   "default_locale": "zh_CN",
   "permissions": [
     "activeTab",
@@ -71,7 +72,7 @@
         "https://*.etsy.com/*",
         "https://etsy.com/*"
       ],
-      "js": ["content.js"],
+      "js": ["modules/screenshotPrivacyMask.js", "modules/etsyDraftDomWriter.js", "content.js"],
       "run_at": "document_end",
       "all_frames": true
     }

@@ -11,8 +11,10 @@ Etsy credentials are stored only in the current browser profile. Credential entr
 
 ## 2. Third-Party API Usage
 To perform AI analysis, the extension sends the evidence required for the selected task (for example, bounded text and visible screenshots) to the approved third-party Large Language Model (LLM) provider selected in the extension or supplied through an authorized Marqel organization configuration.
+* Each viewport capture requires a fresh user disclosure. Sensitive Etsy account/order/message/payment/security routes are blocked, and detected email, phone, address, order, credential, and payment elements are hidden before capture and restored afterward. This heuristic mask reduces accidental disclosure but cannot replace review of the selected provider's retention, training, deletion, and DPA terms.
 * Provider endpoints are restricted to HTTPS origins explicitly declared in the reviewed extension manifest; arbitrary runtime host access is not supported.
 * Local overrides are stored in `chrome.storage.local`. Organization-managed credentials are delivered through the authenticated Marqel configuration channel and are not inserted into Etsy page DOM.
+* Local DOM telemetry is limited to selector/policy versions, coarse route classes, outcome counts, and bounded error codes. It excludes page URLs, listing/operation identifiers, approved content, screenshots, selector strings, and credentials.
 * Please review the privacy policy of your chosen API provider to understand how they handle the data sent to them.
 
 ## 3. Data We Do Not Collect

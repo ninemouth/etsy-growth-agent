@@ -19,8 +19,8 @@ export const BROWSER_AUTOMATION_CAPABILITIES = [
     ],
   },
   {
-    id: "keyboard_input_search",
-    label: "站内搜索边界",
+    id: "governed_search_navigation",
+    label: "受治理搜索导航边界",
     tools: ["search_in_browser"],
     robustness: "human_gated",
     guarantees: [

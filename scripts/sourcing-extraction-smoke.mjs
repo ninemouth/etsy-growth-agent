@@ -14,8 +14,12 @@ const sidepanel = read("sidepanel.js");
 const sidepanelHtml = read("sidepanel.html");
 const content = read("content.js");
 const manifest = JSON.parse(read("manifest.json"));
+const registeredSkillPaths = background.match(/const ETSY_SKILL_PATHS = new Set\(\[([\s\S]*?)\]\);/)?.[1] || "";
+const listedSkills = background.match(/async function listSkills\(\) \{([\s\S]*?)const available = \[\];/)?.[1] || "";
 
-assert.doesNotMatch(background, /"skills\/etsy_sourcing_finder\.skill\.md"/, "active background registry must not expose the legacy sourcing skill");
+assert.doesNotMatch(registeredSkillPaths, /etsy_sourcing_finder/, "active background registry must not expose the legacy sourcing skill");
+assert.doesNotMatch(listedSkills, /etsy_sourcing_finder/, "skill listing must not expose the legacy sourcing skill");
+assert.match(background, /Legacy supplier sourcing is not executable[\s\S]*SOURCING_HANDOFF_REQUIRED/, "direct legacy skill loads must fail closed");
 assert.doesNotMatch(background, /validate_opportunity_sourcing:\s*\[/, "legacy sourcing action must not be mapped to a runnable Etsy skill");
 assert.match(background, /SOURCING_HANDOFF_REQUIRED/, "background must expose an explicit sourcing handoff response");
 assert.match(background, /buildCrossBorderSourcingHandoff/, "background must use the shared handoff contract");

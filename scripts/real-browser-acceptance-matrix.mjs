@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import manifest from "../manifest.json" with { type: "json" };
 
 const root = process.cwd();
 const outDir = path.join(root, "operations", "acceptance");
@@ -110,6 +111,27 @@ const acceptanceMatrix = [
       "证据包 missing artifact 明确显示，不静默失败",
     ],
   },
+  {
+    id: "RB-07",
+    area: "Control Center Etsy 草稿任务与平台回读",
+    startPage: "指定 AdsPower Etsy Profile 的 Shop Manager Listing 页面",
+    trigger: "领取已批准的 etsy_adspower / upload_draft 任务",
+    requiredEvidence: [
+      "etsy_adspower/etsy-growth-agent exact device identity 与运行时版本上报",
+      "next/resumable、claim、heartbeat、checkpoint 和 lease owner 记录",
+      "exact operation_id、listingDraftId、批准版本与 publicPublishAllowed=false",
+      "确定性 DOM writer 对 title/description/price 等获批字段的逐字段验证结果；图片与 Save 保持人工",
+      "可见 Etsy 草稿 ID/URL、脱敏 JSON Artifact 和 etsy-adspower-readback.v1",
+      "Control Center operation/task/listingDraft 与 Etsy 页面回读一致",
+    ],
+    passCriteria: [
+      "自动阶段只填充获批字段，不点击 Save/Publish/Submit、不上传图片；人工复核并保存后仍只形成草稿",
+      "截图在敏感 Etsy 路由拒绝，在允许路由默认遮罩 PII 并在捕获后恢复页面",
+      "错误 owner、租约丢失、stale draft、登录墙、CAPTCHA/MFA 与写后超时均 fail-closed",
+      "重复执行通过 checkpoint/readback reconciliation 避免重复提交",
+      "externalActionPerformed=false 且平台草稿事实可审计",
+    ],
+  },
 ];
 
 function renderMarkdown() {
@@ -118,8 +140,8 @@ function renderMarkdown() {
     "",
     `生成时间：${now}`,
     "",
-    "说明：该矩阵用于真实 Chrome/Etsy/Google Trends 环境验收，并验证供应商执行隔离。脚本本身不访问外网，也不把静态检查伪装成真机通过。",
-    "通过后还必须在 JSON 中填写被测扩展版本、完整 Git SHA、Chrome 版本、平台、操作者、执行时间，并为每个验收项附上证据引用。",
+    "说明：该矩阵用于指定 AdsPower Etsy Profile 的真实 Chrome/Etsy/Google Trends 环境验收，并验证供应商执行隔离。脚本本身不访问外网，也不把静态检查伪装成真机通过。",
+    "本产品采用组织内部 unpacked 发行，不发布 Chrome Web Store；通过后必须在 JSON 中填写被测扩展版本、完整 Git SHA、Chrome 版本、OS、AdsPower Profile、运行时 Extension ID、V2 设备身份、Control 安装状态、操作者与执行时间，并为每个验收项附上证据引用。",
     "",
     "## 验收项",
     "",
@@ -144,12 +166,19 @@ function renderJson() {
     schemaVersion: "real-browser-acceptance.v2",
     generatedAt: now,
     status: "not_run",
-    note: "真实浏览器验收矩阵；需要人工或 Chrome 实机执行后填写 results。",
+    note: "组织内部 unpacked 扩展真实浏览器验收矩阵；需要在指定 AdsPower Etsy Profile 实机执行后填写 results。",
     tested: {
-      extensionVersion: "",
+      extensionVersion: manifest.version,
       sourceCommit: "",
       chromeVersion: "",
       platform: "",
+      osPlatform: "",
+      browserProfileId: "",
+      runtimeExtensionId: "",
+      installMode: "unpacked",
+      deviceClientType: "etsy_adspower",
+      deviceClientId: "etsy-growth-agent",
+      controlCenterInstallationState: "",
       operator: "",
       executedAt: "",
     },
@@ -161,11 +190,12 @@ mkdirSync(outDir, { recursive: true });
 const mdPath = path.join(outDir, "real_browser_acceptance_matrix.md");
 const jsonPath = path.join(outDir, "real_browser_acceptance_matrix.json");
 writeFileSync(mdPath, renderMarkdown(), "utf8");
-writeFileSync(jsonPath, renderJson(), "utf8");
+writeFileSync(jsonPath, `${renderJson()}\n`, "utf8");
 
-assert.equal(acceptanceMatrix.length, 6);
+assert.equal(acceptanceMatrix.length, 7);
 assert.ok(acceptanceMatrix.every((item) => item.requiredEvidence.length >= 4), "each real-browser item must require concrete evidence");
 assert.ok(acceptanceMatrix.some((item) => item.requiredEvidence.join(" ").includes("artifact_manifest")), "report archive acceptance must cover artifact manifest");
 assert.ok(acceptanceMatrix.some((item) => item.requiredEvidence.join(" ").includes("分页采集")), "Etsy shop acceptance must cover pagination collection");
+assert.ok(acceptanceMatrix.some((item) => item.id === "RB-07" && item.requiredEvidence.join(" ").includes("etsy-adspower-readback.v1")), "real-browser acceptance generation must preserve governed Etsy draft readback");
 
 console.log(JSON.stringify({ ok: true, mdPath, jsonPath, items: acceptanceMatrix.length }, null, 2));

@@ -1,13 +1,20 @@
 {
   "schemaVersion": "real-browser-acceptance.v2",
-  "generatedAt": "2026-08-25T02:46:02.815Z",
+  "generatedAt": "2026-08-27T04:04:29.603Z",
   "status": "not_run",
-  "note": "真实浏览器验收矩阵；需要人工或 Chrome 实机执行后填写 results。",
+  "note": "组织内部 unpacked 扩展真实浏览器验收矩阵；需要在指定 AdsPower Etsy Profile 实机执行后填写 results。",
   "tested": {
-    "extensionVersion": "1.2.2",
+    "extensionVersion": "1.2.4",
     "sourceCommit": "",
     "chromeVersion": "",
     "platform": "",
+    "osPlatform": "",
+    "browserProfileId": "",
+    "runtimeExtensionId": "",
+    "installMode": "unpacked",
+    "deviceClientType": "etsy_adspower",
+    "deviceClientId": "etsy-growth-agent",
+    "controlCenterInstallationState": "",
     "operator": "",
     "executedAt": ""
   },
@@ -128,6 +135,30 @@
       "passCriteria": [
         "删除只删除目标报告",
         "证据包 missing artifact 明确显示，不静默失败"
+      ],
+      "result": "not_run",
+      "blocker": "",
+      "evidence": []
+    },
+    {
+      "id": "RB-07",
+      "area": "Control Center Etsy 草稿任务与平台回读",
+      "startPage": "指定 AdsPower Etsy Profile 的 Shop Manager Listing 页面",
+      "trigger": "领取已批准的 etsy_adspower / upload_draft 任务",
+      "requiredEvidence": [
+        "etsy_adspower/etsy-growth-agent exact device identity 与运行时版本上报",
+        "next/resumable、claim、heartbeat、checkpoint 和 lease owner 记录",
+        "exact operation_id、listingDraftId、批准版本与 publicPublishAllowed=false",
+        "确定性 DOM writer 对 title/description/price 等获批字段的逐字段验证结果；图片与 Save 保持人工",
+        "可见 Etsy 草稿 ID/URL、脱敏 JSON Artifact 和 etsy-adspower-readback.v1",
+        "Control Center operation/task/listingDraft 与 Etsy 页面回读一致"
+      ],
+      "passCriteria": [
+        "自动阶段只填充获批字段，不点击 Save/Publish/Submit、不上传图片；人工复核并保存后仍只形成草稿",
+        "截图在敏感 Etsy 路由拒绝，在允许路由默认遮罩 PII 并在捕获后恢复页面",
+        "错误 owner、租约丢失、stale draft、登录墙、CAPTCHA/MFA 与写后超时均 fail-closed",
+        "重复执行通过 checkpoint/readback reconciliation 避免重复提交",
+        "externalActionPerformed=false 且平台草稿事实可审计"
       ],
       "result": "not_run",
       "blocker": "",

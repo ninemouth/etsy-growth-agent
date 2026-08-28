@@ -1,97 +1,30 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { getSourcingWorkflowGuardError } from "../modules/agentLoop.js";
+import path from "node:path";
 
-const sourcingSkillMarkdown = fs.readFileSync(new URL("../skills/etsy_sourcing_finder.skill.md", import.meta.url), "utf8");
+const root = process.cwd();
+const backgroundSource = fs.readFileSync(new URL("../background.js", import.meta.url), "utf8");
 const agentLoopSource = fs.readFileSync(new URL("../modules/agentLoop.js", import.meta.url), "utf8");
+const contentSource = fs.readFileSync(new URL("../content.js", import.meta.url), "utf8");
+const toolRegistrySource = fs.readFileSync(new URL("../modules/toolRegistry.js", import.meta.url), "utf8");
+const packageSource = fs.readFileSync(new URL("./package-extension.mjs", import.meta.url), "utf8");
+const { tools } = await import("../modules/toolRegistry.js");
 
-assert.match(sourcingSkillMarkdown, /至少 2 个可比供应商候选/, "Etsy sourcing skill should require at least two comparable suppliers");
-assert.match(sourcingSkillMarkdown, /不足以形成供应商比价/, "Etsy sourcing skill should require shortage explanation when fewer than two suppliers pass");
-assert.match(sourcingSkillMarkdown, /currency_rates[\s\S]*不得凭经验猜汇率[\s\S]*不得把 CNY、RUB 或 EUR 数值直接与 USD 售价相减/, "Etsy sourcing skill should require injected exchange rates and forbid mixed-currency ledgers");
-assert.match(agentLoopSource, /默认必须返回至少 2 个可比供应商候选/, "agent loop critic should enforce two-supplier sourcing reports");
+assert.equal(fs.existsSync(path.join(root, "skills", "etsy_sourcing_finder.skill.md")), false, "legacy sourcing skill must be physically absent");
+assert.doesNotMatch(backgroundSource, /ETSY_SKILL_PATHS[\s\S]*etsy_sourcing_finder/, "legacy sourcing must not be registered as an Etsy skill");
+assert.doesNotMatch(backgroundSource, /id:\s*"etsy_sourcing_finder"/, "legacy sourcing must not be listed in the skill catalog");
+assert.match(backgroundSource, /Legacy supplier sourcing is not executable[\s\S]*SOURCING_HANDOFF_REQUIRED/, "direct legacy skill loads must fail closed");
+assert.match(backgroundSource, /isCrossBorderSourcingRequest[\s\S]*SOURCING_HANDOFF_REQUIRED[\s\S]*buildCrossBorderSourcingHandoff/, "sourcing intent must be handed to the cross-border orchestrator before the agent loop");
+assert.match(packageSource, /etsy_sourcing_finder\.skill\.md/, "packaging must keep an explicit defense-in-depth exclusion for the deleted legacy path");
+assert.doesNotMatch(agentLoopSource, /function getSourcingWorkflowGuardError|SOURCING_SKILL_RE/, "legacy sourcing execution guards must not remain as a shadow runtime");
+for (const retiredTool of ["extract_product_info", "input_text_and_search", "prepare_clean_product_image", "image_search_1688", "image_search_taobao", "image_search_in_browser"]) {
+  assert.doesNotMatch(toolRegistrySource, new RegExp(`\\n\\s{2}${retiredTool}:\\s*async`), `${retiredTool} must be physically absent from the registry`);
+}
+for (const retiredMessageType of ["INPUT_TEXT_AND_SEARCH", "GET_IMAGE_SEARCH_UI_STATE", "IMAGE_SEARCH_IN_BROWSER", "EXTRACT_PRODUCT_INFO"]) {
+  assert.doesNotMatch(contentSource, new RegExp(`message\\.type === ["']${retiredMessageType}["']`), `${retiredMessageType} must be physically absent from content handlers`);
+}
+await assert.rejects(() => tools.search_in_browser({ query:"desk organizer", engine:"1688" }), (error) => error?.code === "BROWSER_SEARCH_ENGINE_NOT_ALLOWED");
+await assert.rejects(() => tools.open_new_tab({ url:"https://detail.1688.com/offer/123.html" }), (error) => error?.code === "SOURCING_HANDOFF_REQUIRED");
+await assert.rejects(() => tools.navigate_to({ url:"https://item.taobao.com/item.htm?id=123" }), (error) => error?.code === "SOURCING_HANDOFF_REQUIRED");
 
-const completedImageSearchHistory = [
-  {
-    tool: "image_search_1688",
-    arguments: { imageUrl: "https://i.etsystatic.com/product.jpg" },
-    result: {
-      ok: true,
-      tabId: 101,
-      pageData: {
-        url: "https://s.1688.com/youyuan/index.htm",
-        productCards: [
-          {
-            index: 1,
-            title: "金属置物架 工厂直供",
-            price: "¥18.80",
-            href: "https://detail.1688.com/offer/123.html",
-            imageSrc: "https://cbu01.alicdn.com/img/ibank/123.jpg",
-            cardRect: { x: 10, y: 100, width: 220, height: 320 },
-          },
-        ],
-      },
-    },
-  },
-];
-
-const blockTaobaoSwitch = getSourcingWorkflowGuardError({
-  skillId: "skills/etsy_sourcing_finder.skill.md",
-  toolName: "image_search_taobao",
-  toolArgs: { imageUrl: "https://i.etsystatic.com/product.jpg" },
-  userInstruction: "请为当前 Etsy 商品筛选供应商货源",
-  toolHistory: completedImageSearchHistory,
-});
-
-assert.ok(blockTaobaoSwitch, "should block switching to Taobao after 1688 product cards exist");
-assert.match(blockTaobaoSwitch.error, /productCards\/productLinks|打开 1-3 个最相似的详情页/);
-assert.equal(blockTaobaoSwitch.previousSearch.tool, "image_search_1688");
-assert.equal(blockTaobaoSwitch.previousSearch.productCards.length, 1);
-
-const blockTextSearch = getSourcingWorkflowGuardError({
-  skillId: "skills/etsy_sourcing_finder.skill.md",
-  toolName: "input_text_and_search",
-  toolArgs: { query: "金属置物架" },
-  userInstruction: "请为当前 Etsy 商品筛选供应商货源",
-  toolHistory: completedImageSearchHistory,
-});
-
-assert.ok(blockTextSearch, "should block keyword search after product cards exist");
-
-const allowDetailOpen = getSourcingWorkflowGuardError({
-  skillId: "skills/etsy_sourcing_finder.skill.md",
-  toolName: "open_new_tab",
-  toolArgs: { url: "https://detail.1688.com/offer/123.html" },
-  userInstruction: "请为当前 Etsy 商品筛选供应商货源",
-  toolHistory: completedImageSearchHistory,
-});
-
-assert.equal(allowDetailOpen, null, "should allow opening selected supplier detail page");
-
-const allowSearchAfterDetailEvidence = getSourcingWorkflowGuardError({
-  skillId: "skills/etsy_sourcing_finder.skill.md",
-  toolName: "image_search_1688",
-  toolArgs: { imageUrl: "https://i.etsystatic.com/another.jpg" },
-  userInstruction: "请继续对另一个商品筛选供应商货源",
-  toolHistory: [
-    ...completedImageSearchHistory,
-    {
-      tool: "open_new_tab",
-      arguments: { url: "https://detail.1688.com/offer/123.html" },
-      result: { ok: true, url: "https://detail.1688.com/offer/123.html" },
-    },
-  ],
-});
-
-assert.equal(allowSearchAfterDetailEvidence, null, "should allow later search once a supplier detail page was audited");
-
-const allowExplicitTextFallback = getSourcingWorkflowGuardError({
-  skillId: "skills/etsy_sourcing_finder.skill.md",
-  toolName: "input_text_and_search",
-  toolArgs: { query: "标准无线鼠标" },
-  userInstruction: "这是标品，允许文本兜底",
-  toolHistory: completedImageSearchHistory,
-});
-
-assert.equal(allowExplicitTextFallback, null, "should allow explicit standard-product text fallback");
-
-console.log("sourcing workflow guard smoke passed");
+console.log("sourcing workflow tombstone smoke passed");

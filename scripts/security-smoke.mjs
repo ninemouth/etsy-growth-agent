@@ -146,12 +146,14 @@ const manifest = JSON.parse(read("manifest.json"));
 const sidepanelSource = read("sidepanel.js");
 const contentSource = read("content.js");
 const agentLoopSource = read("modules/agentLoop.js");
+const toolRegistrySource = read("modules/toolRegistry.js");
+const backgroundSource = read("background.js");
 assert.equal(manifest.permissions.includes("debugger"), false, "extension must not request debugger access");
 assert.equal(manifest.host_permissions.includes("<all_urls>"), false, "extension must not request blanket install-time host access");
 assert.equal(manifest.minimum_chrome_version, "114", "Side Panel builds must declare the supported Chrome floor");
 assert.ok(manifest.content_scripts.every((entry) => entry.matches.every((match) => match.startsWith("https://"))), "content scripts must not run on HTTP Etsy routes");
 assert.match(read("background.js"), /screenshotDisclosureConfirmed !== true/, "background must reject workflows without screenshot disclosure confirmation");
-assert.match(read("DATA_GOVERNANCE.md"), /RB-01 through RB-06/, "data governance must preserve the real-browser production gate");
+assert.match(read("DATA_GOVERNANCE.md"), /RB-01 through RB-07/, "data governance must preserve the real-browser production gate");
 assert.equal((manifest.web_accessible_resources || []).length, 0, "internal extension resources must not be exposed to web pages");
 assert.deepEqual(manifest.optional_host_permissions, [], "release must not offer arbitrary cross-origin permissions");
 assert.match(sidepanelSource, /chrome\.permissions\.contains[\s\S]*chrome\.permissions\.request/, "custom service origins must be requested explicitly");
@@ -161,8 +163,14 @@ assert.match(contentSource, /attachShadow\(\{ mode: "closed" \}\)/, "page overla
 assert.match(contentSource, /Credentials and provider settings must live on an extension-origin page/, "page overlay must replace the legacy credential form before attachment");
 assert.doesNotMatch(contentSource, /<input[^>]+id="(?:etsy-new-api-key|etsy-new-oauth-token|etsy-new-refresh-token|llm-api-key)"/, "page overlay source must not render secret input fields");
 assert.match(agentLoopSource, /MODEL_DENIED_PAGE_MUTATION_TOOLS/, "model actions must use the centralized mutation deny policy");
-for (const tool of ["click_by_text", "click_by_selector", "click_by_coordinate", "input_text_and_search", "image_search_1688", "image_search_taobao"]) {
+for (const tool of ["click_by_text", "click_by_selector", "click_by_coordinate", "input_text_and_search", "prepare_clean_product_image", "image_search_1688", "image_search_taobao", "image_search_in_browser"]) {
   assert.match(agentLoopSource, new RegExp(`MODEL_DENIED_PAGE_MUTATION_TOOLS[\\s\\S]*${tool}`), `${tool} must be denied to the model`);
 }
+for (const retiredTool of ["extract_product_info", "input_text_and_search", "prepare_clean_product_image", "image_search_1688", "image_search_taobao", "image_search_in_browser"]) {
+  assert.doesNotMatch(toolRegistrySource, new RegExp(`\\n\\s{2}${retiredTool}:\\s*async`), `${retiredTool} must not be registered`);
+}
+assert.match(toolRegistrySource, /assertAllowedBrowserNavigationUrl[\s\S]*SOURCING_HANDOFF_REQUIRED/, "direct supplier URL navigation must fail closed");
+assert.match(backgroundSource, /category:\s*"etsy_dom_telemetry"/, "Etsy DOM telemetry must use the privacy-safe task log category");
+assert.doesNotMatch(backgroundSource, /recordEtsyDomTelemetry\([^)]*\{[\s\S]{0,700}(?:sourceUrl|pageUrl|listingDraftId|operationId)\s*:/, "Etsy DOM telemetry context must not persist URL or business identifiers");
 
 console.log("security smoke passed");

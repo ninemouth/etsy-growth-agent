@@ -2,6 +2,7 @@ import { createDeviceProof, encodeDeviceProof, getInstallationIdentity } from ".
 
 const DEFAULT_CONTROL_CENTER_ORIGIN = "https://www.marqel.shop";
 export const CLIENT_ID = "etsy-growth-agent";
+export const CLIENT_TYPE = "etsy_adspower";
 const DEVICE_NAME = "Etsy Growth Agent（AdsPower Etsy 运营）";
 const SESSION_KEY = "marqelControlCenterSession";
 const REFRESH_TOKEN_KEY = "marqelControlCenterRefreshToken";
@@ -52,6 +53,25 @@ async function request(path, options = {}, session = null) {
   return payload;
 }
 
+export async function controlCenterRequest(path, options = {}) {
+  let session = await getActiveSession({ revalidate: false });
+  if (!session?.accessToken) throw new Error("请先完成 Marqel V2 设备授权，再访问 Control Center 任务。");
+  try {
+    return await request(path, {
+      ...options,
+      headers: { Authorization: `Bearer ${session.accessToken}`, ...(options.headers || {}) },
+    }, session);
+  } catch (error) {
+    if (error.status !== 401) throw error;
+    const stored = await readStoredSession();
+    session = await refreshStoredSession(stored);
+    return request(path, {
+      ...options,
+      headers: { Authorization: `Bearer ${session.accessToken}`, ...(options.headers || {}) },
+    }, session);
+  }
+}
+
 function publicSession(session = {}, extra = {}) {
   return {
     accessToken: session.accessToken,
@@ -71,7 +91,7 @@ function publicDeviceRequest(pending = {}) {
     userCode: pending.userCode || "",
     expiresAt: pending.expiresAt || 0,
     intervalSeconds: Number(pending.intervalSeconds || 5),
-    clientType: pending.clientType || "chrome_extension",
+    clientType: pending.clientType || CLIENT_TYPE,
     clientId: pending.clientId || CLIENT_ID,
     reused: Boolean(pending.reused),
   };
@@ -215,7 +235,7 @@ export async function startDeviceAuthorization({ reopen = false } = {}) {
   const result = await request("/api/auth/device/start", {
     method: "POST",
     body: JSON.stringify({
-      clientType: "chrome_extension",
+      clientType: CLIENT_TYPE,
       clientId: CLIENT_ID,
       deviceName: DEVICE_NAME,
       installationPublicKey: identity.publicKey,
@@ -229,7 +249,7 @@ export async function startDeviceAuthorization({ reopen = false } = {}) {
     verificationUriComplete: result.verificationUriComplete,
     expiresAt: Date.now() + Number(result.expiresInSeconds || 600) * 1000,
     intervalSeconds: Number(result.intervalSeconds || 5),
-    clientType: result.clientType || "chrome_extension",
+    clientType: result.clientType || CLIENT_TYPE,
     clientId: result.clientId || CLIENT_ID,
     installationKeyId: result.installationKeyId || identity.keyId,
   });
@@ -324,9 +344,25 @@ function installedChromeVersion() {
   return navigator.userAgent.match(/(?:Chrome|Chromium)\/(\d+(?:\.\d+){0,3})/)?.[1] || "0";
 }
 
+export async function detectInternalExtensionInstallMode() {
+  if (!chrome.management?.getSelf) {
+    const error = new Error("当前 Chrome 无法核对插件安装模式；内部发布必须从开发者模式加载 unpacked 目录。");
+    error.code = "EXTENSION_INSTALL_MODE_UNAVAILABLE";
+    throw error;
+  }
+  const extension = await chrome.management.getSelf();
+  if (extension?.installType !== "development") {
+    const error = new Error(`当前插件安装类型为 ${extension?.installType || "unknown"}；内部发布策略只接受开发者模式加载的 unpacked 插件。`);
+    error.code = "INTERNAL_UNPACKED_INSTALL_REQUIRED";
+    throw error;
+  }
+  return "unpacked";
+}
+
 export async function reportBrowserExtensionInstallation() {
   const session = await getActiveSession({ revalidate: false });
   if (!session?.accessToken) throw new Error("请先完成 Marqel V2 设备授权，再上报插件版本。");
+  const installMode = await detectInternalExtensionInstallMode();
   return request("/api/browser-extensions/report", {
     method: "POST",
     headers: { Authorization: `Bearer ${session.accessToken}` },
@@ -338,10 +374,32 @@ export async function reportBrowserExtensionInstallation() {
         runtimeExtensionId: chrome.runtime.id || "",
         chromeVersion: installedChromeVersion(),
         platform: "adspower_etsy",
-        installMode: "unknown",
+        installMode,
       },
     }),
   }, session);
+}
+
+export async function reportBrowserExtensionInstallationStatus() {
+  try {
+    const result = await reportBrowserExtensionInstallation();
+    return {
+      ok: true,
+      status: "reported",
+      state: result.status?.state || result.installation?.state || "reported",
+      installedVersion: result.status?.installedVersion || result.installation?.installedVersion || chrome.runtime.getManifest().version,
+      runtimeExtensionId: chrome.runtime.id || "",
+      installMode: "unpacked",
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: "report_failed",
+      state: "not_current",
+      error: String(error?.message || error),
+      errorCode: error?.code || "EXTENSION_INSTALLATION_REPORT_FAILED",
+    };
+  }
 }
 
 export async function signOut() {
