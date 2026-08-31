@@ -68,6 +68,8 @@ function clientAuthSessionSummary(session = null) {
   return {
     user: session.user,
     expiresAt: session.expiresAt,
+    refreshExpiresAt: session.refreshExpiresAt || 0,
+    refreshPolicy: session.refreshPolicy || "rolling",
     authVersion: Number(session.authVersion || 2),
     clientId: session.clientId,
     deviceId: session.deviceId,

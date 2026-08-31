@@ -29,6 +29,8 @@
 .auth-session-button:hover { border-color: var(--accent); color: var(--accent); }
 .auth-dialog-content { width: min(92vw, 430px); }
 .auth-dialog-copy { margin: 0 0 16px; color: var(--text-secondary); font-size: 13px; line-height: 1.65; }
+.auth-session-details { display:grid; gap:5px; margin:0 0 14px; padding:11px 12px; border:1px solid rgba(16,185,129,.24); border-radius:9px; background:rgba(16,185,129,.08); color:var(--text-secondary); font-size:11px; line-height:1.5; }
+.auth-session-details strong { color:var(--success); font-size:12px; }
 .auth-login-form { display: grid; gap: 8px; }
 .auth-phone-input { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 6px; }
 .auth-phone-input .form-input { min-width: 0; }

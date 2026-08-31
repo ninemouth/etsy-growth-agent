@@ -34,6 +34,7 @@ globalThis.chrome = {
 Object.defineProperty(globalThis, "navigator", { value: { userAgent: "Mozilla/5.0 Chrome/140.0.7339.10" }, configurable: true });
 
 let pollCount = 0;
+let refreshCount = 0;
 const extensionReports = [];
 globalThis.fetch = async (url, options = {}) => {
   if (url.endsWith("/api/auth/device/start")) {
@@ -55,10 +56,29 @@ globalThis.fetch = async (url, options = {}) => {
       accessToken: "growth-access-secret",
       refreshToken: "growth-refresh-secret",
       expiresInSeconds: 1800,
+      refreshExpiresInSeconds: 7776000,
+      refreshExpiresAt: new Date(Date.now() + 7776000 * 1000).toISOString(),
+      refreshPolicy: "rolling",
       authVersion: 2,
       clientId: "etsy-growth-agent",
       deviceId: "growth-device-id",
-      user: { id: "growth-user", phone: "+8613900000000" },
+      user: { id: "growth-user", phone: "+8613900000000", membershipExpiresAt: new Date(Date.now() + 2592000 * 1000).toISOString() },
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }
+  if (url.endsWith("/api/auth/refresh")) {
+    refreshCount += 1;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    return new Response(JSON.stringify({
+      accessToken: "growth-access-refreshed",
+      refreshToken: "growth-refresh-rotated",
+      expiresInSeconds: 1800,
+      refreshExpiresInSeconds: 7776000,
+      refreshExpiresAt: new Date(Date.now() + 7776000 * 1000).toISOString(),
+      refreshPolicy: "rolling",
+      authVersion: 2,
+      clientId: "etsy-growth-agent",
+      deviceId: "growth-device-id",
+      user: { id: "growth-user", phone: "+8613900000000", membershipExpiresAt: new Date(Date.now() + 2592000 * 1000).toISOString() },
     }), { status: 200, headers: { "Content-Type": "application/json" } });
   }
   if (url.includes("/api/client-config")) return new Response(JSON.stringify({ status: "not_configured", config: null }), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -69,7 +89,7 @@ globalThis.fetch = async (url, options = {}) => {
   throw new Error(`Unexpected request: ${url}`);
 };
 
-const { detectInternalExtensionInstallMode, getPendingDeviceAuthorization, pollDeviceAuthorization, reportBrowserExtensionInstallationStatus, signOut, startDeviceAuthorization } = await import("../modules/controlCenterAuth.js");
+const { detectInternalExtensionInstallMode, getActiveSession, getPendingDeviceAuthorization, pollDeviceAuthorization, reportBrowserExtensionInstallationStatus, signOut, startDeviceAuthorization } = await import("../modules/controlCenterAuth.js");
 
 const started = await startDeviceAuthorization();
 assert.equal(started.status, "approval_required");
@@ -91,6 +111,13 @@ assert.equal(Object.hasOwn(authorized, "accessToken"), false);
 assert.equal(Object.hasOwn(authorized, "refreshToken"), false);
 assert.ok(await getPendingDeviceAuthorization() === null);
 
+await new Promise((resolve) => sessionStorage.remove("marqelControlCenterSession", resolve));
+const [recoveredFirst, recoveredSecond] = await Promise.all([getActiveSession(), getActiveSession()]);
+assert.equal(recoveredFirst.accessToken, "growth-access-refreshed");
+assert.equal(recoveredSecond.accessToken, "growth-access-refreshed");
+assert.equal(refreshCount, 1, "browser restart recovery must rotate a single-use refresh token only once");
+assert.equal(recoveredFirst.refreshPolicy, "rolling");
+
 assert.equal(await detectInternalExtensionInstallMode(), "unpacked");
 const reported = await reportBrowserExtensionInstallationStatus();
 assert.equal(reported.ok, true);
@@ -104,7 +131,7 @@ assert.deepEqual(extensionReports[0].body.extension, {
   platform: "adspower_etsy",
   installMode: "unpacked",
 });
-assert.match(extensionReports[0].headers.Authorization, /^Bearer growth-access-secret$/);
+assert.match(extensionReports[0].headers.Authorization, /^Bearer growth-access-refreshed$/);
 
 installType = "normal";
 const rejected = await reportBrowserExtensionInstallationStatus();

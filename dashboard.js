@@ -154,17 +154,47 @@ function renderAuthorizationSession(session = null) {
   const label = document.getElementById("auth-session-label");
   const openButton = document.getElementById("open-auth-dialog");
   const logoutButton = document.getElementById("extension-logout-button");
+  const details = document.getElementById("auth-session-details");
   if (!label || !openButton || !logoutButton) return;
   if (!session?.user) {
     label.textContent = "需要 Marqel 登录";
+    label.removeAttribute("title");
     openButton.textContent = "登录";
     logoutButton.classList.add("hidden");
+    details?.classList.add("hidden");
+    if (details) details.textContent = "";
     return;
   }
-  const expires = new Date(session.expiresAt);
-  label.textContent = `${session.user.phone || "已登录"} · 至 ${Number.isFinite(expires.getTime()) ? expires.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "稍后"}`;
+  const accessExpires = new Date(session.expiresAt);
+  const refreshExpires = new Date(session.refreshExpiresAt || 0);
+  const accountExpires = new Date(session.user.membershipExpiresAt || 0);
+  const accessText = Number.isFinite(accessExpires.getTime()) ? accessExpires.toLocaleString() : "稍后自动更新";
+  const refreshText = Number(session.refreshExpiresAt || 0) > 0 && Number.isFinite(refreshExpires.getTime()) ? refreshExpires.toLocaleString() : "以服务器状态为准";
+  const accountText = Number.isFinite(accountExpires.getTime()) && accountExpires.getTime() > 0 ? accountExpires.toLocaleString() : "以账户状态为准";
+  const effectiveExpiresAt = Math.min(
+    accountExpires.getTime() > 0 ? accountExpires.getTime() : refreshExpires.getTime(),
+    refreshExpires.getTime() > 0 ? refreshExpires.getTime() : accountExpires.getTime(),
+  );
+  const effectiveText = Number.isFinite(effectiveExpiresAt) && effectiveExpiresAt > 0 ? new Date(effectiveExpiresAt).toLocaleString() : "以服务器状态为准";
+  label.textContent = `${session.user.phone || "已登录"} · 已授权 · 自动续期`;
+  label.title = `综合可使用至 ${effectiveText}；账户使用权至 ${accountText}；设备授权滚动至 ${refreshText}；短期凭据至 ${accessText}`;
   openButton.textContent = "账户";
   logoutButton.classList.remove("hidden");
+  if (details) {
+    details.replaceChildren();
+    const title = document.createElement("strong");
+    title.textContent = "设备已授权 · 自动续期";
+    const effective = document.createElement("span");
+    effective.textContent = `综合可使用至：${effectiveText}`;
+    const account = document.createElement("span");
+    account.textContent = `账户使用权：有效至 ${accountText}`;
+    const access = document.createElement("span");
+    access.textContent = `短期 Access：有效至 ${accessText}，到期自动刷新`;
+    const refresh = document.createElement("span");
+    refresh.textContent = `设备授权：${session.refreshPolicy === "rolling" ? "滚动" : ""}有效至 ${refreshText}`;
+    details.append(title, effective, account, refresh, access);
+    details.classList.remove("hidden");
+  }
 }
 
 async function refreshAuthorizationSession() {

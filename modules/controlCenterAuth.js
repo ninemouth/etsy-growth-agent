@@ -6,8 +6,11 @@ export const CLIENT_TYPE = "etsy_adspower";
 const DEVICE_NAME = "Etsy Growth Agent（AdsPower Etsy 运营）";
 const SESSION_KEY = "marqelControlCenterSession";
 const REFRESH_TOKEN_KEY = "marqelControlCenterRefreshToken";
+const REFRESH_EXPIRES_AT_KEY = "marqelControlCenterRefreshExpiresAt";
+const REFRESH_POLICY_KEY = "marqelControlCenterRefreshPolicy";
 const CONFIG_KEY = "marqelClientConfig";
 const PENDING_DEVICE_KEY = "marqelControlCenterPendingDevice";
+let refreshInFlight = null;
 
 function controlCenterOrigin() {
   const configured = String(globalThis.ETSY_OPS_CONTROL_CENTER || DEFAULT_CONTROL_CENTER_ORIGIN).trim();
@@ -76,6 +79,8 @@ function publicSession(session = {}, extra = {}) {
   return {
     accessToken: session.accessToken,
     expiresAt: session.expiresAt,
+    refreshExpiresAt: session.refreshExpiresAt || 0,
+    refreshPolicy: session.refreshPolicy || "rolling",
     user: session.user,
     clientId: session.clientId || CLIENT_ID,
     deviceId: session.deviceId || "",
@@ -102,6 +107,8 @@ function publicAuthSession(session = {}, extra = {}) {
     status: extra.status || "authorized",
     user: session.user,
     expiresAt: session.expiresAt,
+    refreshExpiresAt: session.refreshExpiresAt || 0,
+    refreshPolicy: session.refreshPolicy || "rolling",
     authVersion: Number(session.authVersion || 2),
     clientId: session.clientId || CLIENT_ID,
     deviceId: session.deviceId || "",
@@ -109,9 +116,13 @@ function publicAuthSession(session = {}, extra = {}) {
   };
 }
 
-async function storedRefreshToken() {
-  const data = await storageGet(chrome.storage.local, [REFRESH_TOKEN_KEY]);
-  return String(data[REFRESH_TOKEN_KEY] || "");
+async function storedRefreshSession() {
+  const data = await storageGet(chrome.storage.local, [REFRESH_TOKEN_KEY, REFRESH_EXPIRES_AT_KEY, REFRESH_POLICY_KEY]);
+  return {
+    refreshToken: String(data[REFRESH_TOKEN_KEY] || ""),
+    refreshExpiresAt: Number(data[REFRESH_EXPIRES_AT_KEY] || 0),
+    refreshPolicy: String(data[REFRESH_POLICY_KEY] || "rolling"),
+  };
 }
 
 async function storedConfig() {
@@ -127,16 +138,28 @@ async function saveSession(result, { configStatus = "not_synced" } = {}) {
     clientId: result.clientId || CLIENT_ID,
     deviceId: result.deviceId || "",
     authVersion: Number(result.authVersion || 1),
+    refreshExpiresAt: result.refreshExpiresAt
+      ? new Date(result.refreshExpiresAt).getTime()
+      : Number(result.refreshExpiresInSeconds || 0) > 0
+        ? Date.now() + Number(result.refreshExpiresInSeconds) * 1000
+        : 0,
+    refreshPolicy: result.refreshPolicy || "rolling",
   };
   await storageSet(accessSessionStore(), { [SESSION_KEY]: session });
-  if (result.refreshToken) await storageSet(chrome.storage.local, { [REFRESH_TOKEN_KEY]: result.refreshToken });
+  if (result.refreshToken) {
+    await storageSet(chrome.storage.local, {
+      [REFRESH_TOKEN_KEY]: result.refreshToken,
+      [REFRESH_EXPIRES_AT_KEY]: session.refreshExpiresAt,
+      [REFRESH_POLICY_KEY]: session.refreshPolicy,
+    });
+  }
   return publicSession(session, { configStatus });
 }
 
 async function clearStoredSession() {
   await Promise.all([
     storageRemove(accessSessionStore(), [SESSION_KEY]),
-    storageRemove(chrome.storage.local, [REFRESH_TOKEN_KEY, CONFIG_KEY, PENDING_DEVICE_KEY]),
+    storageRemove(chrome.storage.local, [REFRESH_TOKEN_KEY, REFRESH_EXPIRES_AT_KEY, REFRESH_POLICY_KEY, CONFIG_KEY, PENDING_DEVICE_KEY]),
   ]);
 }
 
@@ -163,10 +186,11 @@ async function openDeviceApproval(verificationUri) {
 async function readStoredSession() {
   const [access, refresh] = await Promise.all([
     storageGet(accessSessionStore(), [SESSION_KEY]),
-    storageGet(chrome.storage.local, [REFRESH_TOKEN_KEY]),
+    storedRefreshSession(),
   ]);
   const session = access[SESSION_KEY] || null;
-  return session ? { ...session, refreshToken: String(refresh[REFRESH_TOKEN_KEY] || "") } : null;
+  if (!session && !refresh.refreshToken) return null;
+  return { ...(session || {}), ...refresh };
 }
 
 async function applyClientConfig(config) {
@@ -209,19 +233,31 @@ async function syncClientConfigForSession(session) {
 }
 
 async function refreshStoredSession(session) {
-  const refreshToken = session?.refreshToken || await storedRefreshToken();
-  if (!refreshToken) throw new Error("请重新登录 Marqel，当前插件没有可轮换的设备会话。");
-  const proof = await createDeviceProof("POST", "/api/auth/refresh");
-  const result = await request("/api/auth/refresh", {
-    method: "POST",
-    body: JSON.stringify({ refreshToken, clientId: CLIENT_ID, proof }),
-  });
-  const saved = await saveSession(result);
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    const refresh = session?.refreshToken ? session : await storedRefreshSession();
+    if (!refresh.refreshToken) throw new Error("请重新登录 Marqel，当前插件没有可轮换的设备会话。");
+    if (Number(refresh.refreshExpiresAt || 0) > 0 && Number(refresh.refreshExpiresAt) <= Date.now()) {
+      await clearStoredSession();
+      throw new Error("Marqel 长期设备授权已到期，请重新发起设备授权。");
+    }
+    const proof = await createDeviceProof("POST", "/api/auth/refresh");
+    const result = await request("/api/auth/refresh", {
+      method: "POST",
+      body: JSON.stringify({ refreshToken: refresh.refreshToken, clientId: CLIENT_ID, proof }),
+    });
+    const saved = await saveSession(result);
+    try {
+      const config = await syncClientConfigForSession(saved);
+      return { ...saved, configStatus: config.status || "synced" };
+    } catch {
+      return { ...saved, configStatus: "sync_failed" };
+    }
+  })();
   try {
-    const config = await syncClientConfigForSession(saved);
-    return { ...saved, configStatus: config.status || "synced" };
-  } catch {
-    return { ...saved, configStatus: "sync_failed" };
+    return await refreshInFlight;
+  } finally {
+    refreshInFlight = null;
   }
 }
 
@@ -307,6 +343,8 @@ export async function getActiveSession({ revalidate = false } = {}) {
       clientId: stored.clientId || CLIENT_ID,
       deviceId: stored.deviceId || "",
       authVersion: Number(stored.authVersion || 1),
+      refreshExpiresAt: stored.refreshExpiresAt || 0,
+      refreshPolicy: stored.refreshPolicy || "rolling",
     } });
     let configStatus = "not_synced";
     try {
