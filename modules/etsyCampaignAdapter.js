@@ -2,6 +2,10 @@
 // It deliberately does not call an Ads endpoint or mutate Etsy campaign settings.
 
 const HANDOFF_VERSION = "promotion-object-handoff.v1";
+export const ADS_EVIDENCE_BUNDLE_VERSION = "marqel.etsy-ads-evidence-bundle.v1";
+const ADS_EVIDENCE_VERSION = "marqel.etsy-ads-evidence.v1";
+const ACCEPTED_ADS_IMPORT_SOURCES = new Set(["etsy_ads_export", "operator_snapshot"]);
+const SENSITIVE_ADS_INPUT_KEY = /(?:authorization|cookie|password|secret|api[_ -]?key|access[_ -]?token|refresh[_ -]?token|buyer|email|phone|address|payment)/i;
 
 function finiteNonNegative(value) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
@@ -14,6 +18,104 @@ function parseNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function requiredText(value, label, maximum = 2_000) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized || normalized.length > maximum) throw new Error(`${label} is required and must be no longer than ${maximum} characters.`);
+  return normalized;
+}
+
+function textList(value, maximumItems = 500) {
+  const list = Array.isArray(value) ? value : String(value ?? "").split(/[\n|;]/);
+  return list.map((item) => String(item ?? "").trim()).filter(Boolean).slice(0, maximumItems);
+}
+
+function uniqueTextList(value, maximumItems = 500) {
+  return [...new Set(textList(value, maximumItems))];
+}
+
+function assertNoSensitiveAdsInput(value, trail = "input", depth = 0) {
+  if (depth > 10) throw new Error(`${trail} exceeds the accepted nesting depth.`);
+  if (Array.isArray(value)) return value.forEach((item, index) => assertNoSensitiveAdsInput(item, `${trail}[${index}]`, depth + 1));
+  if (!value || typeof value !== "object") return;
+  for (const [key, nested] of Object.entries(value)) {
+    if (SENSITIVE_ADS_INPUT_KEY.test(key)) throw new Error(`${trail}.${key} contains private or credential-like data that Ads evidence imports do not accept.`);
+    assertNoSensitiveAdsInput(nested, `${trail}.${key}`, depth + 1);
+  }
+}
+
+function splitDelimitedLine(line, delimiter) {
+  const values = [];
+  let value = "";
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    if (character === '"') {
+      if (quoted && line[index + 1] === '"') {
+        value += '"';
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (character === delimiter && !quoted) {
+      values.push(value.trim());
+      value = "";
+    } else {
+      value += character;
+    }
+  }
+  if (quoted) throw new Error("Ads evidence contains an unterminated quoted field.");
+  values.push(value.trim());
+  return values;
+}
+
+function parseDelimitedRows(text) {
+  const lines = String(text || "").replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim());
+  if (lines.length < 2) throw new Error("Ads CSV/TSV must contain a header and at least one data row.");
+  const delimiter = [",", "\t", ";"].map((candidate) => ({ candidate, count: splitDelimitedLine(lines[0], candidate).length })).sort((left, right) => right.count - left.count)[0].candidate;
+  const headers = splitDelimitedLine(lines[0], delimiter).map((header) => requiredText(header, "Ads evidence column", 160));
+  if (headers.some((header) => SENSITIVE_ADS_INPUT_KEY.test(header))) throw new Error("Ads evidence columns must not contain buyer, payment, contact, or credential data.");
+  return lines.slice(1).map((line) => {
+    const values = splitDelimitedLine(line, delimiter);
+    return Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ""]));
+  });
+}
+
+function stableEvidenceFingerprint(value) {
+  let hash = 2166136261;
+  for (const character of String(value || "")) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+/** Parses a user-selected JSON, CSV, or TSV Ads evidence file without accessing an Etsy page. */
+export function parseAdsEvidenceDocument(text, { fileName = "ads-evidence" } = {}) {
+  const raw = requiredText(text, "Ads evidence file", 2 * 1024 * 1024);
+  let input;
+  let format;
+  if (/\.json$/i.test(fileName) || /^[\s\r\n]*[\[{]/.test(raw)) {
+    input = JSON.parse(raw);
+    assertNoSensitiveAdsInput(input);
+    format = "json";
+    if (input?.schema_version === ADS_EVIDENCE_BUNDLE_VERSION) {
+      if (!input.metrics || !Array.isArray(input.evidence)) throw new Error("Ads evidence bundle is missing metrics or evidence records.");
+      return { format: "bundle", bundle: structuredClone(input), rows: [structuredClone(input.metrics)], sourceRef: input.metrics.source_refs?.[0] || "" };
+    }
+    if (Array.isArray(input)) input = { rows: input };
+    if (input?.metrics && !input.rows) input = { rows: [input.metrics] };
+    if (!Array.isArray(input?.rows) || !input.rows.length) throw new Error("Ads JSON must be an array, a rows object, a metrics object, or a supported evidence bundle.");
+  } else {
+    input = { rows: parseDelimitedRows(raw) };
+    format = "delimited";
+  }
+  return {
+    format,
+    rows: structuredClone(input.rows),
+    sourceRef: `operator-file://${String(fileName || "ads-evidence").replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 120)}/${stableEvidenceFingerprint(raw)}`,
+  };
+}
+
 function normalizedKey(value) {
   return String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
@@ -23,6 +125,115 @@ function firstValue(row, aliases) {
     if (aliases.includes(normalizedKey(key))) return value;
   }
   return null;
+}
+
+function parsedMetric(row, aliases, label, { integer = false } = {}) {
+  const raw = firstValue(row, aliases);
+  if (raw === null || raw === undefined || String(raw).trim() === "") return 0;
+  const parsed = parseNumber(raw);
+  if (!finiteNonNegative(parsed) || (integer && !Number.isInteger(parsed))) throw new Error(`${label} must be a non-negative${integer ? " integer" : ""} value.`);
+  return parsed;
+}
+
+function aggregateAdsRows(rows = []) {
+  if (!Array.isArray(rows) || !rows.length) throw new Error("At least one Ads evidence row is required.");
+  const totals = { spend: 0, attributedRevenue: 0, orders: 0, clicks: 0, impressions: 0, orderRefs: [] };
+  rows.forEach((row, index) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) throw new Error(`Ads evidence row ${index + 1} must be an object.`);
+    assertNoSensitiveAdsInput(row, `rows[${index}]`);
+    totals.spend += parsedMetric(row, ["spendusd", "spend", "cost", "adspend", "advertisingspend"], `Row ${index + 1} spend`);
+    totals.attributedRevenue += parsedMetric(row, ["attributedrevenueusd", "attributedrevenue", "revenue", "sales", "ordersrevenue"], `Row ${index + 1} attributed revenue`);
+    totals.orders += parsedMetric(row, ["attributedorders", "orders", "salescount", "purchases"], `Row ${index + 1} orders`, { integer: true });
+    totals.clicks += parsedMetric(row, ["clicks", "adclicks"], `Row ${index + 1} clicks`, { integer: true });
+    totals.impressions += parsedMetric(row, ["impressions", "views", "adviews"], `Row ${index + 1} impressions`, { integer: true });
+    totals.orderRefs.push(...textList(firstValue(row, ["attributedorderrefs", "orderrefs", "orderreferences", "orderids"])));
+  });
+  return totals;
+}
+
+function validTimeZone(value) {
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: String(value || "") }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Builds one Campaign Operator-compatible, non-secret evidence bundle from a user-selected file or manual aggregate. */
+export function buildAdsEvidenceBundle({ rows = [], metadata = {}, now = new Date() } = {}) {
+  const totals = aggregateAdsRows(rows);
+  const source = String(metadata.source || "operator_snapshot");
+  if (!ACCEPTED_ADS_IMPORT_SOURCES.has(source)) throw new Error("Ads imports support only etsy_ads_export or operator_snapshot; visible-page evidence requires a separately authorized capture path.");
+  const sourceRefs = uniqueTextList(metadata.sourceRefs);
+  const metadataOrderRefs = textList(metadata.orderRefs);
+  const orderRefs = metadataOrderRefs.length ? metadataOrderRefs : totals.orderRefs;
+  const observedAt = String(metadata.observedAt || now.toISOString());
+  const periodStart = String(metadata.periodStart || "");
+  const periodEnd = String(metadata.periodEnd || "");
+  const timeZone = String(metadata.timeZone || "UTC");
+  const currency = String(metadata.currency || "USD").toUpperCase();
+  const attributionWindowDays = Number(metadata.attributionWindowDays ?? 30);
+  const revenueBasis = String(metadata.revenueBasis || "etsy_ads_attributed_gross");
+  const gaps = [];
+  const observedTime = Date.parse(observedAt);
+  const periodStartTime = Date.parse(periodStart);
+  const periodEndTime = Date.parse(periodEnd);
+  if (!sourceRefs.length) gaps.push("metrics_source_refs_missing");
+  if (!Number.isFinite(observedTime)) gaps.push("observed_at_invalid");
+  if (!Number.isFinite(periodStartTime) || !Number.isFinite(periodEndTime) || periodEndTime <= periodStartTime) gaps.push("measurement_period_invalid");
+  if (Number.isFinite(observedTime) && Number.isFinite(periodEndTime) && periodEndTime > observedTime + 300_000) gaps.push("measurement_period_after_observation");
+  if (!validTimeZone(timeZone)) gaps.push("time_zone_invalid");
+  if (currency !== "USD") gaps.push("currency_mismatch");
+  if (!Number.isInteger(attributionWindowDays) || attributionWindowDays <= 0) gaps.push("attribution_window_invalid");
+  if (!["etsy_ads_attributed_gross", "order_net_reconciled"].includes(revenueBasis)) gaps.push("revenue_basis_unsupported");
+  if (totals.orders > 0 && orderRefs.length !== totals.orders) gaps.push("attributed_order_refs_count_mismatch");
+  if (totals.orders > 0 && new Set(orderRefs).size !== orderRefs.length) gaps.push("duplicate_attributed_order_refs");
+  const reconciliationStatus = totals.orders === 0 ? "not_applicable" : orderRefs.length === totals.orders ? "reconciled" : "unreconciled";
+  const metrics = {
+    source,
+    source_refs: sourceRefs,
+    observed_at: observedAt,
+    period_start: periodStart,
+    period_end: periodEnd,
+    time_zone: timeZone,
+    currency,
+    attribution_window_days: attributionWindowDays,
+    revenue_basis: revenueBasis,
+    reconciliation_status: reconciliationStatus,
+    spend_usd: round(totals.spend),
+    attributed_revenue_usd: round(totals.attributedRevenue),
+    attributed_orders: totals.orders,
+    attributed_order_refs: orderRefs,
+    clicks: totals.clicks,
+    impressions: totals.impressions,
+  };
+  const localAnalysis = analyzeEtsyAdvertising([{ channel: "etsy_ads", spend: totals.spend, attributedRevenue: totals.attributedRevenue, orders: totals.orders, clicks: totals.clicks, impressions: totals.impressions }]);
+  const createdAt = now.toISOString();
+  return {
+    schema_version: ADS_EVIDENCE_BUNDLE_VERSION,
+    evidence_id: `etsy-ads-evidence-${stableEvidenceFingerprint(`${createdAt}:${sourceRefs.join(":")}`)}`,
+    created_at: createdAt,
+    data_quality: { status: gaps.length ? "invalid" : "valid", gaps: [...new Set(gaps)] },
+    metrics,
+    evidence: [{
+      schema_version: ADS_EVIDENCE_VERSION,
+      source,
+      source_refs: sourceRefs,
+      observed_at: observedAt,
+      input_mode: "user_selected_file_or_manual_aggregate",
+      row_count: Number.isInteger(Number(metadata.rowCount)) && Number(metadata.rowCount) > 0 ? Number(metadata.rowCount) : rows.length,
+      contains_raw_rows: false,
+    }],
+    local_preview: localAnalysis.channels.etsy_ads,
+    safety: {
+      external_action_allowed: false,
+      noAutomaticBudgetMutation: true,
+      browserScrapingPerformed: false,
+      credentialsIncluded: false,
+      canonicalDecisionOwner: "etsy-campaign-operator_and_control_center",
+    },
+  };
 }
 
 function detectedChannel(capture = {}) {
@@ -73,9 +284,10 @@ function evidenceStatus(records = [], now = new Date()) {
   return { status, coverage, freshestAt, reasons };
 }
 
-/** Converts an explicit, user-initiated visible Shop Manager capture into rows. */
+/** Converts separately authorized visible Shop Manager evidence into rows. This is not wired to the production UI. */
 export function normalizeVisibleAdsCapture(capture = {}) {
   if (capture.schemaVersion !== "etsy.shop-manager.visible-capture.v1") throw new Error("Unsupported Etsy visible Ads capture schema.");
+  if (!String(capture.authorizationReference || "").trim()) throw new Error("Visible Etsy Ads capture requires an explicit Etsy authorization reference; use user-selected file import otherwise.");
   if (!capture.capturedAt || Number.isNaN(Date.parse(capture.capturedAt))) throw new Error("Visible Ads capture must include an ISO capturedAt timestamp.");
   const channel = detectedChannel(capture);
   const rows = (capture.tables || []).flatMap((table) => table.rows || []).map((raw) => {
@@ -99,6 +311,7 @@ export function normalizeVisibleAdsCapture(capture = {}) {
       ...(channel === "unknown" ? ["无法从当前可见页面标题区分 Etsy Ads 与 Offsite Ads。"] : []),
       ...(rows.length === 0 ? ["可见表格未识别到标准广告指标；必须人工检查原始页面。"] : []),
       "数据来自用户触发的可见页面采集，并非 Etsy Open API 返回值。",
+      `页面采集授权引用：${capture.authorizationReference}`,
     ],
   };
 }

@@ -1,10 +1,10 @@
 {
   "schemaVersion": "real-browser-acceptance.v2",
-  "generatedAt": "2026-09-01T09:30:09.195Z",
+  "generatedAt": "2026-09-01T14:10:00.000Z",
   "status": "not_run",
   "note": "组织内部 unpacked 扩展真实浏览器验收矩阵；需要在指定 AdsPower Etsy Profile 实机执行后填写 results。",
   "tested": {
-    "extensionVersion": "1.2.8",
+    "extensionVersion": "1.2.9",
     "sourceCommit": "",
     "chromeVersion": "",
     "platform": "",

@@ -1713,6 +1713,151 @@ body {
   font-size: 12px;
   line-height: 1.65;
 }
+.ads-evidence-import {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-secondary) 74%, transparent);
+}
+.ads-evidence-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ads-evidence-heading strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 13px;
+}
+.ads-file-field,
+.ads-evidence-fields label {
+  display: grid;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+}
+.ads-file-field input {
+  width: 100%;
+  padding: 9px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+}
+.ads-file-field small {
+  color: var(--text-muted);
+  font-weight: 500;
+  line-height: 1.45;
+}
+.ads-evidence-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+.ads-evidence-fields .wide {
+  grid-column: 1 / -1;
+}
+.ads-evidence-fields .form-input,
+.ads-evidence-fields .form-select {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+}
+.ads-evidence-fields textarea.form-input {
+  min-height: 58px;
+  padding-top: 8px;
+  resize: vertical;
+}
+.ads-evidence-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ads-evidence-actions .btn {
+  flex: 1 1 145px;
+}
+.ads-evidence-summary {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  font-size: 10px;
+  line-height: 1.5;
+}
+.ads-evidence-summary dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 10px;
+}
+.ads-evidence-summary dl div {
+  min-width: 0;
+  padding: 7px;
+  border-radius: 7px;
+  background: var(--bg-secondary);
+}
+.ads-evidence-summary dt {
+  color: var(--text-muted);
+  font-size: 8px;
+  text-transform: uppercase;
+}
+.ads-evidence-summary dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 800;
+}
+.ads-evidence-summary p {
+  margin: 0 0 5px;
+  overflow-wrap: anywhere;
+}
+.ads-evidence-summary small {
+  color: var(--text-muted);
+}
+.ads-evidence-history {
+  display: grid;
+  gap: 6px;
+}
+.ads-evidence-history > span {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.ads-evidence-history button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 8px;
+  width: 100%;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.ads-evidence-history button:hover {
+  border-color: var(--etsy-orange);
+  background: rgba(244, 92, 44, 0.04);
+}
+.ads-evidence-history strong,
+.ads-evidence-history small {
+  grid-column: 1 / -1;
+}
+.ads-evidence-history strong {
+  color: var(--text-primary);
+  font-size: 10px;
+}
+.ads-evidence-history span,
+.ads-evidence-history small {
+  color: var(--text-muted);
+  font-size: 9px;
+}
 .campaign-boundary-list {
   display: grid;
   gap: 0;
@@ -1762,6 +1907,15 @@ body {
   color: var(--text-secondary);
   font-size: 10px;
   line-height: 1.5;
+}
+@media (max-width: 720px) {
+  .ads-evidence-fields,
+  .ads-evidence-summary dl {
+    grid-template-columns: 1fr;
+  }
+  .ads-evidence-fields .wide {
+    grid-column: auto;
+  }
 }
 .card-header-note {
   color: var(--text-muted);

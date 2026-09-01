@@ -1,10 +1,10 @@
 {
-  "latest_version": "1.2.8",
+  "latest_version": "1.2.9",
   "release_url": "https://github.com/ninemouth/etsy-growth-agent/releases/latest",
   "download_url": "",
   "published_at": "",
   "minimum_chrome_version": "114",
-  "minimum_supported_version": "1.2.8",
+  "minimum_supported_version": "1.2.9",
   "release_state": "source_only_blocked",
-  "changelog": "Example status only. Version 1.2.8 remains blocked until RB-01 through RB-07 pass and a governed GitHub Release publishes the immutable ZIP and release manifest."
+  "changelog": "Example status only. Version 1.2.9 adds structured Etsy Ads evidence import and Campaign Operator bundle handoff, but remains blocked until RB-01 through RB-07 pass and a governed GitHub Release publishes the immutable ZIP and release manifest."
 }

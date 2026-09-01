@@ -14,7 +14,7 @@ Repository: https://github.com/ninemouth/etsy-growth-agent
 - Cross-platform supplier sourcing handoff to the Marqel Etsy Codex Orchestrator (the legacy sourcing report reader remains read-only).
 - Competitor/review analysis focused on buyer expectations, packaging, delivery promise, personalization quality, and IP/compliance risk.
 - Control Center Etsy Seller App proxy: reads the sanitized organization connection state plus this shop's active listings and listing details through a device-authenticated server endpoint; Etsy Key, Secret, and OAuth Tokens remain server-only.
-- Etsy Campaign Adapter: imports user-triggered visible Etsy Ads / Offsite Ads evidence as non-canonical input for the Control Center and `etsy-campaign-operator`; it does not approve campaigns, change budgets, or publish Outreach handoffs locally.
+- Etsy Campaign Adapter: imports a user-selected Ads CSV/JSON or manual aggregate into a credential-free `marqel.etsy-ads-evidence-bundle.v1`, keeps a bounded local history, and produces a non-canonical preview for `etsy-campaign-operator`; it does not scrape Etsy Ads pages, approve campaigns, change budgets, or publish Outreach handoffs locally.
 - Governed Etsy draft executor: fills only deterministic fields from an exact approved `etsy-listing-draft.v1` on an allowlisted Etsy editor route, verifies the DOM write, and leaves tokenized tags, images, Save, and Publish visibly manual.
 - Privacy-safe DOM observability: records selector/policy versions, route classes, field-status counts, mask counts, and bounded error codes in local task logs without storing page URLs, business identifiers, approved content, screenshots, or credentials.
 - Marqel Control Center V2 session: Agent execution requires an active Marqel session; first use starts an `etsy-growth-agent` device request that a Web member must approve. The extension can use approved organization defaults or local overrides from its extension-origin side panel, and never collects a Marqel password.
@@ -27,7 +27,7 @@ etsy-growth-agent/
 ├── background.js
 ├── content.js
 ├── sidepanel.html / sidepanel.css / sidepanel.js
-├── dashboard.html / dashboard.css / dashboard.js
+├── dashboard.html / dashboard.css / dashboard.js / dashboardAds.js
 ├── modules/
 │   ├── agentLoop.js
 │   ├── etsyApi.js
@@ -69,6 +69,14 @@ Configure the Seller App only in the authenticated Marqel Control Center **Etsy 
 - access/refresh expiry states and sanitized error codes.
 
 The extension never receives the Seller App shared secret or OAuth tokens from this contract. On install/update it removes retired local Etsy credential keys and strips nested credentials from legacy shop metadata. Active listings and listing details use the Control Center server-only proxy; access-token expiry triggers server-side refresh when the long-lived refresh grant is still active. Ads, Listing writes, receipts/orders, transactions, and finance data remain outside the current read-only scope and fail closed instead of using legacy direct calls.
+
+## Etsy Ads evidence import
+
+The Dashboard Campaign lane accepts a JSON, CSV, or TSV file explicitly selected by the operator, or a manual aggregate entered into the same form. The importer rejects buyer/contact/payment/credential-like fields, stores normalized metrics rather than raw file rows, retains at most 24 local bundles, and never opens or scrapes an Etsy Ads page.
+
+Each saved `marqel.etsy-ads-evidence-bundle.v1` contains Campaign Operator-compatible `metrics` and `evidence` sections plus a fixed safety boundary. The same downloaded file can be passed to `campaign-lifecycle.mjs evaluate --metrics` and `campaign-control-center.mjs recommend --evidence`. Missing provenance, timestamps, order reconciliation, USD currency, or other required fields remain explicit data-quality gaps; a saved local preview is never a canonical recommendation or permission to spend.
+
+The legacy `etsy.shop-manager.visible-capture.v1` normalizer remains only for separately authorized evidence and now requires an explicit Etsy authorization reference. It is not wired to the production Dashboard. Do not add DOM scraping, hidden API access, browser-session export, or network interception as a fallback.
 
 ## Before You Run
 
@@ -116,8 +124,8 @@ The governed catalog publishes a record with this shape:
 ```json
 {
   "id": "etsy-growth-agent",
-  "currentVersion": "1.2.8",
-  "minimumSupportedVersion": "1.2.8",
+  "currentVersion": "1.2.9",
+  "minimumSupportedVersion": "1.2.9",
   "minimumChromeVersion": "114",
   "releaseState": "source_only_blocked",
   "acceptance": {
@@ -170,11 +178,12 @@ The extension is designed for local browser execution. LLM provider credentials 
 ## Promotion handoff
 
 This repository is the canonical Etsy Growth OS implementation. The earlier
-lightweight Ads-capture prototype is absorbed as the local, read-only Etsy
-Campaign Adapter in `modules/etsyCampaignAdapter.js`. Its visible-page Ads
-normalization, Etsy Ads/Offsite Ads guardrails, evidence-gated trend queue and
-creative-hypothesis safeguards now live here; all new Etsy development belongs
-in this repository.
+lightweight Ads-capture prototype is absorbed as the local Etsy Campaign Adapter
+in `modules/etsyCampaignAdapter.js`. Production input now uses operator-selected
+structured files or manual aggregates. The legacy visible-page normalizer is
+authorization-gated and is not a Dashboard capture path. Ads and Offsite Ads
+guardrails, evidence-gated trend queues, and creative-hypothesis safeguards live
+here; all new Etsy development belongs in this repository.
 
 Growth Agent no longer creates a campaign or Outreach handoff from a local
 prompt-based approval. Its dashboard routes the operator to the canonical

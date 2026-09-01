@@ -681,19 +681,51 @@
             <div class="card-header execution-card-header">
               <div>
                 <p class="execution-kicker">CAMPAIGN LANE</p>
-                <h3>Etsy Ads 计划与审批</h3>
+                <h3>Etsy Ads 证据与审批</h3>
               </div>
               <span class="execution-state-badge" data-tone="attention">不自动产生花费</span>
             </div>
             <div class="card-body campaign-boundary-body">
-              <p>Growth Agent 读取用户主动触发的可见广告证据；Campaign Operator 生成预算护栏和建议；Control Center 记录精确对象、版本与人工决定。</p>
+              <p>Growth Agent 只导入你主动选择的 Ads CSV/JSON 或人工汇总，不抓取 Etsy 页面；Campaign Operator 生成预算护栏和建议；Control Center 记录精确对象、版本与人工决定。</p>
+              <section class="ads-evidence-import" aria-labelledby="ads-evidence-title">
+                <div class="ads-evidence-heading">
+                  <div><p class="execution-kicker">ADS EVIDENCE</p><strong id="ads-evidence-title">导入并校验广告指标</strong></div>
+                  <span id="ads-evidence-quality" class="execution-state-badge" data-tone="neutral">尚无证据</span>
+                </div>
+                <label class="ads-file-field"><span>结构化文件</span><input id="ads-evidence-file" type="file" accept=".json,.csv,.tsv,application/json,text/csv,text/tab-separated-values"><small>只读取你选择的本地文件；不读取 Cookie、Token、买家、地址或付款数据。</small></label>
+                <div class="ads-evidence-fields">
+                  <label><span>来源</span><select id="ads-evidence-source" class="form-select"><option value="operator_snapshot">人工汇总</option><option value="etsy_ads_export">卖家提供的 Ads 文件</option></select></label>
+                  <label><span>观察时间</span><input id="ads-evidence-observed-at" class="form-input" type="datetime-local"></label>
+                  <label><span>周期开始</span><input id="ads-evidence-period-start" class="form-input" type="datetime-local"></label>
+                  <label><span>周期结束</span><input id="ads-evidence-period-end" class="form-input" type="datetime-local"></label>
+                  <label><span>IANA 时区</span><input id="ads-evidence-time-zone" class="form-input" type="text" value="UTC" placeholder="UTC"></label>
+                  <label><span>归因窗口（天）</span><input id="ads-evidence-attribution-window" class="form-input" type="number" min="1" max="365" value="30"></label>
+                  <label><span>收入口径</span><select id="ads-evidence-revenue-basis" class="form-select"><option value="etsy_ads_attributed_gross">Etsy Ads 归因毛收入</option><option value="order_net_reconciled">订单净收入已对账</option></select></label>
+                  <label><span>币种</span><input id="ads-evidence-currency" class="form-input" type="text" value="USD" readonly></label>
+                  <label><span>Spend</span><input id="ads-evidence-spend" class="form-input" type="number" min="0" step="0.01" value="0"></label>
+                  <label><span>Attributed revenue</span><input id="ads-evidence-revenue" class="form-input" type="number" min="0" step="0.01" value="0"></label>
+                  <label><span>Orders</span><input id="ads-evidence-orders" class="form-input" type="number" min="0" step="1" value="0"></label>
+                  <label><span>Clicks</span><input id="ads-evidence-clicks" class="form-input" type="number" min="0" step="1" value="0"></label>
+                  <label><span>Impressions</span><input id="ads-evidence-impressions" class="form-input" type="number" min="0" step="1" value="0"></label>
+                  <label class="wide"><span>非秘密来源引用</span><textarea id="ads-evidence-source-refs" class="form-input" rows="2" placeholder="每行一个引用，例如 operator://etsy-ads/2026-09-01"></textarea></label>
+                  <label class="wide"><span>去标识订单引用</span><textarea id="ads-evidence-order-refs" class="form-input" rows="2" placeholder="订单数大于 0 时，每行一个非秘密、去标识引用"></textarea></label>
+                </div>
+                <div class="ads-evidence-actions">
+                  <button id="ads-evidence-save" class="btn btn-primary" type="button">保存并分析</button>
+                  <button id="ads-evidence-download" class="btn btn-outline" type="button" disabled>下载 Evidence Bundle</button>
+                  <button id="ads-evidence-clear" class="btn btn-outline" type="button">清空当前表单</button>
+                </div>
+                <div id="ads-evidence-message" class="task-message" data-kind="info" hidden></div>
+                <div id="ads-evidence-summary" class="ads-evidence-summary"><span>导入后显示 Spend、ROAS、CPA、证据缺口和本地非权威建议。</span></div>
+                <div id="ads-evidence-history" class="ads-evidence-history"><span>尚无本地 Ads Evidence 历史。</span></div>
+              </section>
               <ol class="campaign-boundary-list">
-                <li><span>01</span><div><strong>可见证据</strong><small>Etsy Ads / Offsite Ads 页面或卖家导出</small></div></li>
+                <li><span>01</span><div><strong>结构化证据</strong><small>用户选择的 Ads 文件或人工汇总；页面采集默认关闭</small></div></li>
                 <li><span>02</span><div><strong>计划与护栏</strong><small>目标 ROAS、最高 CPA、日预算硬上限</small></div></li>
                 <li><span>03</span><div><strong>人工审批</strong><small>只批准精确 targetRef 和当前版本</small></div></li>
                 <li><span>04</span><div><strong>外部执行与回读</strong><small>尚需 Etsy 侧人工动作和平台事实回读</small></div></li>
               </ol>
-              <div class="campaign-safety-note"><strong>当前完成边界</strong><span>建议、审批和证据链已实现；启用广告、修改预算与真实平台回读尚未自动闭环。</span></div>
+              <div class="campaign-safety-note"><strong>当前完成边界</strong><span>证据导入、分析、Campaign Operator 交接和审批链已实现；启用广告、修改预算与真实平台回读仍是独立人工动作。</span></div>
               <button id="etsy-campaign-review" class="btn btn-primary btn-block" type="button">打开 Control Center 投流审批</button>
             </div>
           </aside>
@@ -893,6 +925,7 @@
   </div>
   <script src="libs/dompurify.min.js"></script>
   <script src="libs/marked.min.js"></script>
+  <script type="module" src="dashboardAds.js"></script>
   <script src="dashboard.js"></script>
 </body>
 </html>

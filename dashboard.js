@@ -3181,7 +3181,7 @@ async function openCanonicalCampaignWorkflow(row = {}) {
     "$etsy-campaign-operator",
     row.sku ? `Listing/SKU：${row.sku}` : "Listing/SKU：请从 Control Center 选择已上传草稿",
     row.title ? `商品：${row.title}` : "",
-    "要求：使用 Control Center 原始 Ads Evidence 生成正式 Recommendation，并在 Web reviewer 完成人工审批；Growth Agent 本地建议仅作为 non_canonical_preview。",
+    "要求：优先使用 Growth Agent 下载的 marqel.etsy-ads-evidence-bundle.v1；同一 Bundle 可用于 evaluate 的 --metrics 与 recommend 的 --evidence。生成正式 Recommendation 后在 Web reviewer 完成人工审批；Growth Agent 本地建议仅作为 non_canonical_preview。",
   ].filter(Boolean).join("\n");
   if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(instruction).catch(() => {});
   await chrome.tabs.create({ url: "https://www.marqel.shop/campaigns.html" });

@@ -15,7 +15,7 @@ const excludedLegacyFiles = ["skills/etsy_sourcing_finder.skill.md"];
 
 const include = [
   "_locales", "icons", "libs", "modules", "skills", "background.js", "content.js",
-  "dashboard.css", "dashboard.html", "dashboard.js", "manifest.json", "print.html", "print.js",
+  "dashboard.css", "dashboard.html", "dashboard.js", "dashboardAds.js", "manifest.json", "print.html", "print.js",
   "sidepanel.css", "sidepanel.html", "sidepanel.js", "PrivacyPolicy.md", "DATA_GOVERNANCE.md", "README.md", "LICENSE",
 ];
 

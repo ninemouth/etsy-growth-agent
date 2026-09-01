@@ -55,7 +55,7 @@ export function validateAcceptanceRecord(record = {}, { manifestVersion = "", ex
 
 export const RELEASE_RUNTIME_PATHS = [
   "_locales/", "icons/", "libs/", "modules/", "skills/",
-  "background.js", "content.js", "dashboard.css", "dashboard.html", "dashboard.js",
+  "background.js", "content.js", "dashboard.css", "dashboard.html", "dashboard.js", "dashboardAds.js",
   "manifest.json", "print.html", "print.js", "sidepanel.css", "sidepanel.html", "sidepanel.js",
   "package.json", "package-lock.json", "scripts/", ".github/workflows/",
 ];

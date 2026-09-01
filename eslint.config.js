@@ -34,6 +34,7 @@ export default [
         Headers: "readonly",
         URL: "readonly",
         URLSearchParams: "readonly",
+        structuredClone: "readonly",
         TextDecoder: "readonly",
         DOMParser: "readonly",
         Node: "readonly",
