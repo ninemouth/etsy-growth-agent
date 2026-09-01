@@ -3447,6 +3447,7 @@ Object.assign(tools, {
       ...integration,
       accessModel: "control_center_server_only_seller_api",
       dataProxyStatus: integration.dataProxy?.status || "unavailable",
+      dataProxyMode: integration.dataProxy?.mode || "",
       supportedResources: integration.dataProxy?.resources || [],
       limitation: integration.oauthStatus === "connected"
         ? "Growth Agent 通过 Control Center 服务端只读代理读取自营 active listings 与 listing details；凭据不会下发到插件。订单、广告、交易和写入仍未开放。"

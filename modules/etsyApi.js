@@ -80,7 +80,7 @@ async function requireConnectedIntegration() {
     error.code = "ETSY_OAUTH_NOT_CONNECTED";
     throw error;
   }
-  if (integration.dataProxy?.status !== "read_only") {
+  if (integration.dataProxy?.status !== "available" || integration.dataProxy?.mode !== "read_only") {
     const error = new Error("Control Center 尚未开放 Etsy Listing 只读数据代理；禁止使用旧本地 Key/Token 直连。");
     error.code = "ETSY_DATA_PROXY_UNAVAILABLE";
     throw error;

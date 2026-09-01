@@ -240,7 +240,7 @@ function renderAuthorizationSession(session = null, etsyIntegration = null) {
     const etsyApi = document.createElement("span");
     etsyApi.textContent = etsyIntegration?.unavailable
       ? "Etsy API：状态暂不可用；设备授权和团队模型配置不受影响"
-      : `Etsy API：${etsyIntegration?.oauthStatus === "connected" ? `已连接 ${etsyIntegration.shop?.name || etsyIntegration.shop?.id || "当前店铺"}` : "未连接"} · ${etsyIntegration?.dataProxy?.status === "read_only" ? "Listing 只读代理可用" : "数据代理不可用"} · 凭据仅在服务端`;
+      : `Etsy API：${etsyIntegration?.oauthStatus === "connected" ? `已连接 ${etsyIntegration.shop?.name || etsyIntegration.shop?.id || "当前店铺"}` : "未连接"} · ${etsyIntegration?.dataProxy?.status === "available" ? "Listing 只读代理可用" : "连接后开放代理"} · 凭据仅在服务端`;
     details.append(title, effective, account, refresh, access, config, etsyApi);
     details.classList.remove("hidden");
   }
@@ -2971,7 +2971,7 @@ async function renderSettingsTab() {
 }
 
 function etsyApiStatusLabel(value) {
-  return ({ connected: "已连接", not_connected: "未连接", error: "连接异常", verified: "Key 已验证", saved_unverified: "Key 待验证", not_configured: "未配置", active: "有效", expired_refreshable: "自动刷新", expired: "已过期", not_available: "不可用", read_only: "只读代理可用", unavailable: "不可用" })[value] || value || "—";
+  return ({ connected: "已连接", not_connected: "未连接", error: "连接异常", verified: "Key 已验证", saved_unverified: "Key 待验证", not_configured: "未配置", active: "有效", expired_refreshable: "自动刷新", expired: "已过期", not_available: "不可用", available: "只读代理可用", requires_connection: "连接后可用", unavailable: "不可用" })[value] || value || "—";
 }
 
 function etsyApiStatusDate(value) {
