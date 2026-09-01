@@ -1,12 +1,13 @@
 // modules/toolRegistry.js — Tool registry and content script bridge
 
 import { callLLM, getSettings, resolveLLMProfiles } from './llmClient.js';
-import { etsyGetProductList, etsyGetProductInfo, etsyGetAnalyticsData, etsyGetFbsPostingList, etsyGetFboPostingList, etsyGetStoreSnapshot, getEtsyApiCapabilities, getEtsySettings } from './etsyApi.js';
+import { etsyGetProductList, etsyGetProductInfo, etsyGetAnalyticsData, etsyGetFbsPostingList, etsyGetFboPostingList, etsyGetStoreSnapshot, getEtsyApiCapabilities } from './etsyApi.js';
 import { getArtifactDataUrl, pruneArtifacts, putDataUrlArtifact } from './artifactStore.js';
 import { closeOwnedTab, createOwnedTab, createOwnedTabCallback } from './browserSessionManager.js';
 import { appendWorkflowEvent, isWorkflowCancellationRequested } from './workflowRuntime.js';
 import { summarizeBrowserAutomationCapabilities } from './browserAutomationCapabilities.js';
 import { attachLocalBusinessAuthority, buildLocalBusinessAuthority } from './businessAuthority.js';
+import { getEtsyIntegrationStatus } from './controlCenterAuth.js';
 
 const ETSY_SHOP_CRAWL_SCREENSHOT_NAMESPACE = "etsy-shop-crawl-screenshot";
 const etsyShopCrawlCache = new Map();
@@ -3441,22 +3442,15 @@ Object.assign(tools, {
   }),
 
   etsy_api_get_connection_status: async () => {
-    const settings = await getEtsySettings();
-    return {
-      ok: true,
-      result: {
-        accessModel: "personal_seller_api",
-        configured: Boolean(settings.apiKey && settings.shopId),
-        shopIdConfigured: Boolean(settings.shopId),
-        apiKeyConfigured: Boolean(settings.apiKey),
-        oauthConfigured: Boolean(settings.oauthToken),
-        refreshTokenConfigured: Boolean(settings.refreshToken),
-        warehouseType: settings.warehouseType || "Etsy seller-fulfilled",
-        limitation: settings.oauthToken
-          ? "已配置 OAuth，可尝试读取当前授权店铺的 receipts/发货资料；最终权限以 Etsy 返回为准。"
-          : "未配置 OAuth Access Token，receipts/发货资料读取可能失败；商品公开字段仍需按 API 权限验证。",
-      },
-    };
+    const integration = await getEtsyIntegrationStatus();
+    return { ok: true, result: {
+      ...integration,
+      accessModel: "control_center_server_only_seller_api",
+      dataProxyStatus: "not_implemented",
+      limitation: integration.oauthStatus === "connected"
+        ? "Control Center 已确认只读 OAuth 与店铺绑定；本版本 Growth Agent 只接收脱敏状态，尚未通过服务端代理读取 Etsy 数据。"
+        : "Control Center 尚未完成只读 Seller App / OAuth 连接；设备授权和团队模型配置仍可独立使用。",
+    } };
   },
 
   etsy_api_get_transactions: async (args) => {

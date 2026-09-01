@@ -13,7 +13,7 @@ Repository: https://github.com/ninemouth/etsy-growth-agent
 - Etsy trend and product opportunity exploration for lightweight gifts, personalized products, craft supplies, and cross-border supply-chain advantages.
 - Cross-platform supplier sourcing handoff to the Marqel Etsy Codex Orchestrator (the legacy sourcing report reader remains read-only).
 - Competitor/review analysis focused on buyer expectations, packaging, delivery promise, personalization quality, and IP/compliance risk.
-- Optional Etsy personal-access Open API adapter for active listings and authorized receipts when a Shop ID, API key, OAuth access token, and optional refresh token are configured locally.
+- Control Center Etsy Seller App status: reads only the sanitized organization connection state, shop binding, read-only scopes, and expiry state; Etsy Key, Secret, and OAuth Tokens remain server-only.
 - Etsy Campaign Adapter: imports user-triggered visible Etsy Ads / Offsite Ads evidence as non-canonical input for the Control Center and `etsy-campaign-operator`; it does not approve campaigns, change budgets, or publish Outreach handoffs locally.
 - Governed Etsy draft executor: fills only deterministic fields from an exact approved `etsy-listing-draft.v1` on an allowlisted Etsy editor route, verifies the DOM write, and leaves tokenized tags, images, Save, and Publish visibly manual.
 - Privacy-safe DOM observability: records selector/policy versions, route classes, field-status counts, mask counts, and bounded error codes in local task logs without storing page URLs, business identifiers, approved content, screenshots, or credentials.
@@ -57,18 +57,18 @@ This project keeps the browser automation, dashboard, workflow canvas, report li
 - The dashboard currency and listing logic are centered on USD-style Etsy economics.
 - Compliance guidance focuses on Etsy IP policy, personalization claims, CE/CPC/FDA/category-specific obligations, and gift-market delivery promises.
 - Supplier sourcing is a runtime handoff boundary. The old `etsy_sourcing_finder` Skill file has been physically removed; direct legacy loads fail closed and sourcing intent is handed to the cross-border Orchestrator. Historical sourcing report rendering remains read-only for evidence migration.
-- Etsy API integration is modeled as a personal-access/local-browser setup, not a multi-tenant SaaS authorization flow. Public listing reads use the configured API key. Private shop data such as receipts/orders requires an OAuth access token; when a refresh token is also saved, the adapter can refresh an expired access token before retrying the request.
+- The governed Etsy API connection is a Seller App / OAuth 2.0 + PKCE flow hosted by Marqel Control Center. This extension receives a sanitized status contract only. The current release does not yet proxy Etsy listing data through Control Center and therefore must not treat `oauthStatus: connected` as permission to call Etsy directly.
 
-## Etsy Personal Access Credentials
+## Etsy Seller App Connection
 
-The extension stores Etsy credentials only in `chrome.storage.local` for the current browser profile:
+Configure the Seller App only in the authenticated Marqel Control Center **Etsy API connection** page. The server encrypts the API keystring, shared secret, OAuth access token, and refresh token. Growth Agent may read only:
 
-- `Shop ID`
-- `API Key` in Etsy's `keystring:shared_secret` form
-- `OAuth Access Token` for private shop data such as receipts/orders
-- Optional `Refresh Token` for renewing an expired access token
+- whether an approved Seller App key has been saved and verified;
+- whether shop-owner OAuth is connected;
+- the bound Shop ID/name and read-only `shops_r` / `listings_r` scopes;
+- access/refresh expiry states and sanitized error codes.
 
-This project does not currently implement the full OAuth consent screen or hosted multi-user callback flow. Generate or provide the personal access credentials outside the extension, then save them in the extension side panel. The page overlay never renders or repopulates credential fields. Marqel Control Center LLM/multimodal/image defaults are a separate configuration lane; Etsy credentials remain local and are never returned by the Control Center config endpoint.
+The extension never receives the Seller App shared secret or OAuth tokens from this contract. Existing local Etsy credential keys remain in the source only as a legacy compatibility adapter for old test profiles; the current settings UI does not collect them, and the governed connection-status tool no longer uses them. A server-side Etsy data proxy is still required before the connected Control Center credentials can power listing reads inside Growth Agent. Ads, Listing writes, receipts/orders, and finance data are outside the current read-only scope.
 
 ## Before You Run
 

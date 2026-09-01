@@ -764,6 +764,14 @@
           </div>
         </div>
         <div class="settings-drawer-grid">
+          <div class="grid-card etsy-api-connection-card">
+            <div class="card-header"><div><h3>Etsy 官方 API 连接</h3><p>来自 Control Center 的脱敏状态；插件不会接收 Key、Secret 或 OAuth Token。</p></div><span id="settings-etsy-api-badge" class="status-chip">读取中</span></div>
+            <div class="card-body">
+              <div id="settings-etsy-api-status" class="etsy-api-status-grid" aria-live="polite"><div class="empty-state">正在读取 Control Center…</div></div>
+              <div class="etsy-api-status-actions"><button class="btn btn-outline" id="settings-refresh-etsy-api">刷新连接状态</button><button class="btn btn-primary" id="settings-open-etsy-api">在 Web 配置</button></div>
+              <p class="etsy-api-status-boundary">“已连接”只证明 Seller App Key、店主 OAuth 和店铺回读闭环；当前扩展仍不具备服务端 Etsy 数据代理，也不会因此获得广告、Listing 或订单写权限。</p>
+            </div>
+          </div>
           <div class="grid-card">
             <div class="card-header">
               <h3>业务端点审计摘要</h3>

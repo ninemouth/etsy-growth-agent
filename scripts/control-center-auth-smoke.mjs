@@ -101,10 +101,32 @@ globalThis.fetch = async (url, options = {}) => {
     extensionReports.push({ body: JSON.parse(options.body), headers: options.headers });
     return new Response(JSON.stringify({ status: { state: "current", installedVersion: "1.2.5" } }), { status: 201, headers: { "Content-Type": "application/json" } });
   }
+  if (url.endsWith("/api/etsy/integration")) {
+    return new Response(JSON.stringify({ integration: {
+      contractVersion: "marqel-etsy-api-status.v1",
+      configured: true,
+      canConfigure: false,
+      appType: "seller",
+      credentialStatus: "verified",
+      oauthStatus: "connected",
+      keystring: { configured: true, last4: "7890" },
+      sharedSecret: { configured: true },
+      scopes: ["shops_r", "listings_r"],
+      applicationId: "987654",
+      shop: { id: "24680", name: "OwnerTestShop" },
+      accessState: "active",
+      refreshState: "active",
+      accessExpiresAt: "2026-09-01T01:00:00.000Z",
+      refreshExpiresAt: "2026-11-30T00:00:00.000Z",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+      credentialDelivery: "server_only",
+      externalActionPerformed: false,
+    } }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }
   throw new Error(`Unexpected request: ${url}`);
 };
 
-const { detectInternalExtensionInstallMode, getActiveSession, getPendingDeviceAuthorization, pollDeviceAuthorization, reportBrowserExtensionInstallationStatus, signOut, startDeviceAuthorization } = await import("../modules/controlCenterAuth.js");
+const { detectInternalExtensionInstallMode, getActiveSession, getEtsyIntegrationStatus, getPendingDeviceAuthorization, openEtsyIntegrationConfiguration, pollDeviceAuthorization, reportBrowserExtensionInstallationStatus, signOut, startDeviceAuthorization } = await import("../modules/controlCenterAuth.js");
 
 const started = await startDeviceAuthorization();
 assert.equal(started.status, "approval_required");
@@ -156,6 +178,16 @@ assert.deepEqual(extensionReports[0].body.extension, {
   installMode: "unpacked",
 });
 assert.match(extensionReports[0].headers.Authorization, /^Bearer growth-access-refreshed$/);
+
+const etsyStatus = await getEtsyIntegrationStatus();
+assert.equal(etsyStatus.oauthStatus, "connected");
+assert.deepEqual(etsyStatus.shop, { id: "24680", name: "OwnerTestShop" });
+assert.equal(etsyStatus.credentialDelivery, "server_only");
+assert.equal(etsyStatus.externalActionPerformed, false);
+assert.equal(JSON.stringify(etsyStatus).includes("sharedSecret"), false);
+assert.equal(JSON.stringify(etsyStatus).includes("accessToken"), false);
+await openEtsyIntegrationConfiguration();
+assert.equal(openedUrls.at(-1), "https://www.marqel.shop/etsy-api.html");
 
 installType = "normal";
 const rejected = await reportBrowserExtensionInstallationStatus();

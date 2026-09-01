@@ -5,7 +5,7 @@
 Welcome to **E-commerce Growth Agent** (formerly Skill Runner). We are committed to protecting your privacy and ensuring the security of your data. This Privacy Policy explains how our Chrome Extension handles your information.
 
 ## 1. Local and Marqel Processing
-The extension reads supported Etsy and public research pages and captures visible-page evidence locally in Chrome. It also connects to the Marqel Control Center for device authorization, session maintenance, entitlement checks, and organization-managed model configuration. It does not read browser cookies, saved passwords, or unrelated browsing history.
+The extension reads supported Etsy and public research pages and captures visible-page evidence locally in Chrome. It also connects to the Marqel Control Center for device authorization, session maintenance, entitlement checks, organization-managed model configuration, and a sanitized Etsy Seller App connection status. Etsy API keystrings, shared secrets, OAuth access tokens, and refresh tokens configured in Control Center are not delivered to the extension. It does not read browser cookies, saved passwords, or unrelated browsing history.
 
 Etsy credentials are stored only in the current browser profile. Credential entry and provider configuration are available only on extension-origin pages such as the side panel; secret fields are not injected into Etsy page DOM.
 

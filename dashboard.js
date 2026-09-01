@@ -185,7 +185,7 @@ function bindEtsyAdsPowerTaskControls() {
   }));
 }
 
-function renderAuthorizationSession(session = null) {
+function renderAuthorizationSession(session = null, etsyIntegration = null) {
   const label = document.getElementById("auth-session-label");
   const openButton = document.getElementById("open-auth-dialog");
   const logoutButton = document.getElementById("extension-logout-button");
@@ -237,7 +237,11 @@ function renderAuthorizationSession(session = null) {
     const configRevision = session.config?.deliveryRevision || (session.config?.revision ? `scene:${session.config.revision}` : "—");
     const configUpdatedAt = session.config?.updatedAt ? new Date(session.config.updatedAt).toLocaleString() : "—";
     config.textContent = `团队配置：${configState} · ${configRevision} · 更新于 ${configUpdatedAt} · 多模态 ${session.config?.multimodalEnabled ? "已启用" : "未启用"}`;
-    details.append(title, effective, account, refresh, access, config);
+    const etsyApi = document.createElement("span");
+    etsyApi.textContent = etsyIntegration?.unavailable
+      ? "Etsy API：状态暂不可用；设备授权和团队模型配置不受影响"
+      : `Etsy API：${etsyIntegration?.oauthStatus === "connected" ? `已连接 ${etsyIntegration.shop?.name || etsyIntegration.shop?.id || "当前店铺"}` : "未连接"} · 凭据仅在 Control Center 服务端`;
+    details.append(title, effective, account, refresh, access, config, etsyApi);
     details.classList.remove("hidden");
   }
 }
@@ -248,7 +252,7 @@ async function refreshAuthorizationSession() {
     renderAuthorizationSession(null);
     return null;
   }
-  renderAuthorizationSession(response.session);
+  renderAuthorizationSession(response.session, response.etsyIntegration);
   if (!response.session && response.pendingDevice) {
     const message = document.getElementById("extension-login-message");
     if (message) message.textContent = `等待人工批准设备代码 ${response.pendingDevice.userCode || "—"}。打开账户窗口后点击检查状态。`;
@@ -916,6 +920,11 @@ function bindEvents() {
       const rates = await loadCurrencyRates();
       renderCurrencySettings(rates, `同步失败，继续使用本地参数：${err.message}`);
     }
+  });
+  document.getElementById("settings-refresh-etsy-api")?.addEventListener("click", refreshEtsyApiStatusCard);
+  document.getElementById("settings-open-etsy-api")?.addEventListener("click", async () => {
+    const response = await chrome.runtime.sendMessage({ type: "ETSY_API_OPEN_CONFIG" });
+    if (!response?.ok) renderEtsyApiStatusCard(null, response?.error || "无法打开 Control Center Etsy API 连接页。");
   });
 }
 
@@ -2977,7 +2986,51 @@ async function renderSettingsTab() {
       </article>
     `).join("");
   }
+  await refreshEtsyApiStatusCard();
   renderCurrencySettings(await loadCurrencyRates());
+}
+
+function etsyApiStatusLabel(value) {
+  return ({ connected: "已连接", not_connected: "未连接", error: "连接异常", verified: "Key 已验证", saved_unverified: "Key 待验证", not_configured: "未配置", active: "有效", expired_refreshable: "需刷新", expired: "已过期", not_available: "不可用" })[value] || value || "—";
+}
+
+function etsyApiStatusDate(value) {
+  const date = new Date(value || 0);
+  return Number.isFinite(date.getTime()) && date.getTime() > 0 ? date.toLocaleString() : "—";
+}
+
+function renderEtsyApiStatusCard(integration = null, error = "") {
+  const container = document.getElementById("settings-etsy-api-status");
+  const badge = document.getElementById("settings-etsy-api-badge");
+  if (!container || !badge) return;
+  if (!integration) {
+    badge.textContent = "不可用";
+    badge.dataset.state = "attention";
+    container.innerHTML = `<div class="empty-state">${escapeHtml(error || "请先完成 Marqel 设备授权，再读取 Etsy API 连接状态。")}</div>`;
+    return;
+  }
+  const connected = integration.oauthStatus === "connected";
+  badge.textContent = connected ? "已连接" : etsyApiStatusLabel(integration.credentialStatus);
+  badge.dataset.state = connected ? "connected" : "attention";
+  container.innerHTML = `
+    <div><span>Seller App</span><strong>${escapeHtml(etsyApiStatusLabel(integration.credentialStatus))}</strong><small>${integration.keystringLast4 ? `Key 尾号 · ${escapeHtml(integration.keystringLast4)}` : "未向插件下发凭据"}</small></div>
+    <div><span>店主 OAuth</span><strong>${escapeHtml(etsyApiStatusLabel(integration.oauthStatus))}</strong><small>${escapeHtml((integration.scopes || []).join(" · ") || "shops_r · listings_r")}</small></div>
+    <div><span>绑定店铺</span><strong>${escapeHtml(integration.shop?.name || "—")}</strong><small>${integration.shop?.id ? `Shop ID · ${escapeHtml(integration.shop.id)}` : "尚未回读店铺"}</small></div>
+    <div><span>Token 状态</span><strong>${escapeHtml(etsyApiStatusLabel(integration.accessState))} / ${escapeHtml(etsyApiStatusLabel(integration.refreshState))}</strong><small>Refresh 到期 · ${escapeHtml(etsyApiStatusDate(integration.refreshExpiresAt))}</small></div>`;
+}
+
+async function refreshEtsyApiStatusCard() {
+  const container = document.getElementById("settings-etsy-api-status");
+  if (container) container.innerHTML = '<div class="empty-state">正在读取 Control Center…</div>';
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "ETSY_API_STATUS" });
+    if (!response?.ok) throw new Error(response?.error || "无法读取 Etsy API 状态");
+    renderEtsyApiStatusCard(response.integration);
+    return response.integration;
+  } catch (error) {
+    renderEtsyApiStatusCard(null, error.message);
+    return null;
+  }
 }
 
 function renderSkuWorkbench() {

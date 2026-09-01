@@ -416,6 +416,44 @@ export async function syncClientConfig() {
   return { ...result, config: await storedConfig() };
 }
 
+function sanitizedEtsyIntegration(integration = {}) {
+  if (integration.contractVersion !== "marqel-etsy-api-status.v1") throw new Error("Control Center returned an unsupported Etsy API status contract.");
+  if (integration.credentialDelivery !== "server_only" || integration.externalActionPerformed !== false) throw new Error("Control Center did not preserve the server-only Etsy credential boundary.");
+  return {
+    contractVersion: integration.contractVersion,
+    configured: Boolean(integration.configured),
+    canConfigure: Boolean(integration.canConfigure),
+    appType: integration.appType || "seller",
+    credentialStatus: integration.credentialStatus || "not_configured",
+    oauthStatus: integration.oauthStatus || "not_connected",
+    keystringLast4: String(integration.keystring?.last4 || ""),
+    scopes: Array.isArray(integration.scopes) ? integration.scopes.map(String) : [],
+    applicationId: String(integration.applicationId || ""),
+    shop: integration.shop ? { id: String(integration.shop.id || ""), name: String(integration.shop.name || "") } : null,
+    accessState: integration.accessState || "not_available",
+    refreshState: integration.refreshState || "not_available",
+    accessExpiresAt: integration.accessExpiresAt || "",
+    refreshExpiresAt: integration.refreshExpiresAt || "",
+    updatedAt: integration.updatedAt || "",
+    lastErrorCode: integration.lastErrorCode || "",
+    credentialDelivery: "server_only",
+    externalActionPerformed: false,
+    controlCenterUrl: `${controlCenterOrigin()}/etsy-api.html`,
+  };
+}
+
+export async function getEtsyIntegrationStatus() {
+  const result = await controlCenterRequest("/api/etsy/integration");
+  return sanitizedEtsyIntegration(result.integration || {});
+}
+
+export async function openEtsyIntegrationConfiguration() {
+  const url = `${controlCenterOrigin()}/etsy-api.html`;
+  if (!chrome.tabs?.create) throw new Error("当前 Chrome 无法打开 Control Center Etsy API 连接页。");
+  await chrome.tabs.create({ url, active: true });
+  return { opened: true, url };
+}
+
 function installedChromeVersion() {
   return navigator.userAgent.match(/(?:Chrome|Chromium)\/(\d+(?:\.\d+){0,3})/)?.[1] || "0";
 }

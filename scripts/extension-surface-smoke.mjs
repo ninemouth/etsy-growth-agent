@@ -51,12 +51,17 @@ const manifest = JSON.parse(fs.readFileSync(new URL("../manifest.json", import.m
 const content = fs.readFileSync(new URL("../content.js", import.meta.url), "utf8");
 const background = fs.readFileSync(new URL("../background.js", import.meta.url), "utf8");
 const sidepanel = fs.readFileSync(new URL("../sidepanel.js", import.meta.url), "utf8");
+const dashboardHtml = fs.readFileSync(new URL("../dashboard.html", import.meta.url), "utf8");
+const dashboard = fs.readFileSync(new URL("../dashboard.js", import.meta.url), "utf8");
 assert.ok(manifest.permissions.includes("sidePanel"));
 assert.equal(manifest.side_panel.default_path, "sidepanel.html");
 assert.match(content, /Extension context invalidated\|context invalidated/);
 assert.match(content, /settings-refresh-page/);
 assert.doesNotMatch(background, /chrome\.sidePanel\.open/);
 assert.match(sidepanel, /location\.hash === "#settings"/);
+assert.match(dashboardHtml, /settings-etsy-api-status[\s\S]*settings-open-etsy-api/);
+assert.match(dashboard, /ETSY_API_STATUS[\s\S]*renderEtsyApiStatusCard/);
+assert.match(background, /ETSY_API_STATUS[\s\S]*getEtsyIntegrationStatus/);
+assert.match(dashboardHtml, /插件不会接收 Key、Secret 或 OAuth Token/);
 
 console.log("extension surface smoke passed");
-

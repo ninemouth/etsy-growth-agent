@@ -48,7 +48,7 @@ import {
   shouldClarifyResearchScope,
 } from './modules/researchScope.js';
 import { getCurrencyRates, saveCurrencyRates } from './modules/currencyRates.js';
-import { controlCenterRequest, getActiveSession, getPendingDeviceAuthorization, pollDeviceAuthorization, reportBrowserExtensionInstallationStatus, signOut, startDeviceAuthorization, syncClientConfig } from './modules/controlCenterAuth.js';
+import { controlCenterRequest, getActiveSession, getEtsyIntegrationStatus, getPendingDeviceAuthorization, openEtsyIntegrationConfiguration, pollDeviceAuthorization, reportBrowserExtensionInstallationStatus, signOut, startDeviceAuthorization, syncClientConfig } from './modules/controlCenterAuth.js';
 import { buildCrossBorderSourcingHandoff, isCrossBorderSourcingRequest } from './modules/crossBorderSourcingHandoff.js';
 import { createEtsyAdsPowerTaskAdapter } from './modules/etsyAdsPowerTaskAdapter.js';
 import { attachLocalBusinessAuthority, buildLocalBusinessAuthority } from './modules/businessAuthority.js';
@@ -1544,8 +1544,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "AUTH_STATUS") {
     getActiveSession({ revalidate: true })
-      .then(async (session) => sendResponse({ ok: true, session: clientAuthSessionSummary(session), pendingDevice: clientPendingDeviceSummary(await getPendingDeviceAuthorization()) }))
+      .then(async (session) => {
+        const etsyIntegration = session ? await getEtsyIntegrationStatus().catch((error) => ({ unavailable: true, error: error.message })) : null;
+        sendResponse({ ok: true, session: clientAuthSessionSummary(session), etsyIntegration, pendingDevice: clientPendingDeviceSummary(await getPendingDeviceAuthorization()) });
+      })
       .catch((err) => sendResponse({ ok: false, error: err.message, session: null }));
+    return true;
+  }
+
+  if (message.type === "ETSY_API_STATUS") {
+    getEtsyIntegrationStatus()
+      .then((integration) => sendResponse({ ok: true, integration }))
+      .catch((err) => sendResponse({ ok: false, error: err.message, errorCode: err.code || "ETSY_API_STATUS_UNAVAILABLE" }));
+    return true;
+  }
+
+  if (message.type === "ETSY_API_OPEN_CONFIG") {
+    openEtsyIntegrationConfiguration()
+      .then((result) => sendResponse({ ok: true, result }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }
 

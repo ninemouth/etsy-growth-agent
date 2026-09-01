@@ -172,5 +172,8 @@ for (const retiredTool of ["extract_product_info", "input_text_and_search", "pre
 assert.match(toolRegistrySource, /assertAllowedBrowserNavigationUrl[\s\S]*SOURCING_HANDOFF_REQUIRED/, "direct supplier URL navigation must fail closed");
 assert.match(backgroundSource, /category:\s*"etsy_dom_telemetry"/, "Etsy DOM telemetry must use the privacy-safe task log category");
 assert.doesNotMatch(backgroundSource, /recordEtsyDomTelemetry\([^)]*\{[\s\S]{0,700}(?:sourceUrl|pageUrl|listingDraftId|operationId)\s*:/, "Etsy DOM telemetry context must not persist URL or business identifiers");
+assert.match(read("modules/controlCenterAuth.js"), /credentialDelivery !== "server_only"/, "Growth Agent must reject Etsy API status that does not preserve server-only credentials");
+assert.match(read("modules/controlCenterAuth.js"), /getEtsyIntegrationStatus[\s\S]*sanitizedEtsyIntegration/, "Growth Agent must consume only the sanitized Control Center Etsy API status contract");
+assert.doesNotMatch(read("modules/controlCenterAuth.js"), /accessToken:\s*integration|refreshToken:\s*integration|sharedSecret:\s*integration/, "Growth Agent must not map Etsy API credentials from Control Center status");
 
 console.log("security smoke passed");
