@@ -116,8 +116,8 @@ The governed catalog publishes a record with this shape:
 ```json
 {
   "id": "etsy-growth-agent",
-  "currentVersion": "1.2.4",
-  "minimumSupportedVersion": "1.2.4",
+  "currentVersion": "1.2.5",
+  "minimumSupportedVersion": "1.2.5",
   "minimumChromeVersion": "114",
   "releaseState": "blocked_until_rb_01_to_rb_07_pass"
 }

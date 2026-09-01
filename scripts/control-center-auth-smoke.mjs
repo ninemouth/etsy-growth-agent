@@ -27,15 +27,18 @@ globalThis.chrome = {
   tabs: { create: async ({ url }) => openedUrls.push(url) },
   runtime: {
     id: "abcdefghijklmnopabcdefghijklmnop",
-    getManifest: () => ({ version: "1.2.4" }),
+    getManifest: () => ({ version: "1.2.5" }),
   },
   management: { getSelf: async () => ({ installType }) },
 };
 Object.defineProperty(globalThis, "navigator", { value: { userAgent: "Mozilla/5.0 Chrome/140.0.7339.10" }, configurable: true });
 
+await new Promise((resolve) => localStorage.set({ apiKey: "manual-key", llmModel: "manual-model", imageApiKey: "manual-image-key" }, resolve));
+
 let pollCount = 0;
 let refreshCount = 0;
 const extensionReports = [];
+const configAcknowledgements = [];
 globalThis.fetch = async (url, options = {}) => {
   if (url.endsWith("/api/auth/device/start")) {
     return new Response(JSON.stringify({
@@ -81,10 +84,22 @@ globalThis.fetch = async (url, options = {}) => {
       user: { id: "growth-user", phone: "+8613900000000", membershipExpiresAt: new Date(Date.now() + 2592000 * 1000).toISOString() },
     }), { status: 200, headers: { "Content-Type": "application/json" } });
   }
-  if (url.includes("/api/client-config")) return new Response(JSON.stringify({ status: "not_configured", config: null }), { status: 200, headers: { "Content-Type": "application/json" } });
+  if (url.endsWith("/api/client-config/ack")) {
+    configAcknowledgements.push(JSON.parse(options.body));
+    return new Response(JSON.stringify({ accepted: true, receipt: configAcknowledgements.at(-1) }), { status: 201, headers: { "Content-Type": "application/json" } });
+  }
+  if (url.includes("/api/client-config")) return new Response(JSON.stringify({ status: "configured", config: {
+    revision: 3,
+    deliveryRevision: "scene:3;llm:5;image:0",
+    deliveryDigest: "b".repeat(64),
+    updatedAt: "2026-09-01T00:00:00.000Z",
+    llm: { apiKey: "team-secret", model: "qwen-vl-max" },
+    image: { enabled: false, apiKey: "" },
+    interaction: { multimodalEnabled: true },
+  } }), { status: 200, headers: { "Content-Type": "application/json" } });
   if (url.endsWith("/api/browser-extensions/report")) {
     extensionReports.push({ body: JSON.parse(options.body), headers: options.headers });
-    return new Response(JSON.stringify({ status: { state: "current", installedVersion: "1.2.4" } }), { status: 201, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ status: { state: "current", installedVersion: "1.2.5" } }), { status: 201, headers: { "Content-Type": "application/json" } });
   }
   throw new Error(`Unexpected request: ${url}`);
 };
@@ -107,8 +122,17 @@ assert.equal(Object.hasOwn(pending, "deviceCode"), false);
 
 const authorized = await pollDeviceAuthorization();
 assert.equal(authorized.status, "authorized");
+assert.equal(authorized.configStatus, "applied");
 assert.equal(Object.hasOwn(authorized, "accessToken"), false);
 assert.equal(Object.hasOwn(authorized, "refreshToken"), false);
+assert.equal(configAcknowledgements.length, 1);
+assert.equal(configAcknowledgements[0].deliveryRevision, "scene:3;llm:5;image:0");
+assert.equal(configAcknowledgements[0].deliveryDigest, "b".repeat(64));
+assert.equal(JSON.stringify(configAcknowledgements[0]).includes("team-secret"), false);
+const appliedSettings = await new Promise((resolve) => localStorage.get(["apiKey", "llmModel", "imageApiKey"], resolve));
+assert.equal(appliedSettings.apiKey, "team-secret");
+assert.equal(appliedSettings.llmModel, "qwen-vl-max");
+assert.equal(appliedSettings.imageApiKey, "manual-image-key", "a multimodal-only Web target must not replace the user's image provider setting");
 assert.ok(await getPendingDeviceAuthorization() === null);
 
 await new Promise((resolve) => sessionStorage.remove("marqelControlCenterSession", resolve));
@@ -125,7 +149,7 @@ assert.equal(reported.state, "current");
 assert.equal(extensionReports.length, 1);
 assert.deepEqual(extensionReports[0].body.extension, {
   id: "etsy-growth-agent",
-  version: "1.2.4",
+  version: "1.2.5",
   runtimeExtensionId: "abcdefghijklmnopabcdefghijklmnop",
   chromeVersion: "140.0.7339.10",
   platform: "adspower_etsy",
@@ -140,4 +164,10 @@ assert.equal(rejected.errorCode, "INTERNAL_UNPACKED_INSTALL_REQUIRED");
 assert.equal(extensionReports.length, 1, "non-unpacked installs must fail before the Control Center report");
 
 await signOut();
+const restoredSettings = await new Promise((resolve) => localStorage.get(["apiKey", "llmModel", "imageApiKey", "marqelClientConfig", "marqelClientConfigBackup"], resolve));
+assert.equal(restoredSettings.apiKey, "manual-key");
+assert.equal(restoredSettings.llmModel, "manual-model");
+assert.equal(restoredSettings.imageApiKey, "manual-image-key");
+assert.equal(restoredSettings.marqelClientConfig, undefined);
+assert.equal(restoredSettings.marqelClientConfigBackup, undefined);
 console.log("control-center auth message-boundary smoke passed");

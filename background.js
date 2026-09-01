@@ -57,6 +57,9 @@ function clientConfigSummary(config = null) {
   if (!config) return null;
   return {
     revision: Number(config.revision || 0),
+    deliveryRevision: String(config.deliveryRevision || ""),
+    deliveryDigest: String(config.deliveryDigest || ""),
+    updatedAt: config.updatedAt || "",
     llmConfigured: Boolean(config.llm?.apiKey),
     imageConfigured: Boolean(config.image?.apiKey),
     multimodalEnabled: config.interaction?.multimodalEnabled !== false,
@@ -1521,7 +1524,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const installation = result.status === "authorized"
           ? await reportBrowserExtensionInstallationStatus()
           : null;
-        sendResponse({ ok: true, result: { ...result, installation } });
+        const session = result.status === "authorized"
+          ? clientAuthSessionSummary(await getActiveSession({ revalidate: false }))
+          : null;
+        sendResponse({ ok: true, result: { ...result, ...(session || {}), status: result.status, configStatus: result.configStatus || session?.configStatus, installation } });
       })
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
@@ -1548,7 +1554,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "AUTH_SYNC_CONFIG") {
     syncClientConfig()
-      .then((result) => sendResponse({ ok: true, result: { status: result.status, targetId: result.targetId, revision: result.config?.revision || 0 } }))
+      .then((result) => sendResponse({ ok: true, result: {
+        status: result.status,
+        targetId: result.targetId,
+        revision: result.config?.revision || 0,
+        deliveryRevision: result.config?.deliveryRevision || "",
+        deliveryDigest: result.config?.deliveryDigest || "",
+        updatedAt: result.config?.updatedAt || "",
+      } }))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }

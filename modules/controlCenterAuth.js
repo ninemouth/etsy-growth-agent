@@ -9,6 +9,9 @@ const REFRESH_TOKEN_KEY = "marqelControlCenterRefreshToken";
 const REFRESH_EXPIRES_AT_KEY = "marqelControlCenterRefreshExpiresAt";
 const REFRESH_POLICY_KEY = "marqelControlCenterRefreshPolicy";
 const CONFIG_KEY = "marqelClientConfig";
+const CONFIG_BACKUP_KEY = "marqelClientConfigBackup";
+const MANAGED_LLM_SETTING_KEYS = Object.freeze(["apiKey", "llmProvider", "llmModel", "llmFallbackModels", "llmBaseUrl", "temperature", "llmVisionModel"]);
+const MANAGED_IMAGE_SETTING_KEYS = Object.freeze(["imageGenerationModel", "imageProvider", "imageBaseUrl", "imageApiKey"]);
 const PENDING_DEVICE_KEY = "marqelControlCenterPendingDevice";
 let refreshInFlight = null;
 
@@ -157,6 +160,7 @@ async function saveSession(result, { configStatus = "not_synced" } = {}) {
 }
 
 async function clearStoredSession() {
+  await restoreClientConfigSettings();
   await Promise.all([
     storageRemove(accessSessionStore(), [SESSION_KEY]),
     storageRemove(chrome.storage.local, [REFRESH_TOKEN_KEY, REFRESH_EXPIRES_AT_KEY, REFRESH_POLICY_KEY, CONFIG_KEY, PENDING_DEVICE_KEY]),
@@ -195,41 +199,75 @@ async function readStoredSession() {
 
 async function applyClientConfig(config) {
   if (!config) return null;
-  const current = await storageGet(chrome.storage.local, [
-    "apiKey", "llmProvider", "llmModel", "llmFallbackModels", "llmBaseUrl", "temperature",
-    "imageGenerationModel", "imageProvider", "imageBaseUrl", "imageApiKey", "llmVisionModel",
-  ]);
+  const managedKeys = [...MANAGED_LLM_SETTING_KEYS, ...MANAGED_IMAGE_SETTING_KEYS];
+  const current = await storageGet(chrome.storage.local, [...managedKeys, CONFIG_BACKUP_KEY]);
   const llm = config.llm || {};
   const image = config.image || {};
+  const backup = current[CONFIG_BACKUP_KEY] || Object.fromEntries(managedKeys.filter((key) => Object.hasOwn(current, key) && current[key] !== undefined).map((key) => [key, current[key]]));
   const next = {
     marqelClientConfig: config,
     marqelClientConfigRevision: Number(config.revision || 0),
+    [CONFIG_BACKUP_KEY]: backup,
   };
-  const setIfConfigured = (key, value) => {
-    if (value !== undefined && value !== null && String(value).trim() !== "") next[key] = value;
+  const removals = [];
+  const setManaged = (key, value) => {
+    if (value === undefined || value === null || (typeof value === "string" && !value.trim())) removals.push(key);
+    else next[key] = value;
   };
-  setIfConfigured("apiKey", llm.apiKey || current.apiKey);
-  setIfConfigured("llmProvider", llm.provider || current.llmProvider);
-  setIfConfigured("llmModel", llm.model || current.llmModel);
-  setIfConfigured("llmFallbackModels", Array.isArray(llm.fallbackModels) ? llm.fallbackModels.join("\n") : current.llmFallbackModels);
-  setIfConfigured("llmBaseUrl", llm.baseUrl || current.llmBaseUrl);
-  setIfConfigured("llmVisionModel", llm.visionModel || current.llmVisionModel);
-  if (llm.temperature !== undefined && llm.temperature !== null) next.temperature = llm.temperature;
-  setIfConfigured("imageGenerationModel", image.model || current.imageGenerationModel);
-  setIfConfigured("imageProvider", image.provider || current.imageProvider);
-  setIfConfigured("imageBaseUrl", image.baseUrl || current.imageBaseUrl);
-  setIfConfigured("imageApiKey", image.apiKey || current.imageApiKey);
+  if (llm.enabled !== false) {
+    setManaged("apiKey", llm.apiKey);
+    setManaged("llmProvider", llm.provider);
+    setManaged("llmModel", llm.model);
+    setManaged("llmFallbackModels", Array.isArray(llm.fallbackModels) ? llm.fallbackModels.join("\n") : "");
+    setManaged("llmBaseUrl", llm.baseUrl);
+    setManaged("llmVisionModel", llm.visionModel);
+    setManaged("temperature", llm.temperature);
+  }
+  if (image.enabled !== false) {
+    setManaged("imageGenerationModel", image.model);
+    setManaged("imageProvider", image.provider);
+    setManaged("imageBaseUrl", image.baseUrl);
+    setManaged("imageApiKey", image.apiKey);
+  }
   await storageSet(chrome.storage.local, next);
+  if (removals.length) await storageRemove(chrome.storage.local, removals);
   return config;
+}
+
+async function restoreClientConfigSettings() {
+  const managedKeys = [...MANAGED_LLM_SETTING_KEYS, ...MANAGED_IMAGE_SETTING_KEYS];
+  const stored = await storageGet(chrome.storage.local, [CONFIG_BACKUP_KEY]);
+  const backup = stored[CONFIG_BACKUP_KEY];
+  if (backup && typeof backup === "object") {
+    const restored = Object.fromEntries(managedKeys.filter((key) => Object.hasOwn(backup, key)).map((key) => [key, backup[key]]));
+    if (Object.keys(restored).length) await storageSet(chrome.storage.local, restored);
+    const absent = managedKeys.filter((key) => !Object.hasOwn(backup, key));
+    if (absent.length) await storageRemove(chrome.storage.local, absent);
+  }
+  await storageRemove(chrome.storage.local, [CONFIG_KEY, CONFIG_BACKUP_KEY, "marqelClientConfigRevision"]);
 }
 
 async function syncClientConfigForSession(session) {
   const result = await request(`/api/client-config?targetId=${encodeURIComponent(CLIENT_ID)}`, {
     headers: { Authorization: `Bearer ${session.accessToken}` },
   }, session);
-  if (result.config) await applyClientConfig(result.config);
-  else await storageRemove(chrome.storage.local, [CONFIG_KEY]);
-  return result;
+  if (!result.config) {
+    await restoreClientConfigSettings();
+    return { ...result, status: result.status || "not_configured", config: null };
+  }
+  await applyClientConfig(result.config);
+  await request("/api/client-config/ack", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${session.accessToken}` },
+    body: JSON.stringify({
+      contractVersion: "marqel-client-config-ack.v1",
+      targetId: CLIENT_ID,
+      status: "applied",
+      deliveryRevision: result.config.deliveryRevision,
+      deliveryDigest: result.config.deliveryDigest,
+    }),
+  }, session);
+  return { ...result, status: "applied", config: result.config };
 }
 
 async function refreshStoredSession(session) {

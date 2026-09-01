@@ -192,7 +192,17 @@ function renderAuthorizationSession(session = null) {
     access.textContent = `短期 Access：有效至 ${accessText}，到期自动刷新`;
     const refresh = document.createElement("span");
     refresh.textContent = `设备授权：${session.refreshPolicy === "rolling" ? "滚动" : ""}有效至 ${refreshText}`;
-    details.append(title, effective, account, refresh, access);
+    const config = document.createElement("span");
+    const configState = {
+      applied: "已应用",
+      not_configured: "服务端未配置",
+      sync_failed: "同步失败",
+      not_synced: "尚未同步",
+    }[session.configStatus] || session.configStatus || "状态未知";
+    const configRevision = session.config?.deliveryRevision || (session.config?.revision ? `scene:${session.config.revision}` : "—");
+    const configUpdatedAt = session.config?.updatedAt ? new Date(session.config.updatedAt).toLocaleString() : "—";
+    config.textContent = `团队配置：${configState} · ${configRevision} · 更新于 ${configUpdatedAt} · 多模态 ${session.config?.multimodalEnabled ? "已启用" : "未启用"}`;
+    details.append(title, effective, account, refresh, access, config);
     details.classList.remove("hidden");
   }
 }
@@ -247,13 +257,33 @@ function bindAuthorizationControls() {
       }
       if (result.status !== "authorized") throw new Error("当前没有可用的设备授权，请重新发起。");
       renderAuthorizationSession(result);
-      if (result.installation?.ok) {
-        setMessage(`设备已批准，团队配置已同步；内部 unpacked 安装状态为 ${result.installation.state || "reported"}。`, "success");
+      const configApplied = result.configStatus === "applied";
+      if (result.installation?.ok && configApplied) {
+        setMessage(`设备已批准，团队配置已应用；内部 unpacked 安装状态为 ${result.installation.state || "reported"}。`, "success");
         setTimeout(() => dialog.classList.add("hidden"), 500);
+      } else if (result.installation?.ok) {
+        setMessage(`设备已批准，安装状态已上报，但团队配置状态为 ${result.configStatus || "unknown"}；请点击“重新同步团队配置”。`);
       } else {
-        setMessage(`设备已批准且会话可用，但安装状态上报失败：${result.installation?.error || "请点击“重新同步安装状态”。"}`);
+        setMessage(`设备已批准且会话可用；团队配置状态为 ${result.configStatus || "unknown"}；安装状态上报失败：${result.installation?.error || "请点击“重新同步安装状态”。"}`);
       }
     } catch (error) { setMessage(error.message || "设备授权检查失败"); }
+    finally { button.disabled = false; }
+  });
+  document.getElementById("extension-config-sync")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    setMessage();
+    try {
+      const response = await chrome.runtime.sendMessage({ type: "AUTH_SYNC_CONFIG" });
+      if (!response?.ok) throw new Error(response?.error || "团队配置同步失败");
+      const result = response.result || {};
+      if (result.status === "applied") {
+        setMessage(`团队配置已应用：${result.deliveryRevision || `scene:${result.revision || 0}`}。`, "success");
+      } else {
+        setMessage(`团队配置状态为 ${result.status || "unknown"}；服务端可能尚未配置此工具。`);
+      }
+      await refreshAuthorizationSession();
+    } catch (error) { setMessage(error.message || "团队配置同步失败"); }
     finally { button.disabled = false; }
   });
   document.getElementById("extension-installation-report")?.addEventListener("click", async (event) => {
