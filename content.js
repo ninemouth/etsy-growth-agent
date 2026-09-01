@@ -2706,12 +2706,13 @@
       </div>
       <div class="settings-body">
         <div class="settings-section-title">扩展侧边栏配置</div>
-        <p style="font-size:12px; line-height:1.7; color:var(--text-secondary); margin:0;">
+        <p id="settings-entry-status" style="font-size:12px; line-height:1.7; color:var(--text-secondary); margin:0;">
           Etsy 凭证、模型 Base URL 与 API Key 只在扩展自己的侧边栏页面中录入和显示，不注入 Etsy 页面。
         </p>
       </div>
       <div class="settings-footer">
         <button class="settings-btn cancel" id="settings-cancel">取消</button>
+        <button class="settings-btn cancel hidden" id="settings-refresh-page">刷新 Etsy 页面</button>
         <button class="settings-btn save" id="settings-save">打开扩展侧边栏</button>
       </div>
     `;
@@ -4246,10 +4247,46 @@
       });
     }
 
+    const openExtensionSettings = async () => {
+      const status = shadow.getElementById("settings-entry-status");
+      const refreshPage = shadow.getElementById("settings-refresh-page");
+      const openButton = shadow.getElementById("settings-save");
+      const invalidatedMessage = "扩展刚刚更新，当前 Etsy 页面仍连接旧版本。请刷新页面后再打开配置。";
+      if (!globalThis.chrome?.runtime?.id) {
+        if (status) status.textContent = invalidatedMessage;
+        refreshPage?.classList.remove("hidden");
+        settingsDrawer.classList.remove("hidden");
+        showToast(invalidatedMessage);
+        return;
+      }
+      if (openButton) {
+        openButton.disabled = true;
+        openButton.textContent = "正在打开…";
+      }
+      try {
+        const response = await chrome.runtime.sendMessage({ type: "OPEN_SIDEPANEL", view: "settings" });
+        if (!response?.ok) throw new Error(response?.error || "配置页面未能打开。");
+        settingsDrawer.classList.add("hidden");
+      } catch (error) {
+        const invalidated = /Extension context invalidated|context invalidated/i.test(error?.message || "");
+        const message = invalidated ? invalidatedMessage : `配置页面未能打开：${error?.message || "未知错误"}`;
+        if (status) status.textContent = message;
+        refreshPage?.classList.toggle("hidden", !invalidated);
+        settingsDrawer.classList.remove("hidden");
+        showToast(message);
+      } finally {
+        if (openButton) {
+          openButton.disabled = false;
+          openButton.textContent = "打开扩展配置";
+        }
+      }
+    };
+
+    shadow.getElementById("settings-refresh-page")?.addEventListener("click", () => location.reload());
+
     settingsBtn.addEventListener("click", () => {
       if (settingsDrawer.dataset.extensionOriginOnly === "true") {
-        chrome.runtime.sendMessage({ type: "OPEN_SIDEPANEL" });
-        settingsDrawer.classList.add("hidden");
+        void openExtensionSettings();
         return;
       }
       settingsDrawer.classList.toggle("hidden");
@@ -4360,10 +4397,9 @@
       settingsDrawer.classList.add("hidden");
     });
 
-    shadow.getElementById("settings-save").addEventListener("click", () => {
+    shadow.getElementById("settings-save").addEventListener("click", async () => {
       if (settingsDrawer.dataset.extensionOriginOnly === "true") {
-        chrome.runtime.sendMessage({ type: "OPEN_SIDEPANEL" });
-        settingsDrawer.classList.add("hidden");
+        await openExtensionSettings();
         return;
       }
       const activeShopId = shadow.getElementById("etsy-active-shop-select").value;

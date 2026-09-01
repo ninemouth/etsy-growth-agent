@@ -604,70 +604,120 @@
 
       <!-- View: Tasks -->
       <section id="view-tasks" class="view-tasks-pane view-pane">
-        <div class="grid-card" style="margin-bottom:20px;">
-          <div class="card-header">
-            <div>
-              <h3>🧾 Control Center Etsy 草稿任务</h3>
-              <p style="margin:6px 0 0;color:var(--text2);font-size:12px;">仅处理已批准的 <code>upload_draft</code>；在指定 AdsPower Etsy Profile 的可见页面保存草稿后，再回写 draft ID/URL。公共发布始终关闭。</p>
-            </div>
-            <button id="etsy-task-refresh" class="btn btn-outline" type="button">刷新任务</button>
+        <header class="execution-page-header">
+          <div>
+            <p class="execution-kicker">ETSY EXECUTION DESK</p>
+            <h2>执行与监控</h2>
+            <p>Listing 草稿写入与广告投流是两条独立通道。这里负责受控草稿执行和可见页面监控；预算审批进入 Control Center，任何花费动作仍需人工在 Etsy 完成并回读。</p>
           </div>
-          <div class="card-body" style="display:grid;gap:12px;">
-            <div id="etsy-task-status" class="empty-state" style="text-align:left;align-items:flex-start;">尚未读取 etsy_adspower 任务。</div>
-            <div style="display:flex;flex-wrap:wrap;gap:8px;">
-              <button id="etsy-task-claim" class="btn btn-primary" type="button" disabled>领取任务</button>
-              <button id="etsy-task-preflight" class="btn btn-outline" type="button" disabled>执行版本预检</button>
-              <button id="etsy-task-apply-draft" class="btn btn-outline" type="button" disabled>填充获批字段</button>
-              <button id="etsy-task-pause" class="btn btn-outline" type="button" disabled>暂停等待验证</button>
-              <button id="etsy-task-reconcile" class="btn btn-outline" type="button" disabled>只读对账</button>
-            </div>
-            <div id="etsy-task-draft" class="empty-state" style="text-align:left;align-items:flex-start;">预检通过后显示 exact Listing 草稿摘要。</div>
-            <div class="form-inline-row" style="flex-wrap:wrap;gap:10px;">
-              <input id="etsy-task-listing-id" class="form-input" type="text" style="flex:1;min-width:180px;" placeholder="可见 Etsy draft ID">
-              <input id="etsy-task-listing-url" class="form-input" type="url" style="flex:2;min-width:300px;" placeholder="https://www.etsy.com/.../listing/draft-id">
-              <input id="etsy-task-failure-reason" class="form-input" type="text" style="flex:2;min-width:260px;" placeholder="不可恢复失败原因（可选）">
-            </div>
-            <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text2);">
-              <input id="etsy-task-visible-confirmation" type="checkbox">
-              <span>我已在指定 AdsPower Profile 的可见 Etsy 页面确认草稿已保存，并核对了上面的 draft ID/URL；这不是公开发布。</span>
-            </label>
-            <div style="display:flex;flex-wrap:wrap;gap:8px;">
-              <button id="etsy-task-record-uploaded" class="btn btn-primary" type="button" disabled>确认草稿并回写</button>
-              <button id="etsy-task-record-failed" class="btn btn-danger" type="button" disabled>记录不可恢复失败</button>
-            </div>
-            <div id="etsy-task-message" class="empty-state" style="text-align:left;align-items:flex-start;display:none;"></div>
+          <div class="execution-boundary-chips" aria-label="执行边界">
+            <span data-tone="safe">草稿：只填充、不发布</span>
+            <span data-tone="attention">广告：审批后外部执行</span>
           </div>
+        </header>
+
+        <div class="etsy-execution-grid">
+          <article class="grid-card etsy-task-card">
+            <div class="card-header execution-card-header">
+              <div>
+                <p class="execution-kicker">ADSPOWER DRAFT LANE</p>
+                <h3>已批准 Listing 草稿</h3>
+                <p>领取 Control Center 的 <code>upload_draft</code>，核对版本后只填充获批字段；公共发布始终关闭。</p>
+              </div>
+              <div class="execution-card-actions">
+                <span id="etsy-task-state-badge" class="execution-state-badge" data-tone="neutral">等待任务</span>
+                <button id="etsy-task-refresh" class="btn btn-outline" type="button">刷新任务</button>
+              </div>
+            </div>
+            <div class="card-body etsy-task-body">
+              <ol id="etsy-task-stage-rail" class="execution-stage-rail" aria-label="Etsy 草稿任务进度">
+                <li data-stage="task"><span>1</span><strong>任务</strong></li>
+                <li data-stage="lease"><span>2</span><strong>租约</strong></li>
+                <li data-stage="preflight"><span>3</span><strong>预检</strong></li>
+                <li data-stage="draft"><span>4</span><strong>草稿</strong></li>
+                <li data-stage="readback"><span>5</span><strong>回读</strong></li>
+              </ol>
+
+              <div id="etsy-task-status" class="task-status-panel" data-state="idle">尚未读取 etsy_adspower 任务。</div>
+
+              <div class="task-action-cluster" aria-label="草稿执行动作">
+                <button id="etsy-task-claim" class="btn btn-primary" type="button" disabled>领取任务</button>
+                <button id="etsy-task-preflight" class="btn btn-outline" type="button" disabled>执行版本预检</button>
+                <button id="etsy-task-apply-draft" class="btn btn-outline" type="button" disabled>填充获批字段</button>
+                <span class="task-action-separator" aria-hidden="true"></span>
+                <button id="etsy-task-pause" class="btn btn-outline" type="button" disabled>暂停等待验证</button>
+                <button id="etsy-task-reconcile" class="btn btn-outline" type="button" disabled>只读对账</button>
+              </div>
+
+              <section class="task-draft-card" aria-labelledby="etsy-task-draft-title">
+                <div>
+                  <p class="execution-kicker" id="etsy-task-draft-title">APPROVED PAYLOAD</p>
+                  <strong>Exact Listing 草稿</strong>
+                </div>
+                <p id="etsy-task-draft">预检通过后显示标题、版本、价格和 Tags 摘要。</p>
+              </section>
+
+              <details class="task-readback-panel">
+                <summary>人工保存后的草稿回读</summary>
+                <div class="task-readback-fields">
+                  <label><span>Etsy draft ID</span><input id="etsy-task-listing-id" class="form-input" type="text" placeholder="可见 Etsy draft ID"></label>
+                  <label class="wide"><span>Etsy draft URL</span><input id="etsy-task-listing-url" class="form-input" type="url" placeholder="https://www.etsy.com/.../listing/draft-id"></label>
+                  <label class="wide"><span>不可恢复失败原因（可选）</span><input id="etsy-task-failure-reason" class="form-input" type="text" placeholder="说明登录、页面或字段阻断"></label>
+                </div>
+                <label class="task-visible-confirmation">
+                  <input id="etsy-task-visible-confirmation" type="checkbox">
+                  <span>我已在指定 AdsPower Profile 的可见 Etsy 页面确认草稿已保存，并核对 draft ID/URL；这不是公开发布。</span>
+                </label>
+                <div class="task-readback-actions">
+                  <button id="etsy-task-record-uploaded" class="btn btn-primary" type="button" disabled>确认草稿并回写</button>
+                  <button id="etsy-task-record-failed" class="btn btn-danger" type="button" disabled>记录不可恢复失败</button>
+                </div>
+              </details>
+              <div id="etsy-task-message" class="task-message" data-kind="info" hidden></div>
+            </div>
+          </article>
+
+          <aside class="grid-card campaign-boundary-card">
+            <div class="card-header execution-card-header">
+              <div>
+                <p class="execution-kicker">CAMPAIGN LANE</p>
+                <h3>Etsy Ads 计划与审批</h3>
+              </div>
+              <span class="execution-state-badge" data-tone="attention">不自动产生花费</span>
+            </div>
+            <div class="card-body campaign-boundary-body">
+              <p>Growth Agent 读取用户主动触发的可见广告证据；Campaign Operator 生成预算护栏和建议；Control Center 记录精确对象、版本与人工决定。</p>
+              <ol class="campaign-boundary-list">
+                <li><span>01</span><div><strong>可见证据</strong><small>Etsy Ads / Offsite Ads 页面或卖家导出</small></div></li>
+                <li><span>02</span><div><strong>计划与护栏</strong><small>目标 ROAS、最高 CPA、日预算硬上限</small></div></li>
+                <li><span>03</span><div><strong>人工审批</strong><small>只批准精确 targetRef 和当前版本</small></div></li>
+                <li><span>04</span><div><strong>外部执行与回读</strong><small>尚需 Etsy 侧人工动作和平台事实回读</small></div></li>
+              </ol>
+              <div class="campaign-safety-note"><strong>当前完成边界</strong><span>建议、审批和证据链已实现；启用广告、修改预算与真实平台回读尚未自动闭环。</span></div>
+              <button id="etsy-campaign-review" class="btn btn-primary btn-block" type="button">打开 Control Center 投流审批</button>
+            </div>
+          </aside>
         </div>
 
-        <div class="grid-card" style="margin-bottom:20px;">
-          <div class="card-header">
-            <h3>➕ 添加新监控任务</h3>
+        <section class="grid-card monitor-create-card">
+          <div class="card-header execution-card-header">
+            <div><p class="execution-kicker">VISIBLE MONITOR</p><h3>添加前台变化监控</h3></div>
+            <span class="card-header-note">只读取可见页面，不操作广告和发布</span>
           </div>
-          <div class="card-body form-inline-row" style="flex-wrap: wrap; gap: 10px;">
-            <input type="text" id="task-url" class="form-input" style="flex: 2; min-width: 250px;" placeholder="输入 Etsy 商品详情 URL 或卖家店铺主页 URL">
-            <select id="task-target-type" class="form-select" style="flex: 1; min-width: 130px;">
-              <option value="item" selected>🎯 监控单款商品</option>
-              <option value="shop">🏪 监控全店商品</option>
-            </select>
-            <select id="task-shop-nature" class="form-select" style="flex: 1; min-width: 130px;">
-              <option value="competitor" selected>🕵️ 第三方竞品</option>
-              <option value="self">🏢 自营店 (API关联)</option>
-            </select>
-            <select id="task-freq" class="form-select" style="flex: 1; min-width: 140px;">
-              <option value="15m">每 15 分钟 (爆品防变价)</option>
-              <option value="1h">每 1 小时</option>
-              <option value="6h" selected>每 6 小时 (日常变化)</option>
-              <option value="24h">每 24 小时</option>
-            </select>
-            <button id="add-task-btn" class="btn btn-primary">添加监控</button>
+          <div class="card-body monitor-create-grid">
+            <label class="monitor-url-field"><span>监控目标 URL</span><input type="text" id="task-url" class="form-input" placeholder="Etsy 商品详情或店铺主页 URL"></label>
+            <label><span>目标</span><select id="task-target-type" class="form-select"><option value="item" selected>单款商品</option><option value="shop">完整店铺</option></select></label>
+            <label><span>归属</span><select id="task-shop-nature" class="form-select"><option value="competitor" selected>第三方竞品</option><option value="self">自营店（API 关联）</option></select></label>
+            <label><span>频率</span><select id="task-freq" class="form-select"><option value="15m">每 15 分钟</option><option value="1h">每 1 小时</option><option value="6h" selected>每 6 小时</option><option value="24h">每 24 小时</option></select></label>
+            <button id="add-task-btn" class="btn btn-primary" type="button">添加监控</button>
           </div>
-        </div>
+        </section>
 
-        <div class="grid-card">
-          <div class="card-header">
-            <h3>⚙️ 自动感知监控列表 (Scheduled Tasks)</h3>
+        <section class="grid-card monitor-list-card">
+          <div class="card-header execution-card-header">
+            <div><p class="execution-kicker">SCHEDULED TASKS</p><h3>自动感知监控</h3></div>
           </div>
-          <div class="card-body scrollable">
+          <div class="card-body scrollable monitor-table-wrap">
             <table class="data-table">
               <thead>
                 <tr>
@@ -688,7 +738,7 @@
               </tbody>
             </table>
           </div>
-        </div>
+        </section>
       </section>
 
     </main>

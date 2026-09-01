@@ -52,6 +52,7 @@ import { controlCenterRequest, getActiveSession, getPendingDeviceAuthorization, 
 import { buildCrossBorderSourcingHandoff, isCrossBorderSourcingRequest } from './modules/crossBorderSourcingHandoff.js';
 import { createEtsyAdsPowerTaskAdapter } from './modules/etsyAdsPowerTaskAdapter.js';
 import { attachLocalBusinessAuthority, buildLocalBusinessAuthority } from './modules/businessAuthority.js';
+import { openExtensionSurface } from './modules/extensionSurface.js';
 
 function clientConfigSummary(config = null) {
   if (!config) return null;
@@ -288,7 +289,8 @@ async function applyPendingUpdateIfIdle(reason = "idle") {
 
 // ── Open side panel when toolbar icon is clicked ──
 chrome.action.onClicked.addListener((tab) => {
-  chrome.sidePanel.open({ tabId: tab.id });
+  openExtensionSurface(chrome, { tabId: tab?.id, view: "main" })
+    .catch((error) => console.error("Could not open Etsy Growth Agent:", error.message));
 });
 
 // ── Helper Utilities ──
@@ -1711,12 +1713,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "OPEN_SIDEPANEL") {
     const tabId = sender?.tab?.id;
-    if (!Number.isInteger(tabId)) {
-      sendResponse({ ok: false, error: "无法确定当前 Etsy 标签页。" });
-      return false;
-    }
-    chrome.sidePanel.open({ tabId })
-      .then(() => sendResponse({ ok: true }))
+    openExtensionSurface(chrome, { tabId, view: message.view === "main" ? "main" : "settings" })
+      .then((result) => sendResponse({ ok: true, result }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }

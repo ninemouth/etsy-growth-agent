@@ -259,6 +259,12 @@ function showView(name) {
   });
 }
 
+function viewFromLocation() {
+  if (location.hash === "#settings") return "settings";
+  if (location.hash === "#library") return "library";
+  return "main";
+}
+
 function createWorkflowSessionId() {
   return `workflow_session_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -470,7 +476,7 @@ async function refreshWorkflowRuntimeStatus() {
 
 // ── Init ──
 document.addEventListener("DOMContentLoaded", async () => {
-  showView("main");
+  showView(viewFromLocation());
   applyI18n();
   await loadSkills();
   await loadGrowthActionQueue();
@@ -479,6 +485,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   updateSessionModeUI();
   await refreshWorkflowRuntimeStatus();
   bindEvents();
+  window.addEventListener("hashchange", () => showView(viewFromLocation()));
 });
 
 // ── Skills ──
@@ -1848,11 +1855,17 @@ function bindEvents() {
     }
   });
 
-  $("settingsBtn").addEventListener("click", () => showView("settings"));
+  $("settingsBtn").addEventListener("click", () => {
+    location.hash = "settings";
+    showView("settings");
+  });
   $("dashboardBtn").addEventListener("click", () => {
     chrome.runtime.sendMessage({ type: "OPEN_DASHBOARD" });
   });
-  $("backFromSettings").addEventListener("click", () => showView("main"));
+  $("backFromSettings").addEventListener("click", () => {
+    window.history.replaceState(null, "", window.location.pathname);
+    showView("main");
+  });
 
   $("libraryBtn").addEventListener("click", () => {
     showView("library");

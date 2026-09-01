@@ -22,7 +22,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 });
 
 const SELLER_API_AUTO_REFRESH_MS = 6 * 60 * 60 * 1000;
-let etsyAdsPowerTaskState = { task: null, preflight: null, source: "none" };
+let etsyAdsPowerTaskState = { task: null, preflight: null, source: "none", draftApplied: false };
 
 async function sendEtsyTaskMessage(type, payload = {}) {
   const response = await chrome.runtime.sendMessage({ type, ...payload });
@@ -39,7 +39,38 @@ function setEtsyTaskMessage(text = "", kind = "info") {
   if (!element) return;
   element.textContent = text;
   element.dataset.kind = kind;
-  element.style.display = text ? "flex" : "none";
+  element.hidden = !text;
+}
+
+function renderEtsyTaskProgress(task, preflight, draftApplied = false) {
+  const stages = [...document.querySelectorAll("#etsy-task-stage-rail [data-stage]")];
+  const badge = document.getElementById("etsy-task-state-badge");
+  const terminal = ["uploaded", "completed", "reconciled"].includes(task?.status) || Boolean(task?.readback);
+  const stageIndex = !task ? -1 : terminal ? 4 : draftApplied ? 3 : preflight ? 2 : task.status === "queued" ? 0 : 1;
+  stages.forEach((stage, index) => {
+    stage.classList.toggle("is-complete", stageIndex > index);
+    stage.classList.toggle("is-current", stageIndex === index);
+  });
+  if (!badge) return;
+  if (!task) {
+    badge.textContent = "等待任务";
+    badge.dataset.tone = "neutral";
+  } else if (terminal) {
+    badge.textContent = "回读完成";
+    badge.dataset.tone = "safe";
+  } else if (draftApplied) {
+    badge.textContent = "等待人工保存";
+    badge.dataset.tone = "attention";
+  } else if (preflight) {
+    badge.textContent = "预检通过";
+    badge.dataset.tone = "safe";
+  } else if (task.status === "queued") {
+    badge.textContent = "可领取";
+    badge.dataset.tone = "attention";
+  } else {
+    badge.textContent = "执行中";
+    badge.dataset.tone = "active";
+  }
 }
 
 function renderEtsyAdsPowerTaskPanel() {
@@ -55,12 +86,15 @@ function renderEtsyAdsPowerTaskPanel() {
   const recordUploaded = document.getElementById("etsy-task-record-uploaded");
   const recordFailed = document.getElementById("etsy-task-record-failed");
   if (!status || !draft) return;
+  renderEtsyTaskProgress(task, preflight, etsyAdsPowerTaskState.draftApplied);
   if (!task) {
     status.textContent = "当前没有 queued、claimed 或需要 reconciliation 的 etsy_adspower 任务。";
-    draft.textContent = "预检通过后显示 exact Listing 草稿摘要。";
+    status.dataset.state = "idle";
+    draft.textContent = "预检通过后显示标题、版本、价格和 Tags 摘要。";
   } else {
     const lease = task.lease?.expiresAt ? ` · lease ${task.lease.expiresAt}` : "";
     status.textContent = `${task.status || "unknown"} · ${task.id} · operation ${task.operationId} · draft ${task.payload?.listingDraftId || "—"}${lease}`;
+    status.dataset.state = "active";
     const listingDraft = preflight?.listingDraft;
     draft.textContent = listingDraft
       ? `已批准 exact draft：${listingDraft.title || "无标题"}；版本 ${listingDraft.contractVersion} / ${listingDraft.updatedAt}；价格 ${listingDraft.price || "—"} ${listingDraft.currency || ""}；Tags ${(listingDraft.tags || []).join(", ") || "—"}。请只在指定 AdsPower Profile 保存草稿。`
@@ -81,15 +115,15 @@ async function refreshEtsyAdsPowerTaskPanel() {
   try {
     let active = await sendEtsyTaskMessage("ETSY_TASK_ACTIVE");
     if (active?.task) {
-      etsyAdsPowerTaskState = { task: active.task, preflight: active.listingDraft ? { listingDraft: active.listingDraft } : null, source: "active" };
+      etsyAdsPowerTaskState = { task: active.task, preflight: active.listingDraft ? { listingDraft: active.listingDraft } : null, source: "active", draftApplied: false };
     } else {
       const resumable = await sendEtsyTaskMessage("ETSY_TASK_RESUMABLE");
       const candidate = resumable?.task ? resumable : await sendEtsyTaskMessage("ETSY_TASK_NEXT");
-      etsyAdsPowerTaskState = { task: candidate?.task || null, preflight: null, source: resumable?.task ? "resumable" : "next" };
+      etsyAdsPowerTaskState = { task: candidate?.task || null, preflight: null, source: resumable?.task ? "resumable" : "next", draftApplied: false };
     }
     setEtsyTaskMessage();
   } catch (error) {
-    etsyAdsPowerTaskState = { task: null, preflight: null, source: "error" };
+    etsyAdsPowerTaskState = { task: null, preflight: null, source: "error", draftApplied: false };
     setEtsyTaskMessage(error.message, "error");
   }
   renderEtsyAdsPowerTaskPanel();
@@ -111,22 +145,23 @@ function bindEtsyAdsPowerTaskControls() {
     const result = task?.status === "queued"
       ? await sendEtsyTaskMessage("ETSY_TASK_CLAIM", { taskId: task.id })
       : await sendEtsyTaskMessage("ETSY_TASK_RESUME", { task });
-    etsyAdsPowerTaskState = { task: result.task, preflight: null, source: "active" };
+    etsyAdsPowerTaskState = { task: result.task, preflight: null, source: "active", draftApplied: false };
     setEtsyTaskMessage("任务租约已建立。执行版本预检通过前，不要写入 Etsy 页面。", "success");
   }));
   document.getElementById("etsy-task-preflight")?.addEventListener("click", (event) => withBusyButton(event.currentTarget, async () => {
     const result = await sendEtsyTaskMessage("ETSY_TASK_PREFLIGHT");
-    etsyAdsPowerTaskState = { task: result.task, preflight: result, source: "preflight" };
+    etsyAdsPowerTaskState = { task: result.task, preflight: result, source: "preflight", draftApplied: false };
     setEtsyTaskMessage("版本、人工批准、租约与 draft-only 边界预检通过。现在可在指定 AdsPower Profile 的可见 Etsy 页面保存草稿。", "success");
   }));
   document.getElementById("etsy-task-apply-draft")?.addEventListener("click", (event) => withBusyButton(event.currentTarget, async () => {
     const result = await sendEtsyTaskMessage("ETSY_TASK_APPLY_APPROVED_DRAFT");
+    etsyAdsPowerTaskState.draftApplied = true;
     const manualFields = Object.entries(result.fieldResults || {}).filter(([, value]) => value.status === "manual_required").map(([field]) => field);
     setEtsyTaskMessage(`已回读 ${result.fieldsApplied} 个获批字段；未点击保存或发布。${manualFields.length || result.imageStatus === "manual_required" ? `请人工复核/补齐：${[...manualFields, ...(result.imageStatus === "manual_required" ? ["images"] : [])].join("、")}。` : "请逐字段复核后在 Etsy 可见页面保存为草稿。"}`, "success");
   }));
   document.getElementById("etsy-task-pause")?.addEventListener("click", (event) => withBusyButton(event.currentTarget, async () => {
     const result = await sendEtsyTaskMessage("ETSY_TASK_PAUSE_FOR_VERIFICATION", { checkpoint: { stage: "human_verification_required", reason: "Etsy login, MFA, CAPTCHA or visible-page verification requires an operator." } });
-    etsyAdsPowerTaskState = { task: result.task, preflight: null, source: "paused" };
+    etsyAdsPowerTaskState = { task: result.task, preflight: null, source: "paused", draftApplied: false };
     setEtsyTaskMessage("任务已暂停并保留 checkpoint；完成可见人工验证后使用“恢复任务”。", "success");
   }));
   document.getElementById("etsy-task-reconcile")?.addEventListener("click", (event) => withBusyButton(event.currentTarget, async () => {
@@ -139,14 +174,14 @@ function bindEtsyAdsPowerTaskControls() {
     const listingUrl = document.getElementById("etsy-task-listing-url")?.value.trim() || "";
     const confirmed = document.getElementById("etsy-task-visible-confirmation")?.checked === true;
     const result = await sendEtsyTaskMessage("ETSY_TASK_RECORD_UPLOADED", { readback: { listingId, listingUrl, humanConfirmedDraftSaved: confirmed, observedAt: new Date().toISOString() } });
-    setEtsyTaskMessage(`草稿 readback 已记录并完成对账：${result.readback?.listingId || listingId}。公共发布未执行。`, "success");
     await refreshEtsyAdsPowerTaskPanel();
+    setEtsyTaskMessage(`草稿 readback 已记录并完成对账：${result.readback?.listingId || listingId}。公共发布未执行。`, "success");
   }));
   document.getElementById("etsy-task-record-failed")?.addEventListener("click", (event) => withBusyButton(event.currentTarget, async () => {
     const failureReason = document.getElementById("etsy-task-failure-reason")?.value.trim() || "";
     const result = await sendEtsyTaskMessage("ETSY_TASK_RECORD_FAILED", { readback: { failureReason, observedAt: new Date().toISOString() } });
-    setEtsyTaskMessage(`失败 readback 已记录：${result.readback?.failureReason || failureReason}`, "success");
     await refreshEtsyAdsPowerTaskPanel();
+    setEtsyTaskMessage(`失败 readback 已记录：${result.readback?.failureReason || failureReason}`, "success");
   }));
 }
 
@@ -599,6 +634,7 @@ function initTabs() {
     btn.addEventListener("click", () => {
       const tabId = btn.getAttribute("data-tab");
       document.body.classList.toggle("workflow-mode", tabId === "workflow");
+      document.body.classList.toggle("task-mode", tabId === "tasks");
       
       // Update Active Navigation Item
       navItems.forEach((n) => n.classList.remove("active"));
@@ -639,6 +675,14 @@ function initTabs() {
 
 // ── Global Event Bindings ──
 function bindEvents() {
+  document.getElementById("etsy-campaign-review")?.addEventListener("click", async () => {
+    try {
+      await openCanonicalCampaignWorkflow();
+    } catch (error) {
+      alert(`投流审批入口未能打开：${error.message}`);
+    }
+  });
+
   document.getElementById("refresh-all-btn").addEventListener("click", async () => {
     await refreshAllData();
     if (isStoreApiSurfaceActive()) {
