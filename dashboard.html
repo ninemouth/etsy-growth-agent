@@ -769,7 +769,7 @@
             <div class="card-body">
               <div id="settings-etsy-api-status" class="etsy-api-status-grid" aria-live="polite"><div class="empty-state">正在读取 Control Center…</div></div>
               <div class="etsy-api-status-actions"><button class="btn btn-outline" id="settings-refresh-etsy-api">刷新连接状态</button><button class="btn btn-primary" id="settings-open-etsy-api">在 Web 配置</button></div>
-              <p class="etsy-api-status-boundary">“已连接”只证明 Seller App Key、店主 OAuth 和店铺回读闭环；当前扩展仍不具备服务端 Etsy 数据代理，也不会因此获得广告、Listing 或订单写权限。</p>
+              <p class="etsy-api-status-boundary">“只读代理可用”表示插件可经 Control Center 读取本店 active listings 与 listing details；Key、Secret 和 OAuth Token 不下发。广告、订单、交易和 Listing 写入仍未开放。</p>
             </div>
           </div>
           <div class="grid-card">

@@ -39,7 +39,7 @@ assert.match(toolRegistry, /get_browser_capabilities/, "tool registry must expos
 assert.match(toolRegistry, /summarizeBrowserAutomationCapabilities/, "tool registry should return the shared capability manifest");
 assert.match(agentLoop, /formatBrowserAutomationCapabilityPrompt/, "agent loop must inject browser capability contract into prompts");
 assert.match(agentLoop, /页面动态加载时必须相信工具返回的 loadState、evidenceOk、pageEvidence/, "agent prompt should force evidence-aware browser operation");
-assert.match(agentLoop, /Etsy 个人卖家 API 不能读取竞品后台、竞品订单、竞品转化率或平台大盘/, "agent prompt should preserve Etsy personal API boundary");
+assert.match(agentLoop, /Control Center Etsy 代理当前只提供本店 active listings \/ listing details，不能读取订单、广告、交易、履约、竞品后台或平台大盘/, "agent prompt should preserve the Control Center Etsy proxy boundary");
 assert.match(toolRegistry, /minStableReads[\s\S]*waitForTabReadiness[\s\S]*stableReads/, "runtime should wait for stable page evidence before collection");
 assert.match(toolRegistry, /executeGenericDomSnapshot[\s\S]*allFrames: true/, "DOM collection should include multi-frame fallback");
 assert.match(toolRegistry, /captureVisibleTab[\s\S]*captureMode:\s*"captureVisibleTab_viewport"/, "screenshot collection should label viewport evidence precisely");

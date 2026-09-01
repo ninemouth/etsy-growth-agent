@@ -596,7 +596,7 @@ assert.match(agentLoopSource, /选品机会书\/选品机会分析/, "critic sho
 assert.match(agentLoopSource, /stage_fit/, "critic should require shop optimizer plans to explain stage fit");
 assert.match(agentLoopSource, /buyer_scenario/, "critic should require shop optimizer plans to name the buyer scenario");
 assert.match(sidepanelSource, /isCheckpointFollowupInstruction[\s\S]*继续\|继续推进\|恢复\|resume\|continue[\s\S]*忽略\\s\*\(\?:api\|API\)/, "sidepanel should treat plain continue and API-ignore messages as session resume requests");
-assert.match(agentLoopSource, /USER_REQUESTS_API_ASSUMPTION_DOWNGRADE_RE[\s\S]*用户已明确要求忽略\/跳过未配置的 Etsy API[\s\S]*source_type="assumption"/, "resumed workflows should tell the model to downgrade missing Etsy API evidence when the user asks to ignore API");
+assert.match(agentLoopSource, /USER_REQUESTS_API_ASSUMPTION_DOWNGRADE_RE[\s\S]*用户已明确要求忽略\/跳过 Etsy API[\s\S]*source_type="assumption"/, "resumed workflows should tell the model to downgrade missing or unsupported Etsy API evidence when the user asks to ignore API");
 assert.match(sidepanelSource, /valueToReadableMarkdown[\s\S]*renderMarkdown\(valueToReadableMarkdown\(val\)\)/, "sidepanel report renderer should expand nested overview/analysis/summary objects instead of stringifying them");
 assert.doesNotMatch(sidepanelSource, /renderMarkdown\(String\(val\)\)/, "sidepanel report renderer must not stringify nested report sections into [object Object]");
 assert.match(js, /valueToReadableMarkdown[\s\S]*resultToReportMarkdown[\s\S]*深度商业诊断/, "dashboard report center should expand nested report objects into readable markdown sections");
@@ -1642,6 +1642,7 @@ assert.deepEqual(
   "auto-repaired shop optimizer API assumptions should pass validation without critic redo"
 );
 const shopOptimizerReportWithAvailableApiClaims = globalThis.structuredClone(shopOptimizerReportWithApiClaims);
+shopOptimizerReportWithAvailableApiClaims.output.data[0].recommendation = "Control Center Etsy API 快照显示订单从 2 单增长到 4 单，履约准时率已提升。";
 const validShopEvidenceHistoryWithApi = [
   {
     tool: "etsy_api_get_store_snapshot",
@@ -1649,12 +1650,11 @@ const validShopEvidenceHistoryWithApi = [
     result: {
       ok: true,
       result: {
-        listings: [{ title: "Personalized wedding clutch" }],
-        receipts: [],
+        source: "etsy_official_api_via_control_center",
+        products: { source: "etsy_official_api_via_control_center", items: [{ title: "Personalized wedding clutch" }] },
         capabilities: {
-          listings: { supported: true },
-          receipts: { supported: true },
-          analytics: { supported: false },
+          supported: ["active_listings", "listing_details"],
+          unsupported: ["seller_receipts", "sessions_or_page_views", "platform_fulfilled_warehouse_metrics"],
         },
       },
     },
@@ -1666,15 +1666,19 @@ const repairedShopOptimizerAvailableApiClaims = autoRepairFinalReportForDelivery
   toolHistory: validShopEvidenceHistoryWithApi,
   pageContext: meaningfulPageContext,
 });
-assert.equal(repairedShopOptimizerAvailableApiClaims.changed, true, "shop optimizer API/order/fulfillment claims should auto-attach available Etsy API boundary evidence");
+assert.equal(repairedShopOptimizerAvailableApiClaims.changed, true, "shop optimizer claims should attach Listing evidence and downgrade unsupported private metrics");
 assert.ok(
-  repairedShopOptimizerAvailableApiClaims.parsed.output.data[0].evidence_ledger.some((entry) => entry.source_type === "etsy_api" && /analytics/.test(`${entry.observed_value || ""} ${entry.limitation || ""}`)),
-  "auto-repaired API ledger should preserve supported/unsupported Etsy API capability boundaries"
+  repairedShopOptimizerAvailableApiClaims.parsed.output.data[0].evidence_ledger.some((entry) => entry.source_type === "etsy_api" && /active_listings/.test(`${entry.observed_value || ""} ${entry.limitation || ""}`)),
+  "auto-repaired API ledger should preserve the supported Listing boundary"
+);
+assert.ok(
+  repairedShopOptimizerAvailableApiClaims.parsed.output.data[0].evidence_ledger.some((entry) => entry.source_type === "assumption" && /订单|履约/.test(`${entry.observed_value || ""} ${entry.limitation || ""}`)),
+  "Listing evidence must not promote unsupported order or fulfillment claims"
 );
 assert.deepEqual(
   validateReport(repairedShopOptimizerAvailableApiClaims.parsed, "", "skills/etsy_global_shop_optimizer.skill.md", validShopEvidenceHistoryWithApi, meaningfulPageContext),
   [],
-  "auto-attached Etsy API boundary evidence should prevent non-quality critic redo"
+  "Listing evidence plus an explicit unsupported-field assumption should prevent non-quality critic redo"
 );
 const shopOptimizerReportWithPrivateMetricPlan = globalThis.structuredClone(shopOptimizerReportWithEtsyEvidence);
 shopOptimizerReportWithPrivateMetricPlan.output.data[0].title = "清退低相关 SKU，重建垂直婚礼场景专营店";
@@ -1701,16 +1705,16 @@ assert.equal(repairedShopOptimizerPrivateMetricPlan.changed, true, "shop optimiz
 assert.ok(
   repairedShopOptimizerPrivateMetricPlan.parsed.output.data[0].evidence_ledger.some((entry) =>
     entry.source_type === "assumption"
-    && /API/.test(`${entry.source_ref || ""} ${entry.observed_value || ""} ${entry.used_for || ""} ${entry.limitation || ""}`)
+    && /API|代理/.test(`${entry.source_ref || ""} ${entry.observed_value || ""} ${entry.used_for || ""} ${entry.limitation || ""}`)
     && /流量|订单|履约/.test(`${entry.observed_value || ""} ${entry.used_for || ""} ${entry.limitation || ""}`)
     && /未配置|未取得|待验证/.test(`${entry.observed_value || ""} ${entry.used_for || ""} ${entry.limitation || ""}`)
   ),
-  "auto-repair should add a validator-compatible assumption ledger for missing Etsy personal API evidence"
+  "auto-repair should add a validator-compatible assumption ledger for missing or unsupported Etsy proxy evidence"
 );
 assert.deepEqual(
   validateReport(repairedShopOptimizerPrivateMetricPlan.parsed, "", "skills/etsy_global_shop_optimizer.skill.md", validShopEvidenceHistory, meaningfulPageContext),
   [],
-  "missing Etsy personal API should not block shop optimizer delivery after explicit assumption downgrade"
+  "missing Etsy proxy evidence should not block shop optimizer delivery after explicit assumption downgrade"
 );
 const shopOptimizerReportWithSourceTypeAliases = JSON.parse(JSON.stringify(shopOptimizerReportWithEtsyEvidence));
 shopOptimizerReportWithSourceTypeAliases.output.data[0].evidence_ledger[0].source_type = "current_page_dom";

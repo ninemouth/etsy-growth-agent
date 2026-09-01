@@ -1314,11 +1314,7 @@ function getBestEtsyApiEvidence(toolHistory = []) {
     "etsy_api_get_products",
     "etsy_api_get_product_info",
   ];
-  const entries = (toolHistory || []).filter((entry) =>
-    entry?.result?.ok !== false &&
-    !entry?.result?.error &&
-    String(entry?.tool || "").startsWith("etsy_api_")
-  );
+  const entries = (toolHistory || []).filter(isMeaningfulEtsyApiEvidence);
   if (!entries.length) return null;
   return entries.sort((a, b) => {
     const ai = priority.indexOf(a.tool);
@@ -1330,18 +1326,16 @@ function getBestEtsyApiEvidence(toolHistory = []) {
 function buildEtsyApiLedgerEntry(entry = {}) {
   const result = entry.result?.result || entry.result || {};
   const capabilities = result.capabilities || result.apiCapabilities || result;
-  const supported = [];
-  const unsupported = [];
+  const supported = Array.isArray(capabilities?.supported) ? capabilities.supported.map(String) : [];
+  const unsupported = Array.isArray(capabilities?.unsupported) ? capabilities.unsupported.map(String) : [];
   Object.entries(capabilities || {}).forEach(([key, value]) => {
-    if (value === true || value?.supported === true) supported.push(key);
-    if (value === false || value?.supported === false) unsupported.push(key);
+    if ((value === true || value?.supported === true) && !supported.includes(key)) supported.push(key);
+    if ((value === false || value?.supported === false) && !unsupported.includes(key)) unsupported.push(key);
   });
-  const listingCount = Array.isArray(result.listings) ? result.listings.length : result.listingCount || result.activeListingCount;
-  const receiptCount = Array.isArray(result.receipts) ? result.receipts.length : result.receiptCount;
+  const listingCount = Array.isArray(result.products?.items) ? result.products.items.length : Array.isArray(result.items) ? result.items.length : Array.isArray(result.listings) ? result.listings.length : result.listingCount || result.activeListingCount;
   const observed = [
     `工具 ${entry.tool || "etsy_api"} 已返回自营店铺 API 边界/快照。`,
     Number.isFinite(Number(listingCount)) ? `可见 listings=${listingCount}` : "",
-    Number.isFinite(Number(receiptCount)) ? `可见 receipts=${receiptCount}` : "",
     supported.length ? `supported=${supported.slice(0, 6).join(", ")}` : "",
     unsupported.length ? `unsupported=${unsupported.slice(0, 6).join(", ")}` : "",
   ].filter(Boolean).join("；");
@@ -1349,9 +1343,9 @@ function buildEtsyApiLedgerEntry(entry = {}) {
     source_type: "etsy_api",
     source_ref: entry.tool || "etsy_api",
     observed_value: observed || "本轮已取得 Etsy 个人访问 API 工具返回，用于确认自营店铺可访问数据边界。",
-    used_for: "支撑自营店铺 API 能力边界、公开页面与 API 可验证/不可验证字段的区分；不能用于竞品后台、平台大盘、Sessions、点击率或加购率。",
+    used_for: "只支撑自营 active listings、listing details 与 API 能力边界；不能用于订单、竞品后台、平台大盘、Sessions、点击率、加购率、广告、交易或履约。",
     confidence: "medium",
-    limitation: "Etsy 个人 API 只覆盖当前授权自营店铺；若工具返回 capabilities 显示 analytics/traffic/fulfillment 不支持，相关结论仍需在报告中写成待验证假设或人工确认点。",
+    limitation: "当前 Control Center 代理只开放 listings_r。订单、analytics、traffic、Ads、transactions 和 fulfillment 不支持，相关结论必须写成待验证假设或 user_input。",
   };
 }
 
@@ -1489,7 +1483,7 @@ function hasEvidenceSource(toolHistory = [], pageContext = {}, sourceType = "") 
     );
   }
   if (normalized === "etsy_api") {
-    return hasSuccessfulToolCall(toolHistory, (entry) => String(entry.tool || "").startsWith("etsy_api_"));
+    return hasSuccessfulToolCall(toolHistory, isMeaningfulEtsyApiEvidence);
   }
   if (normalized === "etsy_search") {
     return hasSuccessfulToolCall(toolHistory, (entry) =>
@@ -2039,6 +2033,7 @@ export function sanitizeFinalReportForDelivery(parsed) {
 }
 
 const ETSY_API_ASSUMPTION_RE = /API|Seller API|etsy_api|Sessions?|session|流量|会话|访问量|订单|交易|扣费|履约|履约成本|物流|Shipping Profile|shipping|fulfillment|第三方海外仓|Etsy 自发货|conversion|traffic|orders?/i;
+const ETSY_UNSUPPORTED_PRIVATE_METRIC_RE = /Sessions?|session|流量|会话|访问量|点击率|加购率|订单|交易|扣费|履约|履约成本|Shipping Profile|fulfillment|第三方海外仓|conversion|traffic|orders?|receipts?/i;
 const SHOP_OPTIMIZER_API_CLAIM_RE = /API|Seller API|etsy_api|Sessions?|session|流量|会话|访问量|订单|交易|扣费|履约|履约成本|物流|Shipping Profile|shipping|fulfillment|第三方海外仓|Etsy 自发货|conversion|traffic|orders?/i;
 const SHOP_OPTIMIZER_API_ASSUMPTION_TOPIC_RE = /API|Seller|流量|会话|订单|交易|履约|物流|Shipping|fulfillment|第三方海外仓|Etsy 自发货|未配置|未取得|未获得|待验证|复核/i;
 const USER_REQUESTS_API_ASSUMPTION_DOWNGRADE_RE = /忽略\s*(?:api|API)|跳过\s*(?:api|API)|未配置\s*(?:api|API)|没有\s*(?:api|API)|无\s*(?:api|API)|不用\s*(?:api|API)|按\s*(?:assumption|假设).{0,12}(?:处理|降级)|(?:api|API).{0,12}(?:assumption|假设|降级|跳过|忽略|未配置|没有|无)/i;
@@ -2063,6 +2058,24 @@ function buildAssumptionLedgerEntry({ sourceRef, observedValue, usedFor, limitat
     confidence: "low",
     limitation,
   };
+}
+
+function isMeaningfulEtsyApiEvidence(entry = {}) {
+  if (entry?.result?.ok === false || entry?.result?.error) return false;
+  const result = entry?.result?.result || entry?.result || {};
+  if (["etsy_api_get_products", "etsy_api_get_product_info"].includes(entry.tool)) {
+    return result.source === "etsy_official_api_via_control_center" && Array.isArray(result.items);
+  }
+  if (entry.tool === "etsy_api_get_store_snapshot") {
+    return result.source === "etsy_official_api_via_control_center" && result.products?.source === "etsy_official_api_via_control_center";
+  }
+  return false;
+}
+
+function hasUnsupportedPrivateMetricClaim(text = "") {
+  const normalized = String(text || "");
+  if (!ETSY_UNSUPPORTED_PRIVATE_METRIC_RE.test(normalized)) return false;
+  return /(?:API|代理|数据|快照|本轮|当前).{0,32}(?:返回|显示|可见|读取|同步|证明|验证).{0,32}(?:Sessions?|流量|点击率|加购率|订单|交易|履约|Shipping Profile|orders?|receipts?)|(?:Sessions?|流量|点击率|加购率|订单|交易|履约|Shipping Profile|orders?|receipts?).{0,32}(?:从\s*\d|增长(?:了|\d)|下降(?:了|\d)|提升了|减少了|已验证|API\s*返回|代理\s*返回|数据显示)/i.test(normalized);
 }
 
 function getReportItemClaimText(item = {}) {
@@ -3163,30 +3176,39 @@ export function autoRepairFinalReportForDelivery(parsed, {
       entry.source_type = "assumption";
       entry.confidence = entry.confidence || "low";
       entry.limitation = entry.limitation
-        ? `${entry.limitation}；本轮未取得 Etsy 个人访问 API 的真实店铺流量/订单/履约数据，因此该 API 相关结论仅作为待验证假设。`
-        : "本轮未取得 Etsy 个人访问 API 的真实店铺流量/订单/履约数据，因此该 API 相关结论仅作为待验证假设。";
+        ? `${entry.limitation}；当前 Control Center 代理只开放 Listing，未取得流量/订单/履约数据，因此相关结论仅作为待验证假设。`
+        : "当前 Control Center 代理只开放 Listing，未取得流量/订单/履约数据，因此相关结论仅作为待验证假设。";
       itemChanged = true;
     });
 
     const itemClaimText = getReportItemClaimText(item);
+    if (isEtsyBusinessSkill(skillId) && hasUnsupportedPrivateMetricClaim(itemClaimText) && !hasAssumptionFallback(ledger, ETSY_UNSUPPORTED_PRIVATE_METRIC_RE) && !hasLedgerType(ledger, "user_input")) {
+      ledger.push(buildAssumptionLedgerEntry({
+        sourceRef: "Control Center Etsy proxy unsupported fields",
+        observedValue: "当前只读代理只返回本店 active listings 与 listing details；未返回订单、Sessions、点击、加购、广告、交易、履约或 Shipping Profile 数据。",
+        usedFor: "将私有经营指标与履约判断降级为待用户提供后台导出/截图或后续获批接口验证的假设。",
+        limitation: "Listing API 证据不能支撑订单、流量、转化、广告归因、交易或履约结论；这些字段均为待验证。",
+      }));
+      itemChanged = true;
+    }
     const shopOptimizerUsesApiBoundary = isShopOptimizerOnly(skillId) && SHOP_OPTIMIZER_API_CLAIM_RE.test(itemClaimText);
     if (shopOptimizerUsesApiBoundary && hasEtsyApiEvidence && bestEtsyApiEvidence && !hasLedgerType(ledger, "etsy_api")) {
       ledger.push(buildEtsyApiLedgerEntry(bestEtsyApiEvidence));
       itemChanged = true;
     } else if (shopOptimizerUsesApiBoundary && !hasEtsyApiEvidence && !hasAssumptionFallback(ledger, SHOP_OPTIMIZER_API_ASSUMPTION_TOPIC_RE)) {
       ledger.push(buildAssumptionLedgerEntry({
-        sourceRef: "Etsy personal API not configured in this run",
-        observedValue: "本轮未配置或未取得 Etsy 个人访问 API，无法验证真实流量、Sessions、订单、转化、履约成本、物流配置、Etsy 自发货或第三方海外仓数据。",
-        usedFor: "将店铺优化方案中的 API/流量/订单/履约/物流相关判断降级为待验证假设，只作为后续授权 Etsy 个人 API 后复核的检查项。",
-        limitation: "未配置/未取得 Etsy 个人 API；不能作为已验证后台数据、真实订单、真实流量或履约成本结论，需店主授权 API 或后台截图后复核。",
+        sourceRef: "Control Center Etsy Listing proxy unavailable or unsupported",
+        observedValue: "本轮未取得可用 Listing 代理证据；且当前代理本就不提供流量、Sessions、订单、转化、履约成本、物流配置或第三方海外仓数据。",
+        usedFor: "将 Listing 事实和私有经营指标分别降级：Listing 待连接代理复核，订单/流量/履约待用户后台证据复核。",
+        limitation: "不能作为已验证后台数据、真实订单、真实流量或履约成本结论；需要 Control Center Listing 读回或用户后台导出/截图。",
       }));
       itemChanged = true;
     } else if (isEtsyBusinessSkill(skillId) && ETSY_API_ASSUMPTION_RE.test(itemClaimText) && !hasEtsyApiEvidence && !hasAssumptionFallback(ledger, ETSY_API_ASSUMPTION_RE)) {
       ledger.push(buildAssumptionLedgerEntry({
-        sourceRef: "Etsy personal API access not available in this run",
-        observedValue: "本轮未取得 Etsy 个人访问 API 的真实 Sessions、订单、转化或履约成本数据。",
+        sourceRef: "Control Center Etsy proxy unsupported fields",
+        observedValue: "当前只读代理未提供 Sessions、订单、转化或履约成本数据。",
         usedFor: "将流量、订单、转化、履约或海外仓相关判断降级为待验证假设，避免把模型推断写成已验证事实。",
-        limitation: "需要店主授权并同步 Etsy API 后，才能用真实 API 数据复核该项建议；当前不得作为已验证运营数据。",
+        limitation: "当前不得作为已验证运营数据；需要用户后台导出/截图，或后续经审批开放的官方接口复核。",
       }));
       itemChanged = true;
     }
@@ -3829,6 +3851,9 @@ export function validateReport(parsed, userInstruction, skillId, toolHistory = [
       if (SHOP_OPTIMIZER_API_CLAIM_RE.test(itemClaimText) && !hasLedgerType(ledgerEntries, "etsy_api") && !hasAssumptionFallback(ledgerEntries, SHOP_OPTIMIZER_API_ASSUMPTION_TOPIC_RE)) {
         errors.push(`店铺优化方案第 ${idx + 1} 项 (${title}) 使用了 API/流量/订单/履约类结论，但 evidence_ledger 没有 etsy_api 证据或 assumption 降级说明。`);
       }
+      if (hasUnsupportedPrivateMetricClaim(itemClaimText) && !hasAssumptionFallback(ledgerEntries, ETSY_UNSUPPORTED_PRIVATE_METRIC_RE) && !hasLedgerType(ledgerEntries, "user_input")) {
+        errors.push(`店铺优化方案第 ${idx + 1} 项 (${title}) 使用了订单/流量/转化/履约等当前只读 Listing 代理不提供的数据，但没有 assumption 或 user_input 边界。`);
+      }
       if (/Google|google/i.test(itemText) && !hasLedgerType(ledgerEntries, "google_search") && !hasAssumptionFallback(ledgerEntries, /Google/i)) {
         errors.push(`店铺优化方案第 ${idx + 1} 项 (${title}) 使用了 Google/站外需求结论，但 evidence_ledger 没有 google_search 证据或 assumption 降级说明。`);
       }
@@ -4091,7 +4116,7 @@ ${formatBrowserAutomationCapabilityPrompt()}
 
 页面动态加载时必须相信工具返回的 loadState、evidenceOk、pageEvidence、evidence_quality、blockingGaps 和 screenshotCaptureMode：
 - evidenceOk=false、Google Trends 壳页、验证码、登录墙或 blockingGaps 不得被写成已验证增长结论。
-- 工具能力契约说明可以做什么，也说明不能做什么；尤其 Etsy 个人卖家 API 不能读取竞品后台、竞品订单、竞品转化率或平台大盘。
+- 工具能力契约说明可以做什么，也说明不能做什么；Control Center Etsy 代理当前只提供本店 active listings / listing details，不能读取订单、广告、交易、履约、竞品后台或平台大盘。
 - 需要翻页、排序、筛选、截图或详情页时，优先使用上方能力契约对应工具；不能用模型想象替代工具证据。
 ${isShopOptimizerOnly(skillId) ? formatShopOptimizerProductionSkeletonPrompt(toolHistory, pageContext) : ""}
 
@@ -4272,7 +4297,7 @@ ${(skillId || "").includes("tiktok_shop_monitor") ? `\n\n## ⚠️ TikTok 监控
     if (userInstruction) {
       instructionText += `\n\n用户最新补充信息：\n"${userInstruction}"`;
       if (USER_REQUESTS_API_ASSUMPTION_DOWNGRADE_RE.test(userInstruction)) {
-        instructionText += `\n\n【用户已明确要求忽略/跳过未配置的 Etsy API】如果当前本地没有可用 Etsy 个人访问 API 证据，不要继续追问或重复调用 API 工具来修复质量门禁；请把 API、订单、Sessions、转化、履约成本、Etsy 自发货或第三方海外仓相关结论全部降级为 evidence_ledger.source_type="assumption"，并在 source_ref/observed_value/used_for/limitation 中明确“未配置/未取得 Etsy 个人 API，需后续授权后复核”。页面、Etsy 搜索、Google Search/Trends 和竞品截图证据仍必须保持真实证据，不得伪造。`;
+        instructionText += `\n\n【用户已明确要求忽略/跳过 Etsy API】不要继续追问或重复调用 API 工具来修复质量门禁；请把 Listing API 缺失，以及订单、Sessions、转化、履约成本、Etsy 自发货或第三方海外仓等当前代理不支持的结论全部降级为 evidence_ledger.source_type="assumption"，明确需要 Control Center Listing 读回或用户后台证据复核。页面、Etsy 搜索、Google Search/Trends 和竞品截图证据仍必须保持真实，不得伪造。`;
       }
     } else {
       instructionText += `\n\n请结合最新 System Prompt 和页面上下文继续推进。`;

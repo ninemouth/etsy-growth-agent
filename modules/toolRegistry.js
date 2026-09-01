@@ -3446,9 +3446,10 @@ Object.assign(tools, {
     return { ok: true, result: {
       ...integration,
       accessModel: "control_center_server_only_seller_api",
-      dataProxyStatus: "not_implemented",
+      dataProxyStatus: integration.dataProxy?.status || "unavailable",
+      supportedResources: integration.dataProxy?.resources || [],
       limitation: integration.oauthStatus === "connected"
-        ? "Control Center 已确认只读 OAuth 与店铺绑定；本版本 Growth Agent 只接收脱敏状态，尚未通过服务端代理读取 Etsy 数据。"
+        ? "Growth Agent 通过 Control Center 服务端只读代理读取自营 active listings 与 listing details；凭据不会下发到插件。订单、广告、交易和写入仍未开放。"
         : "Control Center 尚未完成只读 Seller App / OAuth 连接；设备授权和团队模型配置仍可独立使用。",
     } };
   },
@@ -3459,9 +3460,12 @@ Object.assign(tools, {
       const fbs = await etsyGetFbsPostingList(dateFrom, dateTo, offset || 0, pageSize || 20);
       const fbo = await etsyGetFboPostingList(dateFrom, dateTo, offset || 0, pageSize || 20);
       const result = {
-        source: "posting_api_compat",
-        accessModel: "personal_seller_api",
-        note: "仅返回当前授权自营店铺 receipts/发货资料；finance transaction ledger 和平台仓履约数据不在当前个人 API 能力范围内。",
+        source: "marqel_control_center",
+        accessModel: "control_center_server_only_seller_api",
+        supported: false,
+        skipped: true,
+        reason: "control_center_proxy_scope_not_supported",
+        note: "当前服务端代理未开放 receipts、订单、交易或发货资料；不得使用旧本地凭据直连，也不得把缺失值当作 0。",
         fbs,
         fbo,
       };

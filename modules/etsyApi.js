@@ -1,551 +1,199 @@
-// modules/etsyApi.js - Etsy Open API compatibility adapter
+// modules/etsyApi.js - governed Etsy read adapter
+// Etsy Seller App credentials and OAuth tokens are server-only. This module
+// consumes the Control Center proxy and never calls Etsy directly.
 
-const ETSY_API_BASE = "https://openapi.etsy.com/v3/application";
-const ETSY_MIN_REQUEST_INTERVAL_MS = 1100;
-const ETSY_RATE_LIMIT_RETRY_MS = 1600;
+import { controlCenterRequest, getEtsyIntegrationStatus } from "./controlCenterAuth.js";
 
 export const ETSY_PERSONAL_API_CAPABILITIES = Object.freeze({
-  accessModel: "personal_seller_api",
-  scope: "仅当前授权店主及其自营店铺",
-  supported: [
-    "active_listings",
-    "listing_details",
-    "seller_receipts",
-    "seller_fulfillment_posting_compatibility",
-  ],
-  unsupported: [
-    "competitor_private_shop_data",
-    "platform_wide_search_volume",
-    "sessions_or_page_views",
-    "click_through_rate",
-    "add_to_cart_rate",
-    "advertising_attribution",
-    "finance_transaction_ledger",
-    "platform_fulfilled_warehouse_metrics",
-  ],
-  publicBrowserBoundary: "竞品和 Etsy 搜索只能通过公开浏览器页面取证，不能从个人 API 读取竞品后台数据。",
+  accessModel: "control_center_server_only_seller_api",
+  scope: "仅当前设备授权所属组织及其已绑定自营 Etsy 店铺",
+  supported: ["active_listings", "listing_details"],
+  unsupported: ["seller_receipts", "finance_transaction_ledger", "etsy_ads_management", "listing_writes", "competitor_private_shop_data", "platform_wide_search_volume", "sessions_or_page_views", "click_through_rate", "add_to_cart_rate", "advertising_attribution", "platform_fulfilled_warehouse_metrics"],
+  credentialBoundary: "Etsy Key、Secret、Access Token、Refresh Token 只保存在 Control Center 服务端；插件仅发送带设备证明的 Marqel 请求。",
+  publicBrowserBoundary: "竞品和 Etsy 搜索只能通过公开浏览器页面取证，不能从 Seller App 读取竞品后台数据。",
 });
 
 export function getEtsyApiCapabilities() {
   return JSON.parse(JSON.stringify(ETSY_PERSONAL_API_CAPABILITIES));
 }
 
-let lastEtsyRequestAt = 0;
-let etsyRequestQueue = Promise.resolve();
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function toDateString(date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function toUnixDayStart(dateString) {
-  return Math.floor(new Date(`${dateString}T00:00:00Z`).getTime() / 1000);
-}
-
-function toUnixDayEnd(dateString) {
-  return Math.floor(new Date(`${dateString}T23:59:59Z`).getTime() / 1000);
-}
+function toDateString(date) { return date.toISOString().slice(0, 10); }
 
 export function getDefaultEtsyDateRange(days = 14) {
   const to = new Date();
   const from = new Date(to);
-  from.setDate(from.getDate() - Math.max(1, days));
-  return {
-    dateFrom: toDateString(from),
-    dateTo: toDateString(to),
-  };
+  from.setDate(from.getDate() - Math.max(1, Number(days) || 14));
+  return { dateFrom: toDateString(from), dateTo: toDateString(to) };
 }
 
-export async function getEtsySettings(explicitShopId = null) {
-  return new Promise((resolve) => {
-    chrome.storage.local.get(
-      [
-        "etsyShops",
-        "activeShopId",
-        "etsyApiKey",
-        "etsyOAuthToken",
-        "etsyRefreshToken",
-        "etsyShopId",
-        "etsyWarehouseType",
-      ],
-      (data) => {
-        const shops = data.etsyShops || [];
-        const activeId = explicitShopId || data.activeShopId;
-        let activeShop = shops.find((shop) => shop.id === activeId || shop.shopId === activeId);
-        if (!activeShop && shops.length > 0) activeShop = shops.find((shop) => shop.isDefault) || shops[0];
-
-        resolve({
-          apiKey: activeShop?.apiKey || data.etsyApiKey || "",
-          oauthToken: activeShop?.oauthToken || data.etsyOAuthToken || "",
-          refreshToken: activeShop?.refreshToken || data.etsyRefreshToken || "",
-          shopId: activeShop?.shopId || activeShop?.id || data.etsyShopId || "",
-          shopName: activeShop?.name || "Etsy Shop",
-          warehouseType: activeShop?.warehouseType || data.etsyWarehouseType || "Etsy seller-fulfilled",
-        });
-      }
-    );
-  });
-}
-
-export async function saveEtsySettings(apiKey, oauthToken = "", shopId = "", shopName = "Etsy Shop", refreshToken = "") {
-  return new Promise((resolve) => {
-    chrome.storage.local.get(["etsyShops"], (data) => {
-      const shops = data.etsyShops || [];
-      const newShop = {
-        id: shopId || `shop_${Date.now()}`,
-        shopId,
-        name: shopName,
-        apiKey,
-        oauthToken,
-        refreshToken,
-        warehouseType: "Etsy seller-fulfilled",
-        isDefault: shops.length === 0,
-      };
-      shops.push(newShop);
-      chrome.storage.local.set(
-        {
-          etsyShops: shops,
-          activeShopId: newShop.id,
-          etsyApiKey: apiKey,
-          etsyOAuthToken: oauthToken,
-          etsyRefreshToken: refreshToken,
-          etsyShopId: shopId,
-        },
-        () => resolve(true)
-      );
-    });
-  });
-}
-
-function getEtsyClientId(apiKey = "") {
-  return String(apiKey || "").split(":")[0].trim();
-}
-
-async function persistRefreshedOAuthToken({ accessToken, refreshToken }) {
-  const settings = await getEtsySettings();
-  const storage = await new Promise((resolve) => chrome.storage.local.get(["etsyShops", "activeShopId"], resolve));
-  const shops = (storage.etsyShops || []).map((shop) => {
-    if (shop.id !== storage.activeShopId && shop.shopId !== settings.shopId) return shop;
-    return {
-      ...shop,
-      oauthToken: accessToken || shop.oauthToken,
-      refreshToken: refreshToken || shop.refreshToken,
-    };
-  });
-  await new Promise((resolve) => chrome.storage.local.set({
-    etsyShops: shops,
-    etsyOAuthToken: accessToken || settings.oauthToken,
-    etsyRefreshToken: refreshToken || settings.refreshToken,
-  }, resolve));
-}
-
-async function refreshEtsyOAuthToken(settings) {
-  if (!settings.refreshToken) return null;
-  const clientId = getEtsyClientId(settings.apiKey);
-  if (!clientId) return null;
-
-  const response = await fetch("https://api.etsy.com/v3/public/oauth/token", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      client_id: clientId,
-      refresh_token: settings.refreshToken,
-    }),
-  });
-
-  const responseText = await response.text();
-  if (!response.ok) {
-    throw new Error(`Etsy OAuth refresh failed (${response.status}): ${parseEtsyError(responseText)}`);
-  }
-
-  const tokenPayload = responseText ? JSON.parse(responseText) : {};
-  if (!tokenPayload.access_token) return null;
-  await persistRefreshedOAuthToken({
-    accessToken: tokenPayload.access_token,
-    refreshToken: tokenPayload.refresh_token || settings.refreshToken,
-  });
-  return tokenPayload.access_token;
-}
-
-async function waitForEtsyRateSlot() {
-  const elapsed = Date.now() - lastEtsyRequestAt;
-  if (elapsed < ETSY_MIN_REQUEST_INTERVAL_MS) {
-    await sleep(ETSY_MIN_REQUEST_INTERVAL_MS - elapsed);
-  }
-  lastEtsyRequestAt = Date.now();
-}
-
-function parseEtsyError(responseText) {
-  try {
-    const parsed = JSON.parse(responseText);
-    return parsed.error || parsed.message || JSON.stringify(parsed);
-  } catch (_) {
-    return responseText || "Empty error response";
-  }
-}
-
-function buildQuery(params = {}) {
-  const query = new URLSearchParams();
-  Object.entries(params).forEach(([key, value]) => {
-    if (value === undefined || value === null || value === "") return;
-    query.set(key, String(value));
-  });
-  const text = query.toString();
-  return text ? `?${text}` : "";
-}
-
-function buildUnconfiguredApiResult(kind, settings = {}, extra = {}) {
+function unsupportedResult(kind, extra = {}) {
   return {
     ok: true,
     skipped: true,
-    reason: "etsy_personal_api_not_configured",
-    source: "etsy_personal_seller_api",
+    supported: false,
+    reason: "control_center_proxy_scope_not_supported",
+    source: "marqel_control_center",
     accessModel: ETSY_PERSONAL_API_CAPABILITIES.accessModel,
     kind,
-    configured: Boolean(settings.apiKey && settings.shopId),
-    apiKeyConfigured: Boolean(settings.apiKey),
-    shopIdConfigured: Boolean(settings.shopId),
-    oauthConfigured: Boolean(settings.oauthToken),
-    message: "未配置/未取得 Etsy 个人访问 API，本轮允许继续使用公开页面、搜索和截图证据；订单、Sessions、转化、履约成本等后台数据必须降级为待验证假设。",
-    limitation: "未配置 Etsy 个人 API 时，不能声称已验证真实订单、真实流量、Sessions、转化或履约成本；需后续授权后复核。",
+    message: "当前服务端只读代理仅开放自营 active listings 与 listing details；订单、交易、广告和写入能力未授权，不能从旧本地凭据降级直连。",
+    limitation: "不得把缺失的订单、Sessions、转化、广告归因、财务或履约数据视为 0，也不得声称已验证。",
     ...extra,
   };
 }
 
-async function makeQueuedEtsyRequest(endpoint, { query = {}, method = "GET", body = null, requireOAuth = false } = {}, attempt = 0) {
-  const settings = await getEtsySettings();
-  const { apiKey, oauthToken } = settings;
-  if (!apiKey) {
-    throw new Error("未配置 Etsy 个人访问 API Key，请在设置中填写 keystring:shared_secret。");
-  }
-  if (requireOAuth && !oauthToken) {
-    throw new Error("该 Etsy 个人访问数据需要 OAuth Access Token；请在设置中补充 Access Token，建议同时保存 Refresh Token。");
-  }
-
-  await waitForEtsyRateSlot();
-  const url = `${ETSY_API_BASE}${endpoint}${buildQuery(query)}`;
-  const headers = {
-    "x-api-key": apiKey,
-    "Content-Type": "application/json",
-  };
-  if (oauthToken) headers.Authorization = `Bearer ${oauthToken}`;
-
-  const response = await fetch(url, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : null,
-  });
-
-  const responseText = await response.text();
-  if (!response.ok) {
-    const errorText = parseEtsyError(responseText);
-    if ((response.status === 401 || response.status === 403) && requireOAuth && settings.refreshToken && attempt < 1) {
-      const refreshedToken = await refreshEtsyOAuthToken(settings);
-      if (refreshedToken) {
-        return makeQueuedEtsyRequest(endpoint, { query, method, body, requireOAuth }, attempt + 1);
-      }
-    }
-    if (response.status === 429 && attempt < 2) {
-      const retryDelay = ETSY_RATE_LIMIT_RETRY_MS * (attempt + 1);
-      console.warn(`[Etsy API Rate Limit] ${endpoint} hit 429, retrying in ${retryDelay}ms...`);
-      await sleep(retryDelay);
-      return makeQueuedEtsyRequest(endpoint, { query, method, body, requireOAuth }, attempt + 1);
-    }
-    throw new Error(`Etsy API 请求失败 (${response.status}): ${errorText}`);
-  }
-
-  return responseText ? JSON.parse(responseText) : {};
-}
-
-async function makeEtsyRequest(endpoint, options = {}) {
-  const run = () => makeQueuedEtsyRequest(endpoint, options);
-  const queued = etsyRequestQueue.then(run, run);
-  etsyRequestQueue = queued.catch(() => {});
-  return queued;
+function normalizedPrice(price = {}) {
+  const amount = Number(price.amount || 0);
+  const divisor = Number(price.divisor || 100);
+  return Number.isFinite(amount) && Number.isFinite(divisor) && divisor > 0 ? amount / divisor : 0;
 }
 
 function normalizeListing(listing = {}) {
-  const image = listing.images?.[0]?.url_fullxfull || listing.images?.[0]?.url_570xN || "";
+  const listingId = String(listing.listingId || "");
+  const sku = Array.isArray(listing.skus) ? String(listing.skus[0] || listingId) : listingId;
   return {
-    product_id: listing.listing_id,
-    offer_id: listing.sku?.[0] || String(listing.listing_id || ""),
-    sku: listing.sku?.[0] || String(listing.listing_id || ""),
-    title: listing.title || "Etsy Listing",
-    name: listing.title || "Etsy Listing",
-    visibility: listing.state || "active",
-    price: listing.price?.amount ? Number(listing.price.amount) / Number(listing.price.divisor || 100) : Number(listing.price || 0),
-    currency_code: listing.price?.currency_code || listing.currency_code || "USD",
+    product_id: listingId,
+    offer_id: sku,
+    sku,
+    title: String(listing.title || "Etsy Listing"),
+    name: String(listing.title || "Etsy Listing"),
+    visibility: String(listing.state || "active"),
+    price: normalizedPrice(listing.price),
+    currency_code: String(listing.price?.currencyCode || "USD"),
     quantity: Number(listing.quantity || 0),
-    url: listing.url || "",
-    image,
-    raw: listing,
+    url: String(listing.url || ""),
+    image: String(listing.primaryImage?.url || ""),
+    source: "etsy_official_api_via_control_center",
+    contractVersion: listing.contractVersion || "marqel-etsy-listing.v1",
   };
 }
 
-function normalizeReceipt(receipt = {}) {
-  const firstTransaction = receipt.transactions?.[0] || {};
-  const orderTotal = receipt.grandtotal?.amount
-    ? Number(receipt.grandtotal.amount) / Number(receipt.grandtotal.divisor || 100)
-    : Number(receipt.total_price || receipt.order_total || 0);
-  return {
-    orderId: receipt.receipt_id || receipt.order_id || "--",
-    sku: firstTransaction.sku || String(firstTransaction.listing_id || "--"),
-    cat: firstTransaction.title || receipt.name || "Etsy Order",
-    qty: Number(firstTransaction.quantity || receipt.transactions?.length || 1),
-    price: Number.isFinite(orderTotal) ? orderTotal : 0,
-    logisticsType: receipt.shipping_carrier || "Etsy seller-fulfilled",
-    status: receipt.status || (receipt.was_shipped ? "shipped" : "open"),
-    countdown: receipt.expected_ship_date
-      ? new Date(Number(receipt.expected_ship_date) * 1000).toLocaleString()
-      : "--",
-    raw: receipt,
-  };
+function boundedPageNumber(value, fallback, maximum) {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) return fallback;
+  return Math.min(parsed, maximum);
 }
 
-export async function etsyGetProductList(limit = 100, offset = 0) {
-  const settings = await getEtsySettings();
-  const { shopId } = settings;
-  if (!settings.apiKey || !shopId) {
-    return buildUnconfiguredApiResult("active_listings", settings, {
-      items: [],
-      total: 0,
-      last_id: String(Number(offset || 0)),
-      raw: {},
-    });
+async function requireConnectedIntegration() {
+  const integration = await getEtsyIntegrationStatus();
+  if (integration.oauthStatus !== "connected" || !integration.shop?.id) {
+    const error = new Error("请先在 Marqel Control Center 完成 Etsy Seller App 与店主只读 OAuth 连接。");
+    error.code = "ETSY_OAUTH_NOT_CONNECTED";
+    throw error;
   }
+  if (integration.dataProxy?.status !== "read_only") {
+    const error = new Error("Control Center 尚未开放 Etsy Listing 只读数据代理；禁止使用旧本地 Key/Token 直连。");
+    error.code = "ETSY_DATA_PROXY_UNAVAILABLE";
+    throw error;
+  }
+  return integration;
+}
 
-  const res = await makeEtsyRequest(`/shops/${encodeURIComponent(shopId)}/listings/active`, {
-    query: {
-      limit: Math.min(Number(limit || 100), 100),
-      offset: Number(offset || 0),
-      includes: "Images",
-    },
-  });
-  const listings = res.results || [];
+export async function getEtsySettings() {
+  const integration = await getEtsyIntegrationStatus().catch(() => null);
   return {
-    items: listings.map(normalizeListing),
-    total: Number(res.count || listings.length),
-    last_id: String(Number(offset || 0) + listings.length),
-    raw: res,
+    source: "marqel_control_center",
+    configured: Boolean(integration?.configured),
+    oauthStatus: integration?.oauthStatus || "not_connected",
+    shopId: String(integration?.shop?.id || ""),
+    shopName: String(integration?.shop?.name || "Etsy Shop"),
+    apiKey: "",
+    oauthToken: "",
+    refreshToken: "",
+    credentialDelivery: "server_only",
   };
 }
 
-export async function etsyGetAllProductListings({ pageSize = 100, maxPages = 20 } = {}) {
+export async function saveEtsySettings() {
+  const error = new Error("本地 Etsy Key/Token 配置已停用；请在 Marqel Control Center 的 Etsy API 连接页配置。");
+  error.code = "ETSY_LOCAL_CREDENTIALS_RETIRED";
+  throw error;
+}
+
+export async function purgeLegacyEtsyCredentials() {
+  const stored = await new Promise((resolve) => chrome.storage.local.get(["etsyShops"], resolve));
+  const sanitizedShops = (Array.isArray(stored.etsyShops) ? stored.etsyShops : []).map(({ apiKey: _apiKey, oauthToken: _oauthToken, refreshToken: _refreshToken, sharedSecret: _sharedSecret, ...shop }) => shop);
+  await new Promise((resolve) => chrome.storage.local.set({ etsyShops: sanitizedShops }, resolve));
+  await new Promise((resolve) => chrome.storage.local.remove(["etsyApiKey", "etsyOAuthToken", "etsyRefreshToken", "etsyClientId"], resolve));
+  return { removed: true, shopsSanitized: sanitizedShops.length, credentialDelivery: "server_only" };
+}
+
+export async function etsyGetProductList(limit = 25, offset = 0) {
+  await requireConnectedIntegration();
+  const pageLimit = Math.max(1, boundedPageNumber(limit, 25, 100));
+  const pageOffset = boundedPageNumber(offset, 0, 100_000);
+  const payload = await controlCenterRequest(`/api/etsy/listings?limit=${pageLimit}&offset=${pageOffset}`);
+  const page = payload.data || {};
+  if (page.contractVersion !== "marqel-etsy-listing-page.v1" || page.source !== "etsy_official_api") throw new Error("Control Center returned an unsupported Etsy listing page contract.");
+  const items = (Array.isArray(page.items) ? page.items : []).map(normalizeListing);
+  return { items, total: Number(page.count || items.length), last_id: String(Number(page.nextOffset ?? pageOffset + items.length)), source: "etsy_official_api_via_control_center", shop: page.shop || null, contractVersion: page.contractVersion };
+}
+
+export async function etsyGetAllProductListings({ pageSize = 25, maxPages = 20 } = {}) {
   const items = [];
   let total = 0;
   let pagesFetched = 0;
-  for (let page = 0; page < Math.max(1, Math.min(Number(maxPages) || 20, 50)); page++) {
-    const result = await etsyGetProductList(pageSize, page * pageSize);
-    if (result.skipped) {
-      return {
-        ...result,
-        pagesFetched,
-        complete: false,
-        coverage: result.message,
-      };
-    }
+  const safePageSize = Math.max(1, Math.min(Number(pageSize) || 25, 100));
+  const pageLimit = Math.max(1, Math.min(Number(maxPages) || 20, 50));
+  for (let page = 0; page < pageLimit; page += 1) {
+    const result = await etsyGetProductList(safePageSize, page * safePageSize);
     pagesFetched += 1;
     total = Number(result.total || total || 0);
-    items.push(...(result.items || []));
-    if (!result.items?.length || result.items.length < pageSize || items.length >= total) break;
+    items.push(...result.items);
+    if (!result.items.length || result.items.length < safePageSize || items.length >= total) break;
   }
-  return {
-    items,
-    total: total || items.length,
-    pagesFetched,
-    complete: total > 0 ? items.length >= total : pagesFetched < maxPages,
-    coverage: `自营 active listings 分页读取 ${pagesFetched} 页，已获得 ${items.length} 条；API total=${total || "未返回"}`,
-  };
+  return { items, total: total || items.length, pagesFetched, complete: total > 0 ? items.length >= total : pagesFetched < pageLimit, source: "etsy_official_api_via_control_center", coverage: `Control Center 只读代理分页读取 ${pagesFetched} 页，已获得 ${items.length} 条 active listings；API total=${total || "未返回"}` };
 }
 
 export async function etsyGetProductInfo(productIds = [], skus = []) {
-  const settings = await getEtsySettings();
-  if (!settings.apiKey) {
-    return buildUnconfiguredApiResult("listing_details", settings, {
-      items: [],
-      failures: [],
-    });
-  }
-  const ids = Array.isArray(productIds) ? productIds.filter(Boolean) : [];
+  await requireConnectedIntegration();
+  const ids = Array.isArray(productIds) ? [...new Set(productIds.map(String).filter((id) => /^\d{1,24}$/.test(id)))].slice(0, 20) : [];
   if (!ids.length && Array.isArray(skus) && skus.length) {
-    const list = await etsyGetProductList(100, 0);
-    return {
-      items: list.items.filter((item) => skus.includes(item.sku)),
-      raw: list.raw,
-    };
+    const list = await etsyGetAllProductListings({ pageSize: 100, maxPages: 20 });
+    return { items: list.items.filter((item) => skus.map(String).includes(item.sku)), failures: [], source: list.source };
   }
-  if (!ids.length) return { items: [] };
-
-  const settled = await Promise.allSettled(
-    ids.slice(0, 20).map((id) =>
-      makeEtsyRequest(`/listings/${encodeURIComponent(id)}`, {
-        query: { includes: "Images" },
-      })
-    )
-  );
-
+  if (!ids.length) return { items: [], failures: [], source: "etsy_official_api_via_control_center" };
+  const settled = await Promise.allSettled(ids.map((id) => controlCenterRequest(`/api/etsy/listings/${encodeURIComponent(id)}`)));
   return {
-    items: settled
-      .filter((result) => result.status === "fulfilled")
-      .map((result) => normalizeListing(result.value)),
-    failures: settled
-      .filter((result) => result.status === "rejected")
-      .map((result) => result.reason?.message || String(result.reason)),
+    items: settled.filter((result) => result.status === "fulfilled").map((result) => normalizeListing(result.value.data?.listing || {})),
+    failures: settled.map((result, index) => ({ result, listingId: ids[index] })).filter(({ result }) => result.status === "rejected").map(({ result, listingId }) => ({ listingId, error: result.reason?.message || String(result.reason) })),
+    source: "etsy_official_api_via_control_center",
   };
 }
 
 export async function etsyGetAnalyticsData(dateFrom, dateTo, dimension = ["sku"], metrics = ["sessions", "orders", "revenue"]) {
-  return {
-    supported: false,
-    accessModel: ETSY_PERSONAL_API_CAPABILITIES.accessModel,
-    data: [],
-    metrics: [],
-    requestedMetrics: metrics,
-    dimension,
-    dateFrom: dateFrom || "",
-    dateTo: dateTo || "",
-    limitation: "Etsy 个人卖家 API 当前不提供 Sessions、页面浏览、点击率或加购率 analytics；不能从 receipts 合成这些指标。",
-    nextStep: "使用公开 Etsy 页面和浏览器证据分析曝光/转化方向；使用个人 API 仅核对自营 listings、订单和发货资料。",
-  };
+  return unsupportedResult("seller_analytics", { data: [], metrics: [], requestedMetrics: metrics, dimension, dateFrom: dateFrom || "", dateTo: dateTo || "" });
 }
 
-export async function etsyGetReceipts(dateFrom, dateTo, offset = 0, limit = 50) {
-  const settings = await getEtsySettings();
-  const { shopId } = settings;
-  if (!settings.apiKey || !shopId || !settings.oauthToken) {
-    return buildUnconfiguredApiResult("seller_receipts", settings, {
-      receipts: [],
-      count: 0,
-      orders: [],
-      raw: {},
-    });
-  }
-  const res = await makeEtsyRequest(`/shops/${encodeURIComponent(shopId)}/receipts`, {
-    requireOAuth: true,
-    query: {
-      limit: Math.min(Number(limit || 50), 100),
-      offset: Number(offset || 0),
-      min_created: toUnixDayStart(dateFrom),
-      max_created: toUnixDayEnd(dateTo),
-    },
-  });
-  const receipts = res.results || [];
-  return {
-    receipts,
-    count: Number(res.count || receipts.length),
-    orders: receipts.map(normalizeReceipt),
-    raw: res,
-  };
+export async function etsyGetReceipts(dateFrom, dateTo) {
+  return unsupportedResult("seller_receipts", { dateFrom: dateFrom || "", dateTo: dateTo || "", receipts: [], count: 0, orders: [] });
 }
 
-export async function etsyGetReceiptWindow(dateFrom, dateTo, { pageSize = 100, maxPages = 20 } = {}) {
-  const receipts = [];
-  let total = 0;
-  let pagesFetched = 0;
-  const pageLimit = Math.max(1, Math.min(Number(maxPages) || 20, 50));
-  for (let page = 0; page < pageLimit; page++) {
-    const result = await etsyGetReceipts(dateFrom, dateTo, page * pageSize, pageSize);
-    if (result.skipped) {
-      return {
-        ...result,
-        pagesFetched,
-        complete: false,
-        coverage: result.message,
-      };
-    }
-    pagesFetched += 1;
-    total = Number(result.count || total || 0);
-    receipts.push(...(result.receipts || []));
-    if (!result.receipts?.length || result.receipts.length < pageSize || receipts.length >= total) break;
-  }
-  return {
-    receipts,
-    count: total || receipts.length,
-    orders: receipts.map(normalizeReceipt),
-    pagesFetched,
-    complete: total > 0 ? receipts.length >= total : pagesFetched < pageLimit,
-    coverage: `自营 receipts 分页读取 ${pagesFetched} 页，已获得 ${receipts.length} 条；API total=${total || "未返回"}`,
-  };
+export async function etsyGetReceiptWindow(dateFrom, dateTo) {
+  return { ...(await etsyGetReceipts(dateFrom, dateTo)), pagesFetched: 0, complete: false };
 }
 
-export async function etsyGetFbsPostingList(dateFrom, dateTo, offset = 0, limit = 50) {
-  return etsyGetReceipts(dateFrom, dateTo, offset, limit);
-}
+export async function etsyGetFbsPostingList(dateFrom, dateTo) { return etsyGetReceipts(dateFrom, dateTo); }
 
-export async function etsyGetFboPostingList() {
-  return {
-    receipts: [],
-    postings: [],
-    count: 0,
-    note: "Etsy has no native platform-fulfilled warehouse equivalent in this adapter; use receipts and seller-fulfilled shipping evidence.",
-  };
-}
+export async function etsyGetFboPostingList() { return unsupportedResult("platform_fulfillment", { receipts: [], postings: [], count: 0 }); }
 
 export async function etsyGetStoreSnapshot(args = {}) {
-  const { dateFrom, dateTo } = args.dateFrom && args.dateTo
-    ? args
-    : getDefaultEtsyDateRange(args.days || 14);
-  const metrics = args.metrics || ["ordered_units", "revenue"];
-
-  const runSettled = async (fn) => {
-    try {
-      return { status: "fulfilled", value: await fn() };
-    } catch (reason) {
-      return { status: "rejected", reason };
-    }
-  };
-
-  const products = await runSettled(() => etsyGetAllProductListings({ pageSize: args.productPageSize || 100, maxPages: args.productMaxPages || 20 }));
-  const receipts = await runSettled(() => etsyGetReceiptWindow(dateFrom, dateTo, { pageSize: args.pageSize || 100, maxPages: args.receiptMaxPages || 20 }));
-
-  const failures = [];
-  const result = {
+  const { dateFrom, dateTo } = args.dateFrom && args.dateTo ? args : getDefaultEtsyDateRange(args.days || 14);
+  const products = await etsyGetAllProductListings({ pageSize: args.productPageSize || 25, maxPages: args.productMaxPages || 20 });
+  const receipts = await etsyGetReceipts(dateFrom, dateTo);
+  return {
     ok: true,
-    source: "etsy_personal_seller_api",
+    source: "etsy_official_api_via_control_center",
     accessModel: ETSY_PERSONAL_API_CAPABILITIES.accessModel,
     capabilities: getEtsyApiCapabilities(),
-    dateFrom,
-    dateTo,
-    products: { items: [], total: 0 },
-    analytics: {
-      supported: false,
-      data: [],
-      totals: {},
-      metrics: [],
-      requestedMetrics: metrics,
-      limitation: "个人卖家 API 不提供 Sessions、页面浏览、点击率或加购率 analytics；以下快照不填充这些指标。",
-    },
-    postings: { fbs: [], fbo: [], count: 0 },
-    receipts: [],
-    orders: [],
-    failures,
+    dateFrom, dateTo, products,
+    productCoverage: products.coverage,
+    productsComplete: products.complete,
+    analytics: await etsyGetAnalyticsData(dateFrom, dateTo, args.dimension, args.metrics),
+    postings: { fbs: [], fbo: [], count: 0, skipped: true },
+    receipts: [], orders: [],
+    receiptCoverage: receipts.message,
+    receiptsComplete: false,
+    limitations: [receipts.limitation],
+    failures: [],
   };
-
-  if (products.status === "fulfilled") {
-    result.products = products.value;
-    result.productCoverage = products.value.coverage;
-    result.productsComplete = products.value.complete;
-  } else {
-    failures.push({ endpoint: "etsyGetProductList", error: products.reason?.message || String(products.reason) });
-  }
-
-  if (receipts.status === "fulfilled") {
-    result.receipts = receipts.value.receipts || [];
-    result.orders = receipts.value.orders || [];
-    result.postings.fbs = result.receipts;
-    result.postings.count = result.receipts.length;
-    result.receiptCoverage = receipts.value.coverage;
-    result.receiptsComplete = receipts.value.complete;
-  } else {
-    failures.push({ endpoint: "etsyGetReceipts", error: receipts.reason?.message || String(receipts.reason) });
-  }
-
-  result.ok = failures.length === 0;
-  return result;
 }

@@ -53,6 +53,7 @@ import { buildCrossBorderSourcingHandoff, isCrossBorderSourcingRequest } from '.
 import { createEtsyAdsPowerTaskAdapter } from './modules/etsyAdsPowerTaskAdapter.js';
 import { attachLocalBusinessAuthority, buildLocalBusinessAuthority } from './modules/businessAuthority.js';
 import { openExtensionSurface } from './modules/extensionSurface.js';
+import { purgeLegacyEtsyCredentials } from './modules/etsyApi.js';
 
 function clientConfigSummary(config = null) {
   if (!config) return null;
@@ -2094,6 +2095,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
 // ── Initialize Default Settings on Installation ──
 chrome.runtime.onInstalled.addListener(() => {
+  purgeLegacyEtsyCredentials().catch((err) => console.warn("Failed to purge retired local Etsy credentials:", err.message));
   ensureUpdateAlarm().catch((err) => console.warn("Failed to initialize update alarm:", err.message));
   ensureTaskLogRetentionAlarm().catch((err) => console.warn("Failed to initialize task log retention:", err.message));
   chrome.alarms.create(DEVICE_AUTH_ALARM, { periodInMinutes: 1 });

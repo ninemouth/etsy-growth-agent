@@ -436,6 +436,12 @@ function sanitizedEtsyIntegration(integration = {}) {
     refreshExpiresAt: integration.refreshExpiresAt || "",
     updatedAt: integration.updatedAt || "",
     lastErrorCode: integration.lastErrorCode || "",
+    dataProxy: integration.dataProxy && typeof integration.dataProxy === "object" ? {
+      status: String(integration.dataProxy.status || "unavailable"),
+      source: String(integration.dataProxy.source || ""),
+      resources: Array.isArray(integration.dataProxy.resources) ? integration.dataProxy.resources.map(String) : [],
+      unsupported: Array.isArray(integration.dataProxy.unsupported) ? integration.dataProxy.unsupported.map(String) : [],
+    } : { status: "unavailable", source: "", resources: [], unsupported: [] },
     credentialDelivery: "server_only",
     externalActionPerformed: false,
     controlCenterUrl: `${controlCenterOrigin()}/etsy-api.html`,

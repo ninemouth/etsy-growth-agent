@@ -240,7 +240,7 @@ function renderAuthorizationSession(session = null, etsyIntegration = null) {
     const etsyApi = document.createElement("span");
     etsyApi.textContent = etsyIntegration?.unavailable
       ? "Etsy API：状态暂不可用；设备授权和团队模型配置不受影响"
-      : `Etsy API：${etsyIntegration?.oauthStatus === "connected" ? `已连接 ${etsyIntegration.shop?.name || etsyIntegration.shop?.id || "当前店铺"}` : "未连接"} · 凭据仅在 Control Center 服务端`;
+      : `Etsy API：${etsyIntegration?.oauthStatus === "connected" ? `已连接 ${etsyIntegration.shop?.name || etsyIntegration.shop?.id || "当前店铺"}` : "未连接"} · ${etsyIntegration?.dataProxy?.status === "read_only" ? "Listing 只读代理可用" : "数据代理不可用"} · 凭据仅在服务端`;
     details.append(title, effective, account, refresh, access, config, etsyApi);
     details.classList.remove("hidden");
   }
@@ -503,7 +503,7 @@ const GROWTH_ACTIONS = {
   diagnose_sku_funnel: {
     title: "SKU 漏斗诊断",
     skillPath: "skills/etsy_operations_tracker.skill.md",
-    instruction: "诊断当前 SKU 的公开页面转化线索和自营订单/发货资料瓶颈；个人 API 不提供 Sessions、点击率或加购率时，必须标记为待验证，不得伪造漏斗指标。",
+    instruction: "诊断当前 SKU 的 Listing 状态和公开页面转化线索；Control Center 代理只提供 active listings / listing details，订单、发货、Sessions、点击率和加购率必须来自用户后台证据，否则标记为待验证。",
   },
   rewrite_listing: {
     title: "商品页转化改版",
@@ -528,7 +528,7 @@ const GROWTH_ACTIONS = {
   detect_fulfillment_risk: {
     title: "履约风险扫描",
     skillPath: "skills/etsy_operations_tracker.skill.md",
-    instruction: "扫描待发货倒计时、发货资料 履约风险、断货风险、补货优先级和库存积压 SKU。",
+    instruction: "基于 Listing 库存/可见状态与用户提供的后台发货证据扫描履约风险；当前代理不返回待发货订单或 Shipping Profile，缺失时必须阻断对应结论。",
   },
   find_expansion_opportunities: {
     title: "扩品机会发现",
@@ -548,7 +548,7 @@ const GROWTH_ACTIONS = {
   review_experiment_result: {
     title: "复盘实验结果",
     skillPath: "skills/etsy_operations_tracker.skill.md",
-    instruction: "复盘执行中和观察中的增长实验，比较真实自营订单/发货资料与公开页面证据；没有基线或个人 API 不支持的曝光/加购指标必须标记待验证，不得直接判断成功。",
+    instruction: "复盘执行中和观察中的增长实验，比较 Listing/公开页面变化与用户提供的后台指标；没有同口径基线、订单或曝光/加购证据时必须标记待验证，不得直接判断成功。",
   },
 };
 
@@ -944,30 +944,10 @@ async function refreshAllData() {
       "etsySkuAnalyticsSnapshot",
       MANUAL_FUNNEL_STORAGE_KEY,
       "etsyStoreSnapshotCache",
-      "etsyClientId",
-      "etsyApiKey",
       "etsyShops",
       "activeShopId"
     ], resolve);
   });
-
-  // 1. Credentials Migration for backward compatibility
-  if (data.etsyClientId && data.etsyApiKey && (!data.etsyShops || data.etsyShops.length === 0)) {
-      const migratedShop = {
-      id: data.etsyShopId || `shop_${Date.now()}`,
-      shopId: data.etsyShopId || "",
-      name: "默认自建店铺",
-      apiKey: data.etsyApiKey,
-      warehouseType: "Etsy 自发货",
-      isDefault: true
-    };
-    data.etsyShops = [migratedShop];
-    data.activeShopId = migratedShop.id;
-    await new Promise(r => chrome.storage.local.set({
-      etsyShops: data.etsyShops,
-      activeShopId: data.activeShopId
-    }, r));
-  }
 
   const shops = data.etsyShops || [];
   let activeId = data.activeShopId;
@@ -2878,20 +2858,20 @@ function renderSourceLedger() {
   const formatSyncTime = (value) => value ? new Date(value).toLocaleString() : "未同步";
   ledger.innerHTML = `
     <div class="source-ledger-item">
-      <strong><span class="source-dot ${hasSkuApi ? "live" : hasManualFunnel ? "local" : "local"}"></span>${hasSkuApi ? "Etsy 个人访问 API SKU Analytics" : hasManualFunnel ? "手动补录后台漏斗" : "本地跟踪 SKU"}</strong>
-      <p>${hasSkuApi ? `SKU 作战台已接入 ${growthRuntimeState.skuAnalyticsSnapshot.result.data.length} 行真实 SKU 维度 analytics；本地缓存更新时间：${formatSyncTime(growthRuntimeState.skuAnalyticsSnapshot.syncedAt)}。` : hasManualFunnel ? `SKU 作战台正在使用手动补录的 Etsy 后台 Search Analytics；最近补录：${formatSyncTime(growthRuntimeState.manualFunnelSnapshot.syncedAt)}。` : "SKU 作战台仅显示本地跟踪商品；曝光、加购、订单等指标需同步 Etsy 个人访问 API 或手动补录后台漏斗后显示。"}</p>
+      <strong><span class="source-dot ${hasSkuApi ? "live" : hasManualFunnel ? "local" : "local"}"></span>${hasSkuApi ? "历史 SKU Analytics 缓存" : hasManualFunnel ? "手动补录后台漏斗" : "本地跟踪 SKU"}</strong>
+      <p>${hasSkuApi ? `检测到 ${growthRuntimeState.skuAnalyticsSnapshot.result.data.length} 行历史 SKU analytics 缓存；当前 Listing 代理不会刷新这类指标，请核对来源和时间：${formatSyncTime(growthRuntimeState.skuAnalyticsSnapshot.syncedAt)}。` : hasManualFunnel ? `SKU 作战台正在使用手动补录的 Etsy 后台 Search Analytics；最近补录：${formatSyncTime(growthRuntimeState.manualFunnelSnapshot.syncedAt)}。` : "SKU 作战台仅显示本地跟踪商品；曝光、加购、订单等指标必须手动补录 Etsy 后台证据。"}</p>
     </div>
     <div class="source-ledger-item">
       <strong><span class="source-dot local"></span>${hasHistory ? "本地历史可用" : "暂无历史证据"}</strong>
       <p>${hasHistory ? "机会卡会读取 savedResults / monitorChangeEvents / monitorReports。" : "机会中心暂无真实历史证据，只显示空态。"}</p>
     </div>
     <div class="source-ledger-item">
-      <strong><span class="source-dot ${hasStoreApi ? "live" : "local"}"></span>${hasStoreApi ? "Etsy 个人访问 API 店铺快照" : hasShop ? "已选择活动店铺" : "未绑定 Etsy 个人访问 API"}</strong>
-      <p>${hasStoreApi ? `店铺快照已保存在本地；下次 Etsy 个人访问 API 同步成功会覆盖更新。最近同步：${formatSyncTime(growthRuntimeState.storeSnapshotCache.syncedAt)}。` : hasShop ? "店铺 API 看板会请求 Etsy 个人访问 API；失败时只显示错误和空态。" : "店铺业绩、订单和费用在未绑定 API 时显示为空态。"}</p>
+      <strong><span class="source-dot ${hasStoreApi ? "live" : "local"}"></span>${hasStoreApi ? "Control Center Listing 只读快照" : hasShop ? "已选择活动店铺" : "未连接 Etsy 只读代理"}</strong>
+      <p>${hasStoreApi ? `Listing 快照已保存在本地；下次只读代理同步成功会覆盖更新。最近同步：${formatSyncTime(growthRuntimeState.storeSnapshotCache.syncedAt)}。订单、费用和履约不在快照内。` : hasShop ? "店铺 API 看板会请求 Control Center Listing 只读代理；失败时只显示错误和空态。" : "Listing 数据需先在 Web 完成 Etsy OAuth；业绩、订单和费用始终需要独立后台证据。"}</p>
     </div>
     <div class="source-ledger-item">
       <strong><span class="source-dot ${hasExperiments ? "local" : "ai"}"></span>${hasExperiments ? "实验状态真实保存" : "实验示例待启动"}</strong>
-      <p>${hasExperiments ? "growthExperiments 已本地持久化；真实复盘需拉取实验前后 API 窗口。" : "暂无实验记录；不会生成默认示例实验。"}</p>
+      <p>${hasExperiments ? "growthExperiments 已本地持久化；真实复盘需对比实验前后 Listing 快照与用户提供的同口径后台指标。" : "暂无实验记录；不会生成默认示例实验。"}</p>
     </div>
   `;
 }
@@ -2899,16 +2879,16 @@ function renderSourceLedger() {
 function getEndpointAuditSummary() {
   return [
     {
-      name: "Etsy 个人访问 API 店铺快照",
+      name: "Control Center Etsy Listing 只读快照",
       status: "真实端点",
       evidence: "GET_ETSY_STORE_SNAPSHOT 调用 etsy_api_get_store_snapshot，成功后缓存到 etsyStoreSnapshotCache。",
       action: "保留在 API 概览；画布只引用它作为经营证据。",
     },
     {
-      name: "Etsy 个人访问 API 自营商品与订单数据",
-      status: "真实端点",
-      evidence: "当前个人卖家 API 可读取自营 listings、商品详情和 receipts/发货资料；不提供 Sessions、页面浏览、点击率或加购率 analytics。",
-      action: "流量与转化方向可由公开 Etsy 页面、搜索截图证据或手动补录 Search Analytics CSV 提供；不把 unsupported analytics 填成 0。",
+      name: "Etsy 自营 Listing 数据（不含订单）",
+      status: "只读真实端点",
+      evidence: "当前 Control Center 代理可读取自营 active listings 与 listing details；不提供 receipts、订单、交易、广告、Sessions、页面浏览、点击率或加购率。",
+      action: "订单/漏斗/履约只能由用户后台导出或截图提供；不把 unsupported 字段填成 0，也不回退到本地 Key/Token。",
     },
     {
       name: "AI 业务技能运行",
@@ -2991,7 +2971,7 @@ async function renderSettingsTab() {
 }
 
 function etsyApiStatusLabel(value) {
-  return ({ connected: "已连接", not_connected: "未连接", error: "连接异常", verified: "Key 已验证", saved_unverified: "Key 待验证", not_configured: "未配置", active: "有效", expired_refreshable: "需刷新", expired: "已过期", not_available: "不可用" })[value] || value || "—";
+  return ({ connected: "已连接", not_connected: "未连接", error: "连接异常", verified: "Key 已验证", saved_unverified: "Key 待验证", not_configured: "未配置", active: "有效", expired_refreshable: "自动刷新", expired: "已过期", not_available: "不可用", read_only: "只读代理可用", unavailable: "不可用" })[value] || value || "—";
 }
 
 function etsyApiStatusDate(value) {
@@ -3016,7 +2996,8 @@ function renderEtsyApiStatusCard(integration = null, error = "") {
     <div><span>Seller App</span><strong>${escapeHtml(etsyApiStatusLabel(integration.credentialStatus))}</strong><small>${integration.keystringLast4 ? `Key 尾号 · ${escapeHtml(integration.keystringLast4)}` : "未向插件下发凭据"}</small></div>
     <div><span>店主 OAuth</span><strong>${escapeHtml(etsyApiStatusLabel(integration.oauthStatus))}</strong><small>${escapeHtml((integration.scopes || []).join(" · ") || "shops_r · listings_r")}</small></div>
     <div><span>绑定店铺</span><strong>${escapeHtml(integration.shop?.name || "—")}</strong><small>${integration.shop?.id ? `Shop ID · ${escapeHtml(integration.shop.id)}` : "尚未回读店铺"}</small></div>
-    <div><span>Token 状态</span><strong>${escapeHtml(etsyApiStatusLabel(integration.accessState))} / ${escapeHtml(etsyApiStatusLabel(integration.refreshState))}</strong><small>Refresh 到期 · ${escapeHtml(etsyApiStatusDate(integration.refreshExpiresAt))}</small></div>`;
+    <div><span>Listing 数据</span><strong>${escapeHtml(etsyApiStatusLabel(integration.dataProxy?.status))}</strong><small>active listings · listing details</small></div>
+    <div><span>Token 状态</span><strong>${escapeHtml(etsyApiStatusLabel(integration.accessState))} / ${escapeHtml(etsyApiStatusLabel(integration.refreshState))}</strong><small>Access 到期自动刷新；Refresh 到期 · ${escapeHtml(etsyApiStatusDate(integration.refreshExpiresAt))}</small></div>`;
 }
 
 async function refreshEtsyApiStatusCard() {
@@ -4227,11 +4208,11 @@ async function renderStoreTab() {
     tableBody.innerHTML = `
       <tr>
         <td colspan="7" class="empty-cell">
-          <div class="empty-state">正在同步 Etsy 个人访问 API...</div>
+          <div class="empty-state">正在同步 Control Center Etsy Listing 只读代理...</div>
         </td>
       </tr>
     `;
-    setStoreApiStatus("partial", "正在请求 Etsy 个人访问 API 实时数据...");
+    setStoreApiStatus("partial", "正在请求 Control Center Etsy Listing 只读数据...");
 
     try {
 	      const response = await chrome.runtime.sendMessage({
@@ -4264,7 +4245,7 @@ async function renderStoreTab() {
         const manualMetrics = mapManualFunnelToStoreMetrics(manualSnapshot);
         renderStoreMetrics({ ...manualMetrics, orders: snapshot.orders || [] }, (snapshot.orders || []).length ? "partial" : "manual");
         renderStoreCostBreakdown({}, "empty");
-        setStoreApiStatus("partial", `订单/Listings 使用 Etsy 个人 API；流量漏斗使用手动补录数据。${snapshot.dateFrom} 至 ${snapshot.dateTo}`);
+        setStoreApiStatus("partial", `Listings 使用 Control Center 只读代理；流量漏斗使用手动补录数据；订单仍未接入。${snapshot.dateFrom} 至 ${snapshot.dateTo}`);
         return;
       }
       const hasLivePayload = (snapshot.analytics?.data || []).length > 0 || (snapshot.orders || []).length > 0 || (snapshot.products?.items || []).length > 0;
@@ -4278,10 +4259,10 @@ async function renderStoreTab() {
       renderStoreCostBreakdown({}, "empty");
       if (snapshot.ok) {
         const skuCount = skuAnalyticsResponse?.data?.result?.data?.length || 0;
-        setStoreApiStatus("live", `Etsy 个人访问 API 实时自营数据：${snapshot.dateFrom} 至 ${snapshot.dateTo}${snapshot.analytics?.supported === false ? "；个人 API 不提供流量/加购 analytics，相关指标显示为 --" : skuCount ? `；SKU 作战台已同步 ${skuCount} 行真实 analytics` : ""}`);
+        setStoreApiStatus("live", `Control Center Listing 只读数据：${snapshot.dateFrom} 至 ${snapshot.dateTo}；订单、流量、加购、交易和履约不在当前代理范围，相关指标显示为 --${skuCount ? `；检测到 ${skuCount} 行历史 analytics 缓存，未由本次同步更新` : ""}`);
       } else {
         const reason = (storeMetrics.failures || []).map(formatStoreApiFailure).join("；");
-        setStoreApiStatus("partial", `Etsy 个人访问 API 部分成功：${reason || "部分接口无数据"}`);
+        setStoreApiStatus("partial", `Control Center Listing 只读代理部分成功：${reason || "部分接口无数据"}`);
       }
     } catch (err) {
       renderManualFallback(err.message);

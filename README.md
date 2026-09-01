@@ -13,7 +13,7 @@ Repository: https://github.com/ninemouth/etsy-growth-agent
 - Etsy trend and product opportunity exploration for lightweight gifts, personalized products, craft supplies, and cross-border supply-chain advantages.
 - Cross-platform supplier sourcing handoff to the Marqel Etsy Codex Orchestrator (the legacy sourcing report reader remains read-only).
 - Competitor/review analysis focused on buyer expectations, packaging, delivery promise, personalization quality, and IP/compliance risk.
-- Control Center Etsy Seller App status: reads only the sanitized organization connection state, shop binding, read-only scopes, and expiry state; Etsy Key, Secret, and OAuth Tokens remain server-only.
+- Control Center Etsy Seller App proxy: reads the sanitized organization connection state plus this shop's active listings and listing details through a device-authenticated server endpoint; Etsy Key, Secret, and OAuth Tokens remain server-only.
 - Etsy Campaign Adapter: imports user-triggered visible Etsy Ads / Offsite Ads evidence as non-canonical input for the Control Center and `etsy-campaign-operator`; it does not approve campaigns, change budgets, or publish Outreach handoffs locally.
 - Governed Etsy draft executor: fills only deterministic fields from an exact approved `etsy-listing-draft.v1` on an allowlisted Etsy editor route, verifies the DOM write, and leaves tokenized tags, images, Save, and Publish visibly manual.
 - Privacy-safe DOM observability: records selector/policy versions, route classes, field-status counts, mask counts, and bounded error codes in local task logs without storing page URLs, business identifiers, approved content, screenshots, or credentials.
@@ -57,7 +57,7 @@ This project keeps the browser automation, dashboard, workflow canvas, report li
 - The dashboard currency and listing logic are centered on USD-style Etsy economics.
 - Compliance guidance focuses on Etsy IP policy, personalization claims, CE/CPC/FDA/category-specific obligations, and gift-market delivery promises.
 - Supplier sourcing is a runtime handoff boundary. The old `etsy_sourcing_finder` Skill file has been physically removed; direct legacy loads fail closed and sourcing intent is handed to the cross-border Orchestrator. Historical sourcing report rendering remains read-only for evidence migration.
-- The governed Etsy API connection is a Seller App / OAuth 2.0 + PKCE flow hosted by Marqel Control Center. This extension receives a sanitized status contract only. The current release does not yet proxy Etsy listing data through Control Center and therefore must not treat `oauthStatus: connected` as permission to call Etsy directly.
+- The governed Etsy API connection is a Seller App / OAuth 2.0 + PKCE flow hosted by Marqel Control Center. This extension receives a sanitized status contract and fixed-contract active-listing/listing-detail results only. It never treats `oauthStatus: connected` as permission to call Etsy directly.
 
 ## Etsy Seller App Connection
 
@@ -68,7 +68,7 @@ Configure the Seller App only in the authenticated Marqel Control Center **Etsy 
 - the bound Shop ID/name and read-only `shops_r` / `listings_r` scopes;
 - access/refresh expiry states and sanitized error codes.
 
-The extension never receives the Seller App shared secret or OAuth tokens from this contract. Existing local Etsy credential keys remain in the source only as a legacy compatibility adapter for old test profiles; the current settings UI does not collect them, and the governed connection-status tool no longer uses them. A server-side Etsy data proxy is still required before the connected Control Center credentials can power listing reads inside Growth Agent. Ads, Listing writes, receipts/orders, and finance data are outside the current read-only scope.
+The extension never receives the Seller App shared secret or OAuth tokens from this contract. On install/update it removes retired local Etsy credential keys and strips nested credentials from legacy shop metadata. Active listings and listing details use the Control Center server-only proxy; access-token expiry triggers server-side refresh when the long-lived refresh grant is still active. Ads, Listing writes, receipts/orders, transactions, and finance data remain outside the current read-only scope and fail closed instead of using legacy direct calls.
 
 ## Before You Run
 
