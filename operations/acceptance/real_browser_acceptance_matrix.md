@@ -1,6 +1,6 @@
 # Etsy Growth Agent 真实浏览器业务流验收矩阵
 
-生成时间：2026-08-27T04:04:29.603Z
+生成时间：2026-09-01T09:30:09.195Z
 
 说明：该矩阵用于指定 AdsPower Etsy Profile 的真实 Chrome/Etsy/Google Trends 环境验收，并验证供应商执行隔离。脚本本身不访问外网，也不把静态检查伪装成真机通过。
 本产品采用组织内部 unpacked 发行，不发布 Chrome Web Store；通过后必须在 JSON 中填写被测扩展版本、完整 Git SHA、Chrome 版本、OS、AdsPower Profile、运行时 Extension ID、V2 设备身份、Control 安装状态、操作者与执行时间，并为每个验收项附上证据引用。

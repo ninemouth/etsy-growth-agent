@@ -9,8 +9,15 @@ const sidepanelSource = fs.readFileSync(path.join(root, "sidepanel.js"), "utf8")
 const sidepanelHtml = fs.readFileSync(path.join(root, "sidepanel.html"), "utf8");
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
+const exampleReleaseManifest = JSON.parse(fs.readFileSync(path.join(root, "release-manifest.example.json"), "utf8"));
+const acceptanceMatrix = JSON.parse(fs.readFileSync(path.join(root, "operations", "acceptance", "real_browser_acceptance_matrix.json"), "utf8"));
 
 assert.equal(pkg.version, manifest.version, "package.json and manifest.json versions must stay aligned for open-source releases");
+assert.equal(exampleReleaseManifest.latest_version, manifest.version, "release manifest example must not advertise a stale version");
+assert.equal(exampleReleaseManifest.release_state, "source_only_blocked", "release manifest example must preserve the pre-acceptance delivery block");
+assert.equal(exampleReleaseManifest.download_url, "", "source-only candidate must not advertise a downloadable release artifact");
+assert.equal(acceptanceMatrix.tested.extensionVersion, manifest.version, "real-browser acceptance matrix must target the current extension version");
+assert.equal(acceptanceMatrix.status, "not_run", "regenerating the acceptance matrix must not claim real-browser acceptance");
 assert.match(updateManagerSource, /chrome\.runtime\.requestUpdateCheck/, "update manager should ask Chrome for runtime extension updates");
 assert.match(updateManagerSource, /chrome\.runtime\.reload\(\)/, "update manager should be able to apply downloaded runtime updates");
 assert.match(updateManagerSource, /releaseManifestUrl/, "update manager should support open-source release manifest awareness");
