@@ -11,12 +11,20 @@ const distDir = path.join(root, "dist");
 const packageName = `etsy-growth-agent-${manifest.version}.zip`;
 const outputPath = path.join(distDir, packageName);
 const releaseManifestPath = path.join(distDir, "release-manifest.json");
-const excludedLegacyFiles = ["skills/etsy_sourcing_finder.skill.md"];
-
 const include = [
-  "_locales", "icons", "libs", "modules", "skills", "background.js", "content.js",
-  "dashboard.css", "dashboard.html", "dashboard.js", "dashboardAds.js", "manifest.json", "print.html", "print.js",
-  "sidepanel.css", "sidepanel.html", "sidepanel.js", "PrivacyPolicy.md", "DATA_GOVERNANCE.md", "README.md", "LICENSE",
+  "_locales", "icons",
+  "modules/browserAutomationCapabilities.js",
+  "modules/controlCenterAuth.js",
+  "modules/deviceProof.js",
+  "modules/etsyAdsPowerTaskAdapter.js",
+  "modules/etsyDraftDomWriter.js",
+  "modules/extensionSurface.js",
+  "modules/screenshotPrivacyMask.js",
+  "modules/taskLogStore.js",
+  "edge-background.js", "edge-content.js",
+  "dashboard.css", "dashboard.html", "dashboard.js",
+  "sidepanel.css", "sidepanel.html", "sidepanel.js",
+  "manifest.json", "PrivacyPolicy.md", "DATA_GOVERNANCE.md", "README.md", "LICENSE",
 ];
 
 const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
@@ -49,8 +57,6 @@ if (existsSync(releaseManifestPath)) await rm(releaseManifestPath);
 const stageRoot = await mkdtemp(path.join(os.tmpdir(), "etsy-growth-agent-package-"));
 try {
   for (const entry of include) await cp(path.join(root, entry), path.join(stageRoot, entry), { recursive: true });
-  for (const excluded of excludedLegacyFiles) await rm(path.join(stageRoot, excluded), { force: true });
-
   const files = await collectFiles(stageRoot);
   const fixedTime = new Date("2000-01-01T00:00:00.000Z");
   for (const file of files) await utimes(path.join(stageRoot, file), fixedTime, fixedTime);

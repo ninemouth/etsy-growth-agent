@@ -1,11 +1,34 @@
-# Data governance
+# Data governance — Marqel Etsy Edge 2.0
 
-This extension is an Etsy operating assistant. It must not use account, login, payment, order, security, cookie, or private-message pages as model evidence. Etsy credentials, MFA, browser cookies, and Marqel device tokens are never included in prompts or injected into page scripts.
+Marqel Etsy Edge is a task-bound browser execution node. It does not run models, accept provider credentials, perform competitor research, maintain business reports, or store a duplicate business configuration.
 
-Every workflow that captures the current viewport requires a fresh, visible user confirmation before the run starts. The confirmation states that the screenshot is sent to the organization-configured model provider. Before an Etsy viewport capture, the content script blocks account, login, checkout, cart, payment, billing, security, message, conversation, and order routes; on other Etsy routes it temporarily hides detected credential, email, phone, address, postal, payment, order, and explicitly marked private elements, waits for the mask to paint, captures the visible viewport, and restores the page. If the mask is unavailable or inconsistent, capture fails closed. The screenshot is used as transient model context and is not part of the exported evidence bundle unless a separate, explicit artifact action is added and approved. Heuristic masking cannot guarantee detection of every page variant; provider retention/training terms, DPA, deletion, and real-browser privacy acceptance remain organization responsibilities.
+## Data allowed in the extension
 
-Structured outputs, task logs, and resumable checkpoints are stored locally under the documented retention controls. Business artifacts synchronized to Marqel follow Control Center access, audit, and retention policy. The governed DOM writer accepts only an exact approved `etsy-listing-draft.v1`, fills deterministic allowlisted editor fields atomically, verifies them, and never clicks Save/Publish/Submit or uploads files; tokenized tags, images, review, and visible Save remain human actions. Public publishing, Ads changes, supplier actions, and spend remain separate approval-gated operations.
+- A short-lived Marqel device session and rotating refresh token.
+- The exact Web-approved Etsy task, operation reference, approval reference, permission reference and lease state.
+- Bounded local runtime logs containing event type, timestamp, severity, coarse outcome counts and task/operation references.
+- The current approved Listing draft while it is being filled.
 
-Draft-write and privacy-mask outcomes emit bounded local `etsy_dom_telemetry` records through the existing task-log store. Allowed fields are contract/policy/selector versions, coarse Etsy route class, field-status counts, masked-element count, boolean Save/Publish boundaries, and bounded error codes. Full URLs, listing or operation identifiers, approved text, field values, selector strings, screenshots, tokens, credentials, and page content are not telemetry fields. Retention and export follow the task-log controls; live Etsy variant coverage and alert thresholds remain RB-07/SLO acceptance work.
+## Page access and evidence
 
-Production distribution is organization-internal and unpacked; Chrome Web Store publication is out of scope. It requires RB-01 through RB-07 real-browser acceptance in the exact AdsPower Etsy Profile, including the governed Control Center task-to-Etsy-draft readback path, `installMode=unpacked`, the exact runtime Extension ID and dedicated `etsy_adspower/etsy-growth-agent` V2 device report in Control Center, plus an organization-owned stable manifest key, supported Chrome floor, immutable ZIP/release-manifest SHA, rollback artifact, and provider data-processing review. Source availability, local tests, package checksums, or a visible enabled toggle alone do not satisfy this gate.
+The content script runs only on Etsy HTTPS origins declared in the manifest. Account, login, checkout, cart, payment, billing, security, message, conversation, order and receipt pages are blocked from evidence capture. Other `/your` routes are blocked unless they match an allowlisted Listing editor route.
+
+A viewport capture is permitted only after an operator invokes the evidence action for an active, preflighted task. Before capture, the page bridge masks detected email, phone, address, postal, credential, order, payment and explicitly private elements; it then restores the page in a `finally` path. The resulting JPEG is hashed and uploaded only to the matching Marqel task artifact endpoint. It is not sent to a model provider and is not used for autonomous analysis.
+
+Masking is heuristic. Real Etsy locale and A/B variants must pass the controlled browser acceptance matrix before release.
+
+## Page mutation
+
+The DOM writer accepts only an exact approved `etsy-listing-draft.v1` with a valid operation, approval, permission reference and lease. It fills allowlisted fields, verifies their values, rolls back partial changes, and never clicks Save, Submit or Publish. Unsupported tags, images, categories or dynamic components remain manual.
+
+## Terminal state
+
+An Etsy action is not complete until the human-confirmed draft ID/URL or bounded failure is written back to the same Web operation. An uncertain response disables repeated mutation and permits only read-only reconciliation.
+
+## Retention and removal
+
+Task log retention is enforced locally by the runtime. Web artifacts follow Control Center access and retention policy. On 2.0 installation or update, retired model credentials, report libraries, monitoring state, growth cases, workflow checkpoints and finance settings are deleted; there is no compatibility UI or migration back to the prior local-agent model.
+
+## Release gate
+
+Local tests and a valid ZIP are not production acceptance. Release requires a clean reviewed commit, immutable package digest, the exact AdsPower/Chrome profile and Extension ID, Control Center readback, archived Etsy authorization for the planned browser behavior, and a passed real-browser task from Web approval through Etsy draft readback.

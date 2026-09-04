@@ -26,14 +26,19 @@ export async function openExtensionSurface(chromeApi, { tabId, view = "main" } =
   let sidePanelError = null;
   if (Number.isInteger(tabId) && typeof chromeApi.sidePanel?.open === "function") {
     try {
+      let setOptionsPromise = Promise.resolve();
       if (typeof chromeApi.sidePanel.setOptions === "function") {
-        await chromeApi.sidePanel.setOptions({
+        // Invoke open before yielding. Chromium requires sidePanel.open() to stay
+        // inside the originating user gesture; awaiting setOptions first can
+        // invalidate that gesture and force the extension-tab fallback.
+        setOptionsPromise = Promise.resolve(chromeApi.sidePanel.setOptions({
           tabId,
           path: `${DEFAULT_PAGE}${view === "settings" ? "#settings" : ""}`,
           enabled: true,
-        });
+        }));
       }
-      await chromeApi.sidePanel.open({ tabId });
+      const openPromise = Promise.resolve(chromeApi.sidePanel.open({ tabId }));
+      await Promise.all([setOptionsPromise, openPromise]);
       return { surface: "side_panel", tabId, url: targetUrl, reused: false };
     } catch (error) {
       sidePanelError = error;
@@ -46,4 +51,3 @@ export async function openExtensionSurface(chromeApi, { tabId, view = "main" } =
     fallbackReason: sidePanelError?.message || (Number.isInteger(tabId) ? "side_panel_unavailable" : "tab_id_unavailable"),
   };
 }
-

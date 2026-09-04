@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-04T08:00:00Z",
+  "title": "Design System: Marqel Etsy Edge Instrument",
+  "extensions": {
+    "colorMeta": {
+      "paper-canvas": { "role": "neutral", "displayName": "Paper Canvas", "canonical": "#f4f0e9" },
+      "paper-surface": { "role": "neutral", "displayName": "Paper Surface", "canonical": "#fffdf9" },
+      "graphite": { "role": "neutral", "displayName": "Graphite", "canonical": "#2b2723" },
+      "etsy-orange": { "role": "primary", "displayName": "Etsy Orange", "canonical": "#b7471c" },
+      "proof-success": { "role": "semantic", "displayName": "Proof Success", "canonical": "#2f7a4d" },
+      "proof-warning": { "role": "semantic", "displayName": "Proof Warning", "canonical": "#95601a" },
+      "proof-danger": { "role": "semantic", "displayName": "Proof Danger", "canonical": "#a93429" }
+    },
+    "breakpoints": [
+      { "name": "sidepanel-compact", "value": "360px" },
+      { "name": "console-mobile", "value": "620px" },
+      { "name": "console-stacked", "value": "900px" }
+    ]
+  },
+  "components": [
+    { "name": "Page Dock", "kind": "navigation", "description": "A compact task, Web and settings launcher without analysis shortcuts." },
+    { "name": "Capability Passport", "kind": "status", "description": "Page, authority, runtime and next-action facts with a textual reason." },
+    { "name": "Execution Rail", "kind": "progress", "description": "Web approval, lease preflight, field fill and terminal readback." },
+    { "name": "Task Evidence Action", "kind": "button", "description": "User-triggered privacy-safe evidence capture bound to the active task." },
+    { "name": "Node Verdict", "kind": "card", "description": "The strongest Node Console object and current safe-action statement." },
+    { "name": "Single Settings View", "kind": "settings", "description": "Device identity, runtime version, site scope and hard boundaries only." }
+  ],
+  "narrative": {
+    "northStar": "Edge Instrument",
+    "overview": "A narrow browser instrument for one approved Etsy task, one visible page and one verifiable result.",
+    "keyCharacteristics": [
+      "No chat or research surface",
+      "One Etsy-orange action voice",
+      "Task-bound evidence and terminal readback",
+      "One settings route",
+      "Small page footprint and visible recovery"
+    ],
+    "dos": [
+      "Show exact task identity before mutation",
+      "Keep controls at least 44px high",
+      "Label every status in text",
+      "Disable repeat mutation after uncertain readback"
+    ],
+    "donts": [
+      "Do not add competitor or trend analysis",
+      "Do not add local model credentials",
+      "Do not duplicate Web settings",
+      "Do not imply a click is business completion"
+    ]
+  }
+}

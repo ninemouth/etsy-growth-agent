@@ -4,126 +4,176 @@
 
 export const BROWSER_AUTOMATION_CAPABILITIES = [
   {
-    id: "address_navigation",
-    label: "地址打开与页面跳转",
-    tools: ["open_url", "open_new_tab", "navigate_to", "search_in_browser"],
+    id: "task_bound_page_identity",
+    label: "任务绑定的页面识别",
+    tools: ["GET_EDGE_CAPABILITY_PASSPORT"],
     robustness: "strong",
     guarantees: [
-      "新开标签页进入 workflow-owned tab 管理",
-      "等待页面加载、DOM 证据稳定和截图可采集后返回",
-      "保护来源 Etsy tab，避免店铺首页被覆盖或关闭",
+      "只判断当前标签页是否为允许的 Etsy 现场",
+      "敏感页面默认阻断",
+      "页面识别本身不生成竞品、趋势或经营结论",
     ],
     limitations: [
-      "登录墙、验证码、人机验证会返回阻断或待人工状态",
-      "站点强跳转时只能记录最终 URL、页面健康状态和证据质量",
+      "公开页面只代表当前可见现场",
+      "没有 Web 任务和授权引用时不得采集为业务证据",
     ],
   },
   {
-    id: "governed_search_navigation",
-    label: "受治理搜索导航边界",
-    tools: ["search_in_browser"],
+    id: "approved_draft_fill",
+    label: "获批 Listing 草稿填充",
+    tools: ["ETSY_TASK_APPLY_APPROVED_DRAFT"],
     robustness: "human_gated",
     guarantees: [
-      "模型不获得通用输入、提交或页面点击工具",
-      "公开检索只通过受约束的搜索导航工具打开新标签页",
-      "需要登录、提交或状态变更时转为人工操作",
+      "只接受 Web 精确批准且带有效租约的 etsy-listing-draft.v1",
+      "逐字段写入并验证页面值",
+      "绝不点击保存或公开发布",
     ],
     limitations: [
-      "复杂 Shadow DOM、强登录态或验证码可能需要人工介入",
-      "复杂筛选应配合页面 DOM、截图和显式 filter/sort 证据",
+      "Etsy DOM 变化、验证码与登录墙会阻断执行",
+      "图片、类目和动态组件可能需要人工完成",
     ],
   },
   {
-    id: "filter_sort_pagination",
-    label: "筛选、排序与翻页",
-    tools: ["collect_etsy_shop_pages", "collect_etsy_competitor_shops", "scroll_page", "read_current_page"],
-    robustness: "medium_high",
+    id: "privacy_safe_task_evidence",
+    label: "任务内隐私安全证据",
+    tools: ["PREPARE_PRIVACY_SAFE_SCREENSHOT", "RESTORE_PRIVACY_SAFE_SCREENSHOT"],
+    robustness: "human_gated",
     guarantees: [
-      "店铺商品页会按 Etsy 分页机制采集可见商品",
-      "竞品采集会记录排序、分页、商品卡片和页面签名",
-      "模型侧不暴露通用文本、选择器或坐标点击能力",
+      "账号、订单、付款、消息和验证码区域禁止或遮罩",
+      "证据必须关联已批准任务和页面对象",
+      "截图不触发分析或外发给第三方模型",
     ],
     limitations: [
-      "Etsy 个性化、地区化和虚拟加载会影响排序样本",
-      "公开页面只能代表本轮可见样本，不能推断全平台完整商品数或竞品后台数据",
+      "只证明当前可见页面状态",
+      "不能证明 Etsy 后台未显示的指标或全平台事实",
     ],
   },
   {
-    id: "dom_collection_cleaning",
-    label: "DOM 采集、清洗与压缩",
-    tools: ["read_current_page", "collect_etsy_shop_pages", "collect_etsy_competitor_shops"],
+    id: "terminal_readback",
+    label: "终态回读与对账",
+    tools: ["ETSY_TASK_RECORD_UPLOADED", "ETSY_TASK_RECORD_FAILED", "ETSY_TASK_RECONCILE"],
     robustness: "strong",
     guarantees: [
-      "优先读取 content script 结构化结果",
-      "content script 薄弱时回退 scripting.executeScript 多 frame DOM snapshot",
-      "返回页面健康状态、商品卡片、商品链接、图片、可见文本摘要和 pageEvidence",
+      "记录 Etsy draft ID、URL、失败原因与时间",
+      "回读 Artifact 与任务、operation、Listing 草稿一一关联",
+      "不确定状态只允许对账，不允许重复页面动作",
     ],
     limitations: [
-      "DOM 文本只代表当前可访问公开页面或授权自营页面",
-      "Etsy 个人卖家 API 不支持读取其他店铺后台、竞品订单、竞品转化率或平台搜索量",
-    ],
-  },
-  {
-    id: "multimodal_screenshot",
-    label: "多模态截图与视觉识别",
-    tools: ["collect_etsy_shop_pages", "analyze_etsy_shop_crawl_screenshots", "search_in_browser"],
-    robustness: "medium_high",
-    guarantees: [
-      "使用 Chrome captureVisibleTab 采集当前可见 viewport，并明确标记采集模式",
-      "店铺、竞品、Google Trends 截图进入 artifactStore 并带 capture mode",
-      "截图视觉分析必须与 DOM 和搜索证据双轨校验",
-    ],
-    limitations: [
-      "截图不得替代 DOM 文本审计",
-      "Google Trends 动态模块必须等待稳定；只加载壳页时必须阻断或降级为待验证",
-    ],
-  },
-  {
-    id: "review_collection",
-    label: "评论与买家原声采集",
-    tools: ["read_current_page", "open_new_tab", "collect_etsy_competitor_shops"],
-    robustness: "medium",
-    guarantees: [
-      "支持从当前 DOM 抽取可见评论、评分、review count 和买家表达",
-      "支持打开公开 listing / shop 页面读取评论线索",
-      "评论区受阻时必须写入 blocking_gaps 或 assumption",
-    ],
-    limitations: [
-      "公开评论样本代表本轮可见 DOM，不代表全量评论分布",
-      "竞品评论、销量、转化率不能通过 Etsy 个人 API 获取",
-    ],
-  },
-  {
-    id: "tab_lifecycle",
-    label: "网页关闭与生命周期保护",
-    tools: ["close_tab", "search_in_browser", "open_new_tab", "navigate_to", "collect_etsy_shop_pages"],
-    robustness: "strong",
-    guarantees: [
-      "workflow 创建的标签页登记为 owned tab",
-      "来源 Etsy tab 被保护，cleanup 不会关闭原始店铺页",
-      "工具超时会清理本轮新增临时页并保存 checkpoint",
-    ],
-    limitations: [
-      "用户手动关闭来源页时只能保存断点并提示刷新后恢复",
-      "未由 workflow 创建的旧标签页只在明确 tabId 且非保护页时关闭",
-    ],
-  },
-  {
-    id: "seller_api_and_archive",
-    label: "Etsy 个人卖家 API 与本地归档",
-    tools: ["etsy_api_get_store_snapshot", "etsy_api_get_product_list", "etsy_api_get_product_info", "get_saved_results", "save_result"],
-    robustness: "medium_high",
-    guarantees: [
-      "Etsy API 仅用于授权自营店铺、listing、订单/发货资料等个人访问范围",
-      "成功报告写入 savedResults，并附带 evidence_bundle 与 evidence_quality",
-      "workflow checkpoint 保留断点、工具历史和 research_scope",
-    ],
-    limitations: [
-      "缺少授权或字段不足时必须进入 blocking_gaps 或 assumption",
-      "平台大盘、竞品后台、竞品订单、竞品转化率不得用个人卖家 API 冒充",
+      "人工必须在可见 Etsy 页面确认草稿已保存",
+      "读回失败不能自动重做写入",
     ],
   },
 ];
+
+export const EDGE_CAPABILITY_PASSPORT_VERSION = "etsy-edge-capability-passport.v2";
+
+const ETSY_HOST_RE = /(^|\.)etsy\.com$/i;
+const LISTING_EDITOR_PATH_RE = /\/(?:your\/shops\/[^/]+\/(?:listing|listings)|your\/shops\/[^/]+\/tools\/listings|your\/listings|listing-manager|shop-manager\/listings|listing-editor)(?:\/|$)/i;
+const SENSITIVE_ETSY_PATH_RE = /\/(?:account|signin|login|checkout|cart|payment|billing|security|messages?|conversations?|orders?|receipts?)(?:\/|$)/i;
+
+export function classifyEtsySurface(tab = {}) {
+  let parsed;
+  try {
+    parsed = new URL(String(tab.url || ""));
+  } catch (_) {
+    return { type: "unavailable", label: "未识别页面", evidenceAllowed: false, reason: "当前标签页没有可验证 URL。" };
+  }
+  if (!ETSY_HOST_RE.test(parsed.hostname)) {
+    return { type: "external", label: "非 Etsy 页面", evidenceAllowed: false, reason: "打开 Etsy 店铺、Listing 或搜索页后才能建立现场证据。" };
+  }
+  if (LISTING_EDITOR_PATH_RE.test(parsed.pathname)) {
+    return { type: "listing_editor", label: "Etsy Listing 编辑器", evidenceAllowed: true, reason: "只允许执行与当前任务匹配的获批字段填充与终态回读。" };
+  }
+  if (SENSITIVE_ETSY_PATH_RE.test(parsed.pathname)) {
+    return { type: "sensitive", label: "敏感 Etsy 页面", evidenceAllowed: false, reason: "账号、订单、付款、消息和安全页面禁止采集为任务证据。" };
+  }
+  if (/\/your(?:\/|$)/i.test(parsed.pathname)) {
+    return { type: "sensitive", label: "Etsy 卖家私域页面", evidenceAllowed: false, reason: "除 Listing 编辑器外，卖家后台页面不属于当前执行任务。" };
+  }
+  if (/\/listing\//i.test(parsed.pathname)) {
+    return { type: "listing", label: "Etsy Listing", evidenceAllowed: true, reason: "可读取公开 Listing DOM；草稿写入仍要求精确审批任务。" };
+  }
+  if (/\/shop\//i.test(parsed.pathname)) {
+    return { type: "shop", label: "Etsy 店铺", evidenceAllowed: true, reason: "可识别当前公开店铺；没有精确任务时不采集或分析。" };
+  }
+  if (/\/search(?:\/|$)/i.test(parsed.pathname) || parsed.searchParams.has("q")) {
+    return { type: "search", label: "Etsy 搜索/类目", evidenceAllowed: true, reason: "可识别当前公开搜索页；没有精确任务时不采集或分析。" };
+  }
+  return { type: "etsy_public", label: "Etsy 公开页面", evidenceAllowed: true, reason: "可建立当前可见页面证据；具体动作取决于页面结构。" };
+}
+
+function capabilityState(state, label, reason) {
+  return { state, label, reason };
+}
+
+export function buildEdgeCapabilityPassport({
+  tab = {},
+  session = null,
+  activeTask = null,
+  extensionVersion = "",
+} = {}) {
+  const surface = classifyEtsySurface(tab);
+  const controlCenterBound = Boolean(session?.user);
+  const active = activeTask?.task || activeTask || null;
+  const taskBoundEvidenceState = !surface.evidenceAllowed
+    ? surface.type === "sensitive" ? "blocked" : "unavailable"
+    : surface.type !== "listing_editor"
+      ? "wrong_surface"
+      : active ? "ready" : "task_required";
+  const approvedDraftState = surface.type !== "listing_editor"
+    ? "wrong_surface"
+    : controlCenterBound
+      ? "approval_required"
+      : "authorization_required";
+
+  let nextAction = capabilityState("idle", "等待 Web 派发", "竞品研究、趋势判断和 Listing 规划由 Codex 与 Web 完成；插件只领取已批准的 Etsy 现场任务。");
+  if (surface.type === "external" || surface.type === "unavailable") {
+    nextAction = capabilityState("attention", "打开 Etsy 现场", surface.reason);
+  } else if (surface.type === "sensitive") {
+    nextAction = capabilityState("blocked", "离开敏感页面", surface.reason);
+  } else if (active && surface.type !== "listing_editor") {
+    nextAction = capabilityState("attention", "打开任务对应编辑器", "当前获批任务只能在可见的 Etsy Listing 编辑器继续。" );
+  } else if (!controlCenterBound) {
+    nextAction = capabilityState("attention", "连接 Control Center", "完成设备授权后才允许启动 Etsy Edge 任务；公开页面仍只做本地识别。" );
+  } else if (active) {
+    nextAction = capabilityState("active", "继续已领取任务", `当前 ${active.id || "Etsy 任务"} 等待页面执行或终态回读。`);
+  }
+
+  return {
+    schemaVersion: EDGE_CAPABILITY_PASSPORT_VERSION,
+    generatedAt: new Date().toISOString(),
+    identity: {
+      product: "Marqel Etsy Edge",
+      role: "browser_edge_runtime",
+      extensionVersion: String(extensionVersion || ""),
+    },
+    surface: {
+      type: surface.type,
+      label: surface.label,
+      title: String(tab.title || "").slice(0, 120),
+      evidenceAllowed: surface.evidenceAllowed,
+      reason: surface.reason,
+    },
+    authority: {
+      state: controlCenterBound ? "bound" : "local_only",
+      label: controlCenterBound ? "Control Center 已授权" : "仅本地识别",
+    },
+    runtime: {
+      state: active ? "active" : "idle",
+      label: active ? "任务运行中" : "执行槽空闲",
+      operationRef: active?.operationId || "",
+    },
+    evidence: {
+      dom: capabilityState(taskBoundEvidenceState, "任务内页面证据", active ? surface.reason : "没有已批准任务时不建立业务证据。"),
+      viewport: capabilityState(taskBoundEvidenceState, "隐私安全截图", active ? "只用于当前任务回读；不会发送给第三方模型。" : "没有已批准任务时不截图。"),
+    },
+    execution: {
+      approvedDraft: capabilityState(approvedDraftState, "获批草稿填充", "只允许 etsy-listing-draft.v1；逐字段回读，不点击保存或发布。"),
+      publishOrSpend: capabilityState("forbidden", "发布或花费", "公开发布、广告预算、采购、上传和下单始终不属于插件自主权限。"),
+    },
+    nextAction,
+  };
+}
 
 export function summarizeBrowserAutomationCapabilities() {
   return BROWSER_AUTOMATION_CAPABILITIES.map((item) => ({

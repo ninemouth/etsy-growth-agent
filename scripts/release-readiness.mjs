@@ -12,7 +12,7 @@ if (process.versions.node.split(".")[0] !== "22") errors.push(`release requires 
 if (pkg.version !== manifest.version) errors.push("package.json and manifest.json versions differ");
 if (manifest.permissions.includes("debugger")) errors.push("manifest must not request debugger permission");
 if (manifest.host_permissions.includes("<all_urls>")) errors.push("manifest must not request blanket install-time host access");
-if (Number.parseInt(manifest.minimum_chrome_version || "0", 10) < 114) errors.push("manifest minimum_chrome_version must be at least 114 for the Side Panel API");
+if (Number.parseInt(manifest.minimum_chrome_version || "0", 10) < 116) errors.push("manifest minimum_chrome_version must be at least 116 for user-gesture sidePanel.open()");
 if ((manifest.web_accessible_resources || []).length) errors.push("release must not expose internal files as web-accessible resources");
 
 let stableExtensionId = "";

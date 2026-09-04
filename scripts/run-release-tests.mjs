@@ -1,7 +1,14 @@
 import { spawnSync } from "node:child_process";
-import pkg from "../package.json" with { type: "json" };
-
-const testScripts = Object.keys(pkg.scripts).filter((name) => name.startsWith("test:") && name !== "test:release").sort();
+const testScripts = [
+  "test:edge-v2",
+  "test:control-center-auth",
+  "test:adspower-task",
+  "test:draft-writer",
+  "test:privacy-mask",
+  "test:task-logs",
+  "test:browser-capabilities",
+  "test:extension-surface",
+];
 for (const script of ["lint", ...testScripts]) {
   console.log(`\n=== npm run ${script} ===`);
   const result = spawnSync("npm", ["run", script], { stdio: "inherit", shell: process.platform === "win32" });

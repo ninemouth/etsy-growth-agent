@@ -1,395 +1,139 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
-
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>电商增长 Agent</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Marqel Etsy Edge</title>
   <link rel="stylesheet" href="sidepanel.css" />
 </head>
-
 <body>
-  <div id="app">
-    <!-- Header -->
-    <header class="header">
-      <div class="header-brand">
-        <span class="brand-icon">⚡</span>
-        <span class="brand-name">电商增长 Agent</span>
-        <span class="brand-badge">AI Runtime</span>
-      </div>
-      <div class="header-actions">
-        <button class="icon-btn" id="libraryBtn" title="结果库">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-          </svg>
-        </button>
-        <button class="icon-btn" id="dashboardBtn" title="监控看板">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-            <line x1="9" y1="3" x2="9" y2="21" />
-            <line x1="9" y1="9" x2="21" y2="9" />
-            <line x1="9" y1="15" x2="21" y2="15" />
-          </svg>
-        </button>
-        <button class="icon-btn" id="settingsBtn" title="设置">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="3" />
-            <path
-              d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-          </svg>
-        </button>
-      </div>
-    </header>
+  <header class="edge-header">
+    <div><strong>Marqel Etsy Edge</strong><span>Browser execution node</span></div>
+    <nav aria-label="Edge 导航">
+      <button id="nodeBtn" type="button">节点</button>
+      <button id="webBtn" type="button">Web</button>
+      <button id="settingsBtn" type="button" aria-label="打开设置">设置</button>
+    </nav>
+  </header>
 
-    <!-- Views -->
-    <div id="view-main" class="view active">
-      <!-- Skill Selector -->
-      <section class="section">
-        <div class="growth-command-card">
-          <div class="growth-command-header">
-            <div>
-              <div class="section-label">Growth OS</div>
-              <h2>一键运营动作</h2>
-            </div>
-            <span id="growthModeBadge" class="growth-mode-badge">结果后对话</span>
-          </div>
-          <div class="growth-action-grid" id="growthActionGrid">
-            <button class="growth-action-btn" data-action="diagnose_store_growth">全店体检</button>
-            <button class="growth-action-btn" data-action="diagnose_sku_funnel">SKU 漏斗</button>
-            <button class="growth-action-btn" data-action="rewrite_listing">改 Listing</button>
-            <button class="growth-action-btn" data-action="diagnose_visual_conversion">首图诊断</button>
-            <button class="growth-action-btn" data-action="scan_competitor_changes">竞品扫描</button>
-            <button class="growth-action-btn" data-action="explore_platform_trends">平台趋势</button>
-            <button class="growth-action-btn" data-action="review_experiment_result">实验复盘</button>
-          </div>
-          <div class="growth-queue" id="growthActionQueue">
-            <div class="growth-queue-empty">Dashboard 创建的一键动作会出现在这里。</div>
-          </div>
-          <div class="growth-data-ledger">
-            <span>数据来源</span>
-            <strong id="sidepanelDataLedger">前台页面真实读取；Seller API 需在 Dashboard 绑定；未取到真实数据时只显示待验证。</strong>
-          </div>
-        </div>
-        <div class="session-control session-control-top">
-          <div class="session-control-head">
-            <div>
-              <div class="session-label">会话模式</div>
-              <div id="sessionModeText" class="session-mode-text">新会话：不会沿用旧断点</div>
-            </div>
-            <button type="button" id="newSessionBtn" class="session-btn primary">+ 新会话</button>
-          </div>
-          <button type="button" id="sessionHistoryBtn" class="session-history-toggle">历史会话 / 恢复断点</button>
-          <div id="sessionHistoryPanel" class="session-history-panel hidden">
-            <div class="session-history-toolbar">
-              <span>可恢复历史</span>
-              <button type="button" id="clearSessionHistoryBtn" class="session-clear-btn">清空历史</button>
-            </div>
-            <div id="sessionHistoryList" class="session-history-list">
-              <div class="session-empty">暂无可恢复会话。</div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="section advanced-skill-section">
-        <div class="section-label">选择 Skill</div>
-        <div class="custom-dropdown" id="skillDropdown">
-          <div class="custom-dropdown-trigger" id="skillDropdownTrigger">
-            <div id="selectedSkillContainer">
-              <div class="skill-loading">
-                <span class="spinner"></span> 加载 skills...
-              </div>
-            </div>
-            <span class="dropdown-icon">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
-            </span>
-          </div>
-          <div class="custom-dropdown-menu hidden" id="skillDropdownMenu">
-            <div id="skillList" class="skill-list"></div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Instruction -->
-      <section class="section">
-        <div class="section-label" style="display:flex; justify-content:space-between; align-items:center;">
-          <span>用户指令 <span class="optional">(可选)</span></span>
-          <button id="tipsBtn" class="tips-btn" title="指令高级玩法">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"></circle>
-              <line x1="12" y1="16" x2="12" y2="12"></line>
-              <line x1="12" y1="8" x2="12.01" y2="8"></line>
-            </svg>
-            高级玩法
-          </button>
-        </div>
-        <!-- 专属投流参数表单 (仅在选中投流Skill时显示) -->
-        <div id="trafficPlannerInputs" class="hidden" style="background: var(--bg2); padding: 12px; border-radius: var(--radius); border: 1px solid var(--border); margin-bottom: 12px; text-align: left;">
-          <div class="form-row" style="margin-bottom: 10px;">
-            <label class="form-label" style="font-weight: 600; font-size: 11px; color: var(--text2); display: block; margin-bottom: 4px; text-align: left;">投流平台选择</label>
-            <div class="platform-checkboxes" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; text-align: left;">
-              <label class="checkbox-label" style="font-size:11px;"><input type="checkbox" class="platform-cb" value="Meta Ads" checked /><span class="checkbox-text">Meta Ads</span></label>
-              <label class="checkbox-label" style="font-size:11px;"><input type="checkbox" class="platform-cb" value="Google Ads" checked /><span class="checkbox-text">Google Ads</span></label>
-              <label class="checkbox-label" style="font-size:11px;"><input type="checkbox" class="platform-cb" value="TikTok Shop Ads" checked /><span class="checkbox-text">TikTok Shop</span></label>
-              <label class="checkbox-label" style="font-size:11px;"><input type="checkbox" class="platform-cb" value="Amazon Ads" /><span class="checkbox-text">Amazon Ads</span></label>
-              <label class="checkbox-label" style="font-size:11px;"><input type="checkbox" class="platform-cb" value="巨量千川" /><span class="checkbox-text">巨量千川</span></label>
-              <label class="checkbox-label" style="font-size:11px;"><input type="checkbox" class="platform-cb" value="小红书聚光" /><span class="checkbox-text">小红书聚光</span></label>
-              <label class="checkbox-label" style="font-size:11px;"><input type="checkbox" class="platform-cb" value="阿里万相台" /><span class="checkbox-text">阿里万相台</span></label>
-              <label class="checkbox-label" style="font-size:11px;"><input type="checkbox" class="platform-cb" value="拼多多全站" /><span class="checkbox-text">拼多多全站</span></label>
-            </div>
-          </div>
-          <div class="form-row-group" style="display: flex; gap: 8px; margin-bottom: 10px; text-align: left;">
-            <div style="flex: 1; text-align: left;">
-              <label class="form-label" style="font-weight: 600; font-size: 11px; color: var(--text2); display: block; margin-bottom: 4px; text-align: left;">投放预算</label>
-              <div style="display:flex; gap:4px; text-align: left;">
-                <input type="number" id="trafficBudget" style="width:100%; height:28px; padding:2px 6px; box-sizing:border-box; font-size:12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg3); color: var(--text);" placeholder="金额" value="1500" />
-                <select id="trafficCurrency" style="height:28px; font-size:11px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding:0 4px; background: var(--bg3); color: var(--text); outline: none;">
-                  <option value="元 (CNY)">元</option>
-                  <option value="美元 (USD)">美元</option>
-                </select>
-              </div>
-            </div>
-            <div style="flex: 1; text-align: left;">
-              <label class="form-label" style="font-weight: 600; font-size: 11px; color: var(--text2); display: block; margin-bottom: 4px; text-align: left;">投放周期 (天)</label>
-              <input type="number" id="trafficDuration" style="width:100%; height:28px; padding:2px 6px; box-sizing:border-box; font-size:12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg3); color: var(--text);" placeholder="天数" value="10" />
-            </div>
-          </div>
-          <div class="form-row-group" style="display: flex; gap: 8px; margin-bottom: 10px; text-align: left;">
-            <div style="flex: 1; text-align: left;">
-              <label class="form-label" style="font-weight: 600; font-size: 11px; color: var(--text2); display: block; margin-bottom: 4px; text-align: left;">产品采购价/单成本</label>
-              <input type="number" id="trafficProductCost" style="width:100%; height:28px; padding:2px 6px; box-sizing:border-box; font-size:12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg3); color: var(--text);" placeholder="每个/单成本" />
-            </div>
-            <div style="flex: 1; text-align: left;">
-              <label class="form-label" style="font-weight: 600; font-size: 11px; color: var(--text2); display: block; margin-bottom: 4px; text-align: left;">爆品背书/已售量</label>
-              <input type="text" id="trafficSocialProof" style="width:100%; height:28px; padding:2px 6px; box-sizing:border-box; font-size:12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg3); color: var(--text);" placeholder="如：热销30万单,榜单TOP7" />
-            </div>
-          </div>
-          <div class="form-row" style="text-align: left;">
-            <label class="form-label" style="font-weight: 600; font-size: 11px; color: var(--text2); display: block; margin-bottom: 4px; text-align: left;">其它补充要求</label>
-            <input type="text" id="trafficExtra" style="width:100%; height:28px; padding:2px 6px; box-sizing:border-box; font-size:12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg3); color: var(--text);" placeholder="如：主要做短视频爆量..." />
-          </div>
-        </div>
-        <textarea id="instruction" class="textarea" rows="3" placeholder="描述你想要分析的内容，或留空使用 skill 默认流程..."></textarea>
-        <div class="continue-session-wrapper">
-          <label class="checkbox-label">
-            <input type="checkbox" id="highRandomnessCheckbox" />
-            <span class="checkbox-text">强制发散探索 (跳出常规，强制每次结果不同)</span>
-          </label>
-          <div class="checkbox-text" style="margin-top: 6px;">风险过滤始终启用；如需评估例外，请在指令中逐项说明并保留风险结论。</div>
-        </div>
-      </section>
-
-      <!-- Run Button -->
-      <div class="run-area">
-        <button id="runBtn" class="run-btn" disabled>
-          <span class="run-btn-icon">▶</span>
-          <span class="run-btn-text">执行 Skill</span>
-        </button>
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px; flex-wrap: wrap; gap: 6px;">
-          <div id="pageInfo" class="page-info" style="margin-top: 0; flex: 1; min-width: 150px;"></div>
-        </div>
+  <main>
+    <section id="view-main" class="view active" aria-labelledby="main-title">
+      <div class="section-intro">
+        <span class="product-role">现场执行</span>
+        <h1 id="main-title">只做 Etsy 最后一公里</h1>
+        <p>研究与决策在 Codex，审批与经营记忆在 Web。这里仅执行精确获批任务并交回终态证据。</p>
       </div>
 
-      <!-- Progress -->
-      <div id="progressArea" class="progress-area hidden">
-        <div class="progress-header">
-          <span class="progress-title">Agent 运行中</span>
-          <button id="cancelBtn" class="cancel-btn">取消</button>
+      <article class="card passport-card" aria-labelledby="passport-title">
+        <div class="card-head">
+          <div><span class="overline">现场能力</span><h2 id="passport-title">当前页面通行证</h2></div>
+          <span id="passportState" class="status" data-state="loading">检查中</span>
         </div>
-        <div id="progressLog" class="progress-log"></div>
-        <div id="streamOutput" class="stream-output hidden"></div>
+        <dl class="passport-grid" aria-live="polite">
+          <div><dt>页面</dt><dd id="passportSurface">识别中</dd></div>
+          <div><dt>授权</dt><dd id="passportAuthority">检查中</dd></div>
+          <div><dt>执行槽</dt><dd id="passportRuntime">检查中</dd></div>
+          <div><dt>下一步</dt><dd id="passportNext">等待判断</dd></div>
+        </dl>
+        <p id="passportReason" class="boundary">没有已批准任务时，不采集竞品证据、不运行模型、不修改 Etsy 页面。</p>
+        <button id="refreshPassportBtn" class="quiet-btn" type="button">刷新现场</button>
+      </article>
+
+      <article class="card task-card" aria-labelledby="task-title">
+        <div class="card-head">
+          <div><span class="overline">批准队列</span><h2 id="task-title">下一项 Etsy 执行</h2></div>
+          <span id="taskState" class="status" data-state="idle">读取中</span>
+        </div>
+        <ol id="taskRail" class="task-rail" aria-label="执行阶段">
+          <li data-stage="approval"><span>1</span><strong>Web 批准</strong></li>
+          <li data-stage="preflight"><span>2</span><strong>租约预检</strong></li>
+          <li data-stage="draft"><span>3</span><strong>字段填充</strong></li>
+          <li data-stage="readback"><span>4</span><strong>终态回读</strong></li>
+        </ol>
+        <div id="taskSummary" class="task-summary" data-state="idle">正在读取 Control Center 队列。</div>
+        <dl id="taskFacts" class="task-facts" hidden>
+          <div><dt>Task</dt><dd id="taskId">—</dd></div>
+          <div><dt>Operation</dt><dd id="operationId">—</dd></div>
+          <div><dt>Draft</dt><dd id="draftId">—</dd></div>
+          <div><dt>状态</dt><dd id="taskStatus">—</dd></div>
+        </dl>
+        <div class="task-actions">
+          <button id="prepareBtn" class="primary-btn" type="button" disabled>领取并预检</button>
+          <button id="captureBtn" class="secondary-btn" type="button" disabled>保存现场证据</button>
+          <button id="applyBtn" class="secondary-btn" type="button" disabled>填充获批字段</button>
+          <button id="reconcileBtn" class="secondary-btn" type="button" disabled>只读对账</button>
+          <button id="pauseBtn" class="secondary-btn" type="button" disabled>暂停待人工</button>
+        </div>
+
+        <details class="readback-panel">
+          <summary>人工保存草稿后回写结果</summary>
+          <label><span>Etsy draft ID</span><input id="listingId" type="text" autocomplete="off" /></label>
+          <label><span>Etsy draft URL</span><input id="listingUrl" type="url" autocomplete="off" placeholder="https://www.etsy.com/..." /></label>
+          <label><span>失败原因</span><textarea id="failureReason" rows="2"></textarea></label>
+          <label class="check-row"><input id="visibleConfirmation" type="checkbox" /><span>我已在当前可见页面核对并保存为草稿，未公开发布。</span></label>
+          <div class="readback-actions">
+            <button id="recordUploadedBtn" class="primary-btn" type="button" disabled>确认草稿并回写</button>
+            <button id="recordFailedBtn" class="danger-btn" type="button" disabled>记录失败</button>
+          </div>
+        </details>
+        <p id="taskMessage" class="message" role="status" aria-live="polite" hidden></p>
+        <div class="card-footer">
+          <button id="refreshTaskBtn" class="quiet-btn" type="button">刷新任务</button>
+          <button id="openWebBtn" class="quiet-btn" type="button">打开 Web 工作台</button>
+        </div>
+      </article>
+
+      <article class="card activity-card" aria-labelledby="activity-title">
+        <div class="card-head"><div><span class="overline">可审计</span><h2 id="activity-title">最近执行记录</h2></div></div>
+        <ol id="activityList" class="activity-list"><li class="empty">暂无执行记录。</li></ol>
+      </article>
+    </section>
+
+    <section id="view-settings" class="view" aria-labelledby="settings-title">
+      <button id="backBtn" class="back-btn" type="button">返回执行台</button>
+      <div class="section-intro compact">
+        <span class="product-role">唯一设置入口</span>
+        <h1 id="settings-title">Edge 节点设置</h1>
+        <p>这里只管理设备身份、运行状态和版本。模型、汇率、利润、研究与经营规则统一在 Codex/Web 管理。</p>
       </div>
 
-      <!-- Result -->
-      <div id="resultArea" class="result-area hidden">
-        <div class="result-header">
-          <span class="result-title">执行结果</span>
-          <div class="view-toggles">
-            <button id="viewReportBtn" class="toggle-btn active">报告</button>
-            <button id="viewDataBtn" class="toggle-btn">数据视图</button>
-          </div>
-          <div class="result-actions">
-            <button id="downloadBtn" class="action-btn primary" style="background: var(--primary); color: white;">📥 下载报告 (PDF)</button>
-            <button id="downloadMdBtn" class="action-btn">📥 导出 Markdown</button>
-            <button id="exportExcelBtn" class="action-btn hidden" style="border: 1px solid var(--success); color: var(--success);" title="导出结果中的表格为 Excel/CSV">📊 导出 Excel</button>
-            <button id="copyBtn" class="action-btn">复制</button>
-            <button id="saveBtn" class="action-btn">入库</button>
-            <button id="clearBtn" class="action-btn">清除</button>
-          </div>
+      <article class="card" aria-labelledby="identity-title">
+        <div class="card-head">
+          <div><span class="overline">设备身份</span><h2 id="identity-title">Control Center 连接</h2></div>
+          <span id="authState" class="status" data-state="idle">检查中</span>
         </div>
-        <div id="resultReport" class="result-report markdown-body"></div>
-        <div id="resultGrid" class="result-grid hidden"></div>
-        <div id="resultContent" class="result-content hidden"></div>
-      </div>
-    </div>
-
-    <!-- Settings View -->
-    <div id="view-settings" class="view">
-      <div class="view-header">
-        <button class="back-btn" id="backFromSettings">← 返回</button>
-        <span class="view-title">LLM 配置</span>
-      </div>
-
-      <div class="settings-body">
-        <div class="form-group">
-          <label class="form-label">LLM Provider <a href="#" id="providerLink" target="_blank" style="margin-left:8px; font-size:12px; color:var(--primary); text-decoration:none; display:none;">获取 API Key ↗</a></label>
-          <select id="llmProvider" class="form-select">
-            <option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic (Claude)</option>
-            <option value="qwen">Qwen (通义千问)</option>
-            <option value="siliconflow">SiliconFlow</option>
-            <option value="groq">Groq</option>
-            <option value="custom">自定义 URL</option>
-          </select>
+        <p id="authSummary" class="settings-copy">正在读取设备授权。</p>
+        <p id="deviceCode" class="device-code" hidden></p>
+        <div class="settings-actions">
+          <button id="authorizeBtn" class="primary-btn" type="button">连接设备</button>
+          <button id="pollAuthBtn" class="secondary-btn" type="button" hidden>我已批准，重新检查</button>
+          <button id="logoutBtn" class="danger-btn" type="button" hidden>断开设备</button>
         </div>
+      </article>
 
-        <div class="form-group" id="customUrlGroup" style="display:none">
-          <label class="form-label">自定义 API URL</label>
-          <input type="url" id="llmBaseUrl" class="form-input"
-            placeholder="https://your-api.com（自动补全 /v1/chat/completions）" />
-        </div>
+      <article class="card" aria-labelledby="runtime-title">
+        <div class="card-head"><div><span class="overline">运行身份</span><h2 id="runtime-title">版本与权限</h2></div></div>
+        <dl class="settings-list">
+          <div><dt>版本</dt><dd id="extensionVersion">—</dd></div>
+          <div><dt>Runtime ID</dt><dd id="runtimeId">—</dd></div>
+          <div><dt>站点范围</dt><dd>Etsy + marqel.shop</dd></div>
+          <div><dt>模型凭据</dt><dd>不接收、不保存</dd></div>
+        </dl>
+        <button id="openNodeBtn" class="secondary-btn wide" type="button">打开节点后台</button>
+      </article>
 
-        <div class="form-group">
-          <label class="form-label">模型</label>
-          <div class="input-with-hint">
-            <input type="text" id="llmModel" class="form-input" placeholder="gpt-4o-mini" />
-            <div id="modelHints" class="model-hints"></div>
-          </div>
-        </div>
+      <article class="card boundary-card" aria-labelledby="boundary-title">
+        <div class="card-head"><div><span class="overline">硬边界</span><h2 id="boundary-title">插件不会做什么</h2></div></div>
+        <ul>
+          <li>不做竞品分析、趋势研究或经营决策。</li>
+          <li>不调用第三方模型，不保存模型凭据。</li>
+          <li>不主动监控竞品，不跨站搜索。</li>
+          <li>不自主发布、投放广告、采购、付款或下单。</li>
+        </ul>
+      </article>
+    </section>
+  </main>
 
-        <div class="form-group">
-          <label class="form-label">备用模型 <span class="optional">(同 Provider / API Key，逗号或换行分隔)</span></label>
-          <textarea id="llmFallbackModels" class="form-input" rows="2" placeholder="qwen3.5-plus"></textarea>
-          <div class="form-help">主模型 429、5xx、网络超时或连接失败时自动降级。Qwen 高阶模型默认会备用 qwen3.5-plus。</div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">生图模型 <span class="optional">(同 Provider / API Key)</span></label>
-          <div class="input-with-hint">
-            <input type="text" id="imageGenerationModel" class="form-input" placeholder="如 gpt-image-1，可留空禁用" />
-            <div id="imageModelHints" class="model-hints"></div>
-          </div>
-          <div class="form-help">用于需要图像理解的 Etsy 页面分析；供应商平台以图搜由独立普通 Chrome Runner 执行。</div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">生图 Provider <span class="optional">(可与 LLM 分开)</span></label>
-          <select id="imageProvider" class="form-select">
-            <option value="">跟随 LLM Provider</option>
-            <option value="openai">OpenAI</option>
-            <option value="qwen">Qwen / 通义万相</option>
-            <option value="siliconflow">SiliconFlow</option>
-            <option value="third_party_proxy">第三方代理</option>
-            <option value="custom">自定义 OpenAI-compatible</option>
-          </select>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">生图 Base URL <span class="optional">(代理或自定义接口)</span></label>
-          <input type="url" id="imageBaseUrl" class="form-input" placeholder="留空使用 Provider 默认地址" />
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">生图 API Key <span class="optional">(留空则回退 LLM Key)</span></label>
-          <input type="password" id="imageApiKey" class="form-input" placeholder="第三方生图代理 API Key" />
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">API Key</label>
-          <div class="input-row">
-            <input type="password" id="apiKey" class="form-input" placeholder="sk-..." />
-            <button id="toggleKey" class="toggle-btn">👁</button>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Temperature <span id="tempValue" class="hint-value">0.2</span></label>
-          <input type="range" id="temperature" min="0" max="1" step="0.1" value="0.2" class="form-range" />
-        </div>
-
-        <button id="saveSettings" class="save-settings-btn">保存设置</button>
-        <div id="settingsMsg" class="settings-msg hidden"></div>
-
-        <div class="settings-section-title">关于</div>
-        <p class="settings-about">
-          <b>Etsy Growth Agent</b> 是面向 Etsy 卖家的开源 AI 运营插件。它在本地浏览器读取公开页面、截图和个人卖家 API 数据，结合 Etsy 专项 Skill 输出店铺体检、趋势洞察、Listing 优化、合规审查和实验复盘；1688/淘宝供应商筛选由 Codex 统一选品工作流承接。
-        </p>
-        <div class="update-card" id="updateCard">
-          <div class="update-card-head">
-            <div>
-              <div class="update-title">版本与更新</div>
-              <div class="update-meta" id="extensionVersion">当前版本：--</div>
-            </div>
-            <span class="update-badge" id="updateStatusBadge">未检查</span>
-          </div>
-          <div class="update-status" id="updateStatusText">Chrome Web Store / 自托管 CRX 会由 Chrome 自动更新；开发者模式加载的 unpacked 插件只能感知新版并提示手动更新。</div>
-          <div class="form-group">
-            <label class="form-label">开源 Release Manifest URL <span class="optional">(可选)</span></label>
-            <input type="url" id="releaseManifestUrl" class="form-input" placeholder="https://github.com/ninemouth/etsy-growth-agent/releases/latest/download/release-manifest.json" />
-            <div class="form-help">用于开源版本感知。Chrome 真正自动替换代码仍依赖 Chrome Web Store 或自托管 update_url。</div>
-          </div>
-          <label class="update-toggle">
-            <input type="checkbox" id="autoApplyRuntimeUpdates" checked />
-            <span>Chrome 下载好运行时更新后，在无任务运行时自动应用</span>
-          </label>
-          <div class="update-actions">
-            <button id="checkUpdatesBtn" class="secondary-btn" type="button">检查更新</button>
-            <button id="saveUpdateSettingsBtn" class="secondary-btn" type="button">保存更新设置</button>
-            <button id="applyUpdateBtn" class="save-settings-btn hidden" type="button">应用已下载更新</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Library View -->
-    <div id="view-library" class="view">
-      <div class="view-header">
-        <button class="back-btn" id="backFromLibrary">← 返回</button>
-        <span class="view-title">结果库</span>
-        <button id="exportBtn" class="export-btn">导出 JSON</button>
-      </div>
-      <div id="libraryList" class="library-list">
-        <div class="empty-state">暂无保存的结果</div>
-      </div>
-    </div>
-
-    <!-- Instruction Tips Modal -->
-    <div id="tipsModal" class="modal-overlay hidden">
-      <div class="modal-content">
-        <div class="modal-header">
-          <span class="modal-title">💡 指令高级玩法指南</span>
-          <button id="closeTipsBtn" class="modal-close">&times;</button>
-        </div>
-        <div class="modal-body">
-          <div class="tip-item">
-            <h4>🎯 1. 强制指定目标客群与文化</h4>
-            <p>系统默认会根据当前网址自动校准消费文化（如 .co.jp 日本，.de 德国）。但你可以强制覆盖：</p>
-            <code>"受众设定为注重环保的美国中产阶级二胎宝妈"</code>
-          </div>
-          <div class="tip-item">
-            <h4>🖱️ 2. 触发点击与翻页操作</h4>
-            <p>直接用自然语言指挥 AI 操作页面：</p>
-            <code>"请先点击页面上的'销量'进行排序，然后再分析"</code>
-          </div>
-          <div class="tip-item">
-            <h4>🚫 3. 划定选品红线与排雷</h4>
-            <p>告诉 AI 哪些绝对不能碰：</p>
-            <code>"绝对不要推荐任何带电或体积超过鞋盒的产品"</code>
-          </div>
-          <div class="tip-item">
-            <h4>🎨 4. 设定营销风格与角色</h4>
-            <p>改变 AI 的输出口吻：</p>
-            <code>"请用极其毒舌、犀利的测评博主口吻撰写报告"</code>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <script src="libs/dompurify.min.js"></script>
-  <script src="libs/marked.min.js"></script>
   <script src="sidepanel.js"></script>
 </body>
-
 </html>

@@ -1,118 +1,113 @@
-# Etsy Growth Agent 真实浏览器业务流验收矩阵
+# Marqel Etsy Edge 2.0 真实浏览器业务流验收矩阵
 
-生成时间：2026-09-01T09:30:09.195Z
+生成时间：2026-09-04T03:12:42.964Z
 
-说明：该矩阵用于指定 AdsPower Etsy Profile 的真实 Chrome/Etsy/Google Trends 环境验收，并验证供应商执行隔离。脚本本身不访问外网，也不把静态检查伪装成真机通过。
-本产品采用组织内部 unpacked 发行，不发布 Chrome Web Store；通过后必须在 JSON 中填写被测扩展版本、完整 Git SHA、Chrome 版本、OS、AdsPower Profile、运行时 Extension ID、V2 设备身份、Control 安装状态、操作者与执行时间，并为每个验收项附上证据引用。
+说明：该矩阵只验收 Edge 2.0 的浏览器最后一公里，不再验收竞品研究、趋势、报告、模型或业务设置。脚本不访问 Etsy，也不把静态测试冒充真机通过。
+必须在指定 AdsPower Etsy Profile 中使用 Web 精确批准的任务完成端到端验收，并为每项结果附可回读证据。
 
 ## 验收项
 
-### RB-01 Etsy 店铺体检
-- 起始页面：Etsy shop home page
-- 触发入口：右侧悬浮栏：店铺体检
+### RB-01 构建身份与最小权限
+- 起始页面：chrome://extensions and the assigned AdsPower Etsy profile
+- 触发入口：Load the reviewed unpacked 2.0 candidate
 - 必须留存证据：
-  - [ ] 店铺定位、调性/格调、商品结构与政策读取
-  - [ ] Etsy 搜索公开证据
-  - [ ] 2-3 个同类高排名店铺/商品截图与 DOM 证据
-  - [ ] diagnostic_depth_matrix 与 competitor_benchmarks
-  - [ ] savedResults.evidence_bundle.screenshotRefs 非空
+  - [ ] 完整 Git SHA、ZIP SHA-256、manifest SHA-256 与版本 2.0.0
+  - [ ] 实际 Chrome 版本、OS、AdsPower Profile ID 与运行时 Extension ID
+  - [ ] 权限清单只有 storage、alarms、sidePanel 以及 Etsy/Marqel 精确 host
+  - [ ] Control Center 对应设备身份和候选版本的可回读记录
 - 通过标准：
-  - [ ] 不会只凭当前截图输出结论
-  - [ ] 不关闭 source Etsy shop tab
-  - [ ] 报告中心可阅读报告、下载 PDF、下载证据包
-  - [ ] PDF 尾页包含证据包摘要
+  - [ ] 运行时 Extension ID 与组织持有的 manifest key 推导值一致
+  - [ ] 无 all_urls、tabs、scripting、management 或模型/搜索/竞品站点权限
+  - [ ] 现有 Etsy 标签页刷新后不再出现 Extension context invalidated
 - 结论：未执行 / 通过 / 阻断
 - 阻断说明：
 
-### RB-02 平台趋势 / Google Trends
-- 起始页面：Etsy shop, listing, category/search page, or explicit user keyword
-- 触发入口：右侧悬浮栏：平台趋势
+### RB-02 单一 UI 与产品边界
+- 起始页面：public Etsy Listing page and dashboard.html
+- 触发入口：Open Dock task, Web and settings actions
 - 必须留存证据：
-  - [ ] research_scope 标记店铺页/平台页/搜索页/竞品页语境
-  - [ ] Google Trends US 页面稳定等待后截图/DOM 证据
-  - [ ] Google Search/Etsy Search/Google Trends 证据分工清晰
-  - [ ] 临时站外 tab 完成后可关闭，source Etsy tab 保留
+  - [ ] Etsy 页面 Dock 只有任务、Web、设置三个动作
+  - [ ] 设置只落到 sidepanel.html#settings
+  - [ ] Node Console 只有运行身份、租约、边界与脱敏日志
+  - [ ] 无聊天输入、竞品分析、趋势、报告、模型、汇率或利润设置入口
 - 通过标准：
-  - [ ] 关闭当前 Etsy 主 tab 时任务可中断并保留 checkpoint
-  - [ ] 打开新会话不会恢复旧 checkpoint
-  - [ ] 历史会话恢复只恢复用户选择的 checkpoint
-  - [ ] 报告不得把加载失败的 Google Trends 当作趋势结论
+  - [ ] Dock 不遮挡主要 Etsy 内容且侧栏窄宽度无横向溢出
+  - [ ] Dashboard 不再打开第二套设置抽屉
+  - [ ] 键盘焦点、44px 控件、状态文字与颜色含义可辨认
 - 结论：未执行 / 通过 / 阻断
 - 阻断说明：
 
-### RB-03 Etsy Listing / 评论分析
-- 起始页面：Etsy listing detail page
-- 触发入口：右侧悬浮栏：Listing 改版 / 评论缺陷
+### RB-03 页面分类与隐私阻断
+- 起始页面：public Listing, allowed Listing editor, account, order, message and payment routes
+- 触发入口：Refresh capability passport and attempt task evidence
 - 必须留存证据：
-  - [ ] 商品标题、价格、属性、图片、配送、退换货和评论 DOM 证据
-  - [ ] 公开评论或 review count 证据
-  - [ ] 评论区受阻时 blockingGaps 明确
-  - [ ] review_dom 或 page_dom evidence ledger
+  - [ ] 公开 Listing 与 Listing 编辑器分别被正确分类
+  - [ ] 非编辑器 /your 路径默认阻断
+  - [ ] 账号、订单、消息、付款、安全和登录路径的阻断记录
+  - [ ] 隐私遮罩前后 DOM 状态、maskedCount 与恢复证明
 - 通过标准：
-  - [ ] 不能仅凭商品首屏截图推导买家痛点
-  - [ ] 评论读取失败必须降级为待验证，不伪造评价结论
+  - [ ] 敏感路径不调用 captureVisibleTab 且不产生 Artifact
+  - [ ] 允许页面捕获前遮罩并在成功或失败后恢复
+  - [ ] 没有活动获批任务时不允许证据采集
 - 结论：未执行 / 通过 / 阻断
 - 阻断说明：
 
-### RB-04 竞品研究 / 店铺分页
-- 起始页面：Etsy shop or Etsy search results page
-- 触发入口：右侧悬浮栏：竞品扫描 / 店铺体检中的竞品阶段
+### RB-04 Web 批准任务与租约预检
+- 起始页面：Marqel Web approved Listing task plus matching Etsy editor
+- 触发入口：领取并预检
 - 必须留存证据：
-  - [ ] 竞品店铺首页 DOM 与截图
-  - [ ] 店铺商品分页采集记录
-  - [ ] 排序口径，例如默认排序/最新上架/热卖可见口径
-  - [ ] 商品价格、类别、SKU 可见数量、促销、评论等公开字段样本
+  - [ ] task、operation、listingDraft、approval 与 etsyAutomationPermissionRef 的同链引用
+  - [ ] etsy-listing-draft.v1、expectedUpdatedAt 与 publicPublishAllowed=false
+  - [ ] claim/resume、heartbeat、checkpoint 和 lease owner 记录
+  - [ ] stale draft、错误 approval、取消 operation 与失效 lease 的阻断记录
 - 通过标准：
-  - [ ] 不能只打开竞品首页不翻页就声称全店商品结构
-  - [ ] 不能把公开可见样本写成竞品后台完整 SKU 或销量
+  - [ ] 只有 etsy_publish + etsy_adspower + upload_draft 可进入执行
+  - [ ] 每次页面写入前重新读取任务和 operation
+  - [ ] 租约丢失后停止全部写动作，必须显式恢复
 - 结论：未执行 / 通过 / 阻断
 - 阻断说明：
 
-### RB-05 供应商任务隔离与交接
-- 起始页面：Etsy listing page with target image
-- 触发入口：右侧悬浮栏：货源筛选
+### RB-05 确定性字段填充
+- 起始页面：current Etsy Listing editor variants used by the target shop
+- 触发入口：填充获批字段
 - 必须留存证据：
-  - [ ] Etsy 插件不申请 1688、淘宝、天猫、京东或拼多多 host permission
-  - [ ] 模型工具清单不暴露供应商图片搜索、文本输入或通用点击工具
-  - [ ] 货源筛选入口返回 supplier-sourcing-chrome-runner / Codex 交接说明
-  - [ ] Etsy source tab 保持不变，未在当前扩展中打开供应商平台
+  - [ ] title、description、price、tags、category、personalization 的逐字段结果
+  - [ ] selectorSetVersion、字段状态计数与页面 route class
+  - [ ] 缺失/只读必填字段的原值恢复证据
+  - [ ] Save、Submit、Publish 和图片上传均未触发的浏览器证据
 - 通过标准：
-  - [ ] 供应商平台执行完全发生在独立普通 Chrome Runner
-  - [ ] Etsy 插件不会自动点击、提交、上传、下单或发布
-  - [ ] 交接记录保留 operation_id 与人工审批边界
+  - [ ] 所有成功字段写入后回读值与获批草稿一致
+  - [ ] 任一必填字段失败时已触碰字段原子回滚
+  - [ ] 验证码、MFA、登录墙或未知编辑器变体均 fail closed
 - 结论：未执行 / 通过 / 阻断
 - 阻断说明：
 
-### RB-06 报告中心 / 证据归档
-- 起始页面：dashboard.html reports tab
-- 触发入口：打开报告中心
+### RB-06 任务绑定的隐私安全证据
+- 起始页面：matching allowed Etsy page with an active preflighted task
+- 触发入口：保存现场证据
 - 必须留存证据：
-  - [ ] 报告正文 Markdown/JSON 正常格式化
-  - [ ] 复制按钮复制业务报告正文
-  - [ ] PDF 中文不乱码
-  - [ ] PDF 含证据包摘要尾页
-  - [ ] 证据包 JSON 含 artifact_manifest
+  - [ ] 当前 taskId、operationId、source URL 与 capturedAt
+  - [ ] JPEG SHA-256、redactionStatus=verified 与 Web artifact storageRef
+  - [ ] 遮罩元素数量和 finally 恢复记录
+  - [ ] 网络证据只发送到 matching /api/tasks/:id/artifacts
 - 通过标准：
-  - [ ] 删除只删除目标报告
-  - [ ] 证据包 missing artifact 明确显示，不静默失败
+  - [ ] 截图不发送到任何模型或第三方分析端点
+  - [ ] Artifact 与当前任务一一绑定并可在 Web 回读
+  - [ ] 遮罩失败、页面变化或上传失败均不伪造成功 checkpoint
 - 结论：未执行 / 通过 / 阻断
 - 阻断说明：
 
-### RB-07 Control Center Etsy 草稿任务与平台回读
-- 起始页面：指定 AdsPower Etsy Profile 的 Shop Manager Listing 页面
-- 触发入口：领取已批准的 etsy_adspower / upload_draft 任务
+### RB-07 人工草稿保存、终态回读与不重复执行
+- 起始页面：same Etsy editor after field verification
+- 触发入口：Operator saves draft, confirms visible ID/URL, then records readback
 - 必须留存证据：
-  - [ ] etsy_adspower/etsy-growth-agent exact device identity 与运行时版本上报
-  - [ ] next/resumable、claim、heartbeat、checkpoint 和 lease owner 记录
-  - [ ] exact operation_id、listingDraftId、批准版本与 publicPublishAllowed=false
-  - [ ] 确定性 DOM writer 对 title/description/price 等获批字段的逐字段验证结果；图片与 Save 保持人工
-  - [ ] 可见 Etsy 草稿 ID/URL、脱敏 JSON Artifact 和 etsy-adspower-readback.v1
-  - [ ] Control Center operation/task/listingDraft 与 Etsy 页面回读一致
+  - [ ] 可见 Etsy draft ID/URL 与人工未公开发布确认
+  - [ ] etsy-publish-readback-artifact.v1 与 etsy-adspower-readback.v1
+  - [ ] Control Center task、operation、Listing draft 与 Artifact 的终态一致
+  - [ ] 响应丢失、context invalidation 与重开侧栏后的 reconciliation 记录
 - 通过标准：
-  - [ ] 自动阶段只填充获批字段，不点击 Save/Publish/Submit、不上传图片；人工复核并保存后仍只形成草稿
-  - [ ] 截图在敏感 Etsy 路由拒绝，在允许路由默认遮罩 PII 并在捕获后恢复页面
-  - [ ] 错误 owner、租约丢失、stale draft、登录墙、CAPTCHA/MFA 与写后超时均 fail-closed
-  - [ ] 重复执行通过 checkpoint/readback reconciliation 避免重复提交
-  - [ ] externalActionPerformed=false 且平台草稿事实可审计
+  - [ ] 无人确认时 uploaded readback 被拒绝
+  - [ ] 写后响应不确定时 retrySubmissionAllowed=false 且只允许只读对账
+  - [ ] 同一 operation 的 readback 只提交一次，最终状态可审计
 - 结论：未执行 / 通过 / 阻断
 - 阻断说明：

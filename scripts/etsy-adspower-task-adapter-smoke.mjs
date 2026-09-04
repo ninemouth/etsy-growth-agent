@@ -10,19 +10,20 @@ import {
 
 const fixedNow = Date.parse("2026-08-25T08:00:00.000Z");
 const expectedUpdatedAt = "2026-08-25T07:55:00.000Z";
-const backgroundSource = fs.readFileSync(new URL("../background.js", import.meta.url), "utf8");
-const dashboardSource = fs.readFileSync(new URL("../dashboard.js", import.meta.url), "utf8");
-const dashboardHtml = fs.readFileSync(new URL("../dashboard.html", import.meta.url), "utf8");
+const backgroundSource = fs.readFileSync(new URL("../edge-background.js", import.meta.url), "utf8");
+const sidepanelSource = fs.readFileSync(new URL("../sidepanel.js", import.meta.url), "utf8");
+const sidepanelHtml = fs.readFileSync(new URL("../sidepanel.html", import.meta.url), "utf8");
 for (const messageType of [
   "ETSY_TASK_NEXT", "ETSY_TASK_RESUMABLE", "ETSY_TASK_CLAIM", "ETSY_TASK_RESUME", "ETSY_TASK_ACTIVE",
   "ETSY_TASK_PREFLIGHT", "ETSY_TASK_HEARTBEAT", "ETSY_TASK_PAUSE_FOR_VERIFICATION",
   "ETSY_TASK_RECORD_UPLOADED", "ETSY_TASK_RECORD_FAILED", "ETSY_TASK_RECONCILE",
+  "ETSY_EDGE_PREPARE_NEXT", "ETSY_TASK_APPLY_APPROVED_DRAFT", "ETSY_TASK_CAPTURE_EVIDENCE",
 ]) {
   assert.match(backgroundSource, new RegExp(messageType));
-  if (!["ETSY_TASK_HEARTBEAT"].includes(messageType)) assert.match(dashboardSource, new RegExp(messageType));
 }
-assert.match(dashboardHtml, /id="etsy-task-visible-confirmation"/);
-assert.match(dashboardHtml, /公共发布始终关闭/);
+assert.match(sidepanelHtml, /id="visibleConfirmation"/);
+assert.match(sidepanelSource, /ETSY_EDGE_PREPARE_NEXT/);
+assert.match(sidepanelSource, /humanConfirmedDraftSaved/);
 
 function clone(value) {
   return value === undefined ? undefined : structuredClone(value);
@@ -60,6 +61,7 @@ function createFixture({ staleDraft = false, uncertainReadback = false } = {}) {
       writeAdapter: "adspower_etsy",
       writeAction: "upload_draft",
       publicPublishAllowed: false,
+      etsyAutomationPermissionRef: "legal://etsy/permission/demo-2026-08-25",
     },
   };
   const operation = {
@@ -160,6 +162,10 @@ const invalidPublishTask = createFixture().task;
 invalidPublishTask.payload.publicPublishAllowed = true;
 assert.throws(() => assertEtsyAdsPowerTask(invalidPublishTask), (error) => error.code === "ETSY_PUBLIC_PUBLISH_FORBIDDEN");
 
+const missingPlatformPermission = createFixture().task;
+missingPlatformPermission.payload.etsyAutomationPermissionRef = "";
+assert.throws(() => assertEtsyAdsPowerTask(missingPlatformPermission), (error) => error.code === "ETSY_TASK_CONTRACT_INVALID");
+
 const stale = createFixture({ staleDraft: true });
 stale.task.status = "claimed";
 stale.task.lease = { expiresAt: new Date(fixedNow + 600_000).toISOString(), expired: false };
@@ -186,6 +192,23 @@ assert.equal(completed.externalActionPerformed, false);
 assert.equal(completed.reconciliation.reconciled, true);
 assert.equal(storage.value(ETSY_ADSPOWER_ACTIVE_TASK_KEY), undefined);
 assert.equal(fixture.calls.filter((call) => call.path.endsWith("/readback")).length, 1);
+
+const preparedFixture = createFixture();
+const preparedStorage = createStorage();
+const preparedAdapter = createEtsyAdsPowerTaskAdapter({ request: preparedFixture.request, storage: preparedStorage, now: () => fixedNow });
+const prepared = await preparedAdapter.prepareNext();
+assert.equal(prepared.state, "ready_for_visible_draft");
+assert.equal(prepared.source, "claimed");
+assert.equal(prepared.task.status, "claimed");
+assert.equal(prepared.listingDraft.id, "listing-draft-1");
+assert.equal(preparedFixture.calls.filter((call) => call.path.endsWith("/claim")).length, 1);
+assert.equal(preparedFixture.calls.filter((call) => call.path.endsWith("/checkpoint")).length, 1);
+
+await preparedAdapter.pauseForVerification({ reason: "MFA required" });
+const resumedPrepared = await preparedAdapter.prepareNext();
+assert.equal(resumedPrepared.state, "ready_for_visible_draft");
+assert.equal(resumedPrepared.source, "resumed");
+assert.equal(preparedFixture.calls.filter((call) => call.path.endsWith("/resume")).length, 1);
 
 const uncertainty = createFixture({ uncertainReadback: true });
 const uncertaintyStorage = createStorage();
@@ -220,5 +243,11 @@ assert.equal(uncertainty.calls.filter((call) => call.path.endsWith("/readback"))
 const failureDocument = buildEtsyReadbackDocument(fixture.task, { status: "failed", failureReason: "MFA required", observedAt: "2026-08-25T08:03:00.000Z" });
 assert.equal(failureDocument.publicPublishPerformed, false);
 assert.equal(failureDocument.credentialsIncluded, false);
+assert.equal(failureDocument.etsyAutomationPermissionRef, "legal://etsy/permission/demo-2026-08-25");
+assert.throws(() => buildEtsyReadbackDocument(fixture.task, {
+  status: "uploaded",
+  listingId: "public-123",
+  listingUrl: "https://www.etsy.com/listing/123/example",
+}), (error) => error.code === "ETSY_PLATFORM_READBACK_INVALID");
 
 console.log("etsy-adspower-task-adapter-smoke: ok");

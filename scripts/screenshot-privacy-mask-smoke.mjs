@@ -15,10 +15,10 @@ const dom = new JSDOM(`
     <span id="order">Order 123-4567890-1234567</span>
     <p id="public">Public listing performance</p>
   </main>
-`, { url:"https://www.etsy.com/your/shops/me/dashboard" });
+`, { url:"https://www.etsy.com/your/shops/me/listing/draft-123" });
 const prepared = mask.prepare({ documentImpl:dom.window.document, locationHref:dom.window.location.href });
 assert.equal(prepared.contractVersion, "etsy-screenshot-privacy-mask.v1");
-assert.equal(prepared.policyVersion, "etsy-screenshot-sensitive-selectors.2026-08-25");
+assert.equal(prepared.policyVersion, "etsy-screenshot-sensitive-selectors.2026-09-04");
 assert.equal(prepared.blocked, false);
 assert.ok(prepared.maskedCount >= 3);
 for (const id of ["email", "phone", "order"]) {
@@ -36,14 +36,17 @@ const blocked = mask.prepare({ documentImpl:dom.window.document, locationHref:"h
 assert.equal(blocked.blocked, true);
 assert.equal(blocked.reason, "sensitive_route");
 assert.equal(blocked.token, "");
+const blockedSellerDashboard = mask.prepare({ documentImpl:dom.window.document, locationHref:"https://www.etsy.com/your/shops/me/dashboard" });
+assert.equal(blockedSellerDashboard.blocked, true);
+assert.equal(blockedSellerDashboard.reason, "sensitive_route");
 
 const manifest = JSON.parse(fs.readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
 assert.equal(manifest.content_scripts[0].js[0], "modules/screenshotPrivacyMask.js");
-const background = fs.readFileSync(new URL("../background.js", import.meta.url), "utf8");
-const content = fs.readFileSync(new URL("../content.js", import.meta.url), "utf8");
-assert.match(background, /capturePrivacySafeEtsyViewport/);
+const background = fs.readFileSync(new URL("../edge-background.js", import.meta.url), "utf8");
+const content = fs.readFileSync(new URL("../edge-content.js", import.meta.url), "utf8");
+assert.match(background, /captureTaskEvidence/);
 assert.match(background, /SCREENSHOT_SENSITIVE_ROUTE_FORBIDDEN/);
 assert.match(background, /RESTORE_PRIVACY_SAFE_SCREENSHOT/);
-assert.match(content, /PREPARE_PRIVACY_SAFE_SCREENSHOT[\s\S]*requestAnimationFrame\(\(\) => requestAnimationFrame/, "capture must wait for the privacy mask to paint");
+assert.match(background, /PREPARE_PRIVACY_SAFE_SCREENSHOT[\s\S]*setTimeout\(resolve, 34\)/, "capture must wait for the privacy mask to paint");
 
 console.log("screenshot-privacy-mask-smoke: ok");

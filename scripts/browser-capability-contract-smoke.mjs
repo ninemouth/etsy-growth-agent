@@ -1,58 +1,77 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import { BROWSER_AUTOMATION_CAPABILITIES } from "../modules/browserAutomationCapabilities.js";
+import {
+  BROWSER_AUTOMATION_CAPABILITIES,
+  EDGE_CAPABILITY_PASSPORT_VERSION,
+  buildEdgeCapabilityPassport,
+  classifyEtsySurface,
+} from "../modules/browserAutomationCapabilities.js";
 
-const read = (file) => fs.readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
-
-const toolRegistry = read("modules/toolRegistry.js");
-const agentLoop = read("modules/agentLoop.js");
-const content = read("content.js");
-const manifest = JSON.parse(read("manifest.json"));
-const shop = read("skills/etsy_global_shop_optimizer.skill.md");
-const trends = read("skills/etsy_platform_trends.skill.md");
-const reviews = read("skills/etsy_review_analyzer.skill.md");
-
-const requiredCapabilityIds = [
-  "address_navigation",
-  "governed_search_navigation",
-  "filter_sort_pagination",
-  "dom_collection_cleaning",
-  "multimodal_screenshot",
-  "review_collection",
-  "tab_lifecycle",
-  "seller_api_and_archive",
-];
-
-const ids = BROWSER_AUTOMATION_CAPABILITIES.map((item) => item.id);
-for (const id of requiredCapabilityIds) {
-  assert.ok(ids.includes(id), `browser capability manifest must include ${id}`);
-}
-
+assert.equal(EDGE_CAPABILITY_PASSPORT_VERSION, "etsy-edge-capability-passport.v2");
+assert.deepEqual(BROWSER_AUTOMATION_CAPABILITIES.map((item) => item.id), [
+  "task_bound_page_identity",
+  "approved_draft_fill",
+  "privacy_safe_task_evidence",
+  "terminal_readback",
+]);
 for (const item of BROWSER_AUTOMATION_CAPABILITIES) {
-  assert.ok(item.label, `${item.id} should have a user-facing label`);
-  assert.ok(Array.isArray(item.tools) && item.tools.length > 0, `${item.id} should map to runtime tools`);
-  assert.ok(Array.isArray(item.guarantees) && item.guarantees.length > 0, `${item.id} should document guarantees`);
-  assert.ok(Array.isArray(item.limitations) && item.limitations.length > 0, `${item.id} should document limitations`);
+  assert.ok(item.label);
+  assert.ok(item.tools.length > 0);
+  assert.ok(item.guarantees.length > 0);
+  assert.ok(item.limitations.length > 0);
 }
 
-assert.match(toolRegistry, /get_browser_capabilities/, "tool registry must expose browser capability contract");
-assert.match(toolRegistry, /summarizeBrowserAutomationCapabilities/, "tool registry should return the shared capability manifest");
-assert.match(agentLoop, /formatBrowserAutomationCapabilityPrompt/, "agent loop must inject browser capability contract into prompts");
-assert.match(agentLoop, /页面动态加载时必须相信工具返回的 loadState、evidenceOk、pageEvidence/, "agent prompt should force evidence-aware browser operation");
-assert.match(agentLoop, /Control Center Etsy 代理当前只提供本店 active listings \/ listing details，不能读取订单、广告、交易、履约、竞品后台或平台大盘/, "agent prompt should preserve the Control Center Etsy proxy boundary");
-assert.match(toolRegistry, /minStableReads[\s\S]*waitForTabReadiness[\s\S]*stableReads/, "runtime should wait for stable page evidence before collection");
-assert.match(toolRegistry, /executeGenericDomSnapshot[\s\S]*allFrames: true/, "DOM collection should include multi-frame fallback");
-assert.match(toolRegistry, /captureVisibleTab[\s\S]*captureMode:\s*"captureVisibleTab_viewport"/, "screenshot collection should label viewport evidence precisely");
-assert.equal(manifest.permissions.includes("debugger"), false, "release manifest must not request Chrome debugger access");
-assert.equal(manifest.host_permissions.includes("<all_urls>"), false, "release manifest must not request blanket host access at install time");
-assert.equal((manifest.web_accessible_resources || []).length, 0, "internal skills and icons must not be web-accessible resources");
-for (const retiredMessageType of ["INPUT_TEXT_AND_SEARCH", "GET_IMAGE_SEARCH_UI_STATE", "IMAGE_SEARCH_IN_BROWSER", "EXTRACT_PRODUCT_INFO"]) {
-  assert.doesNotMatch(content, new RegExp(`message\\.type === ["']${retiredMessageType}["']`), `${retiredMessageType} must not remain reachable in the Etsy content script`);
-}
-assert.match(content, /CLICK_BY_COORDINATE[\s\S]*File upload and camera interactions are forbidden/, "coordinate clicking must block unsafe file upload targets");
-assert.match(content, /READ_CURRENT_PAGE[\s\S]*readCurrentPage/, "content script must expose DOM collection");
-assert.match(shop, /DOM 文本审计双轨制|双轨分析模式/, "shop diagnosis must preserve DOM plus visual dual-track audit");
-assert.match(trends, /Google Trends[\s\S]*趋势图解读/, "trend skill must require Trends screenshot visual interpretation");
-assert.match(reviews, /review|评论|差评/i, "review analyzer should remain review-evidence oriented");
+assert.equal(classifyEtsySurface({ url: "https://www.etsy.com/listing/123/example" }).type, "listing");
+assert.equal(classifyEtsySurface({ url: "https://www.etsy.com/your/shops/123/tools/listings/456" }).type, "listing_editor");
+assert.equal(classifyEtsySurface({ url: "https://www.etsy.com/shop/ExampleShop" }).type, "shop");
+assert.equal(classifyEtsySurface({ url: "https://www.etsy.com/search?q=gift" }).type, "search");
+assert.equal(classifyEtsySurface({ url: "https://www.etsy.com/your/orders" }).type, "sensitive");
+assert.equal(classifyEtsySurface({ url: "https://example.com/" }).type, "external");
+
+const localListing = buildEdgeCapabilityPassport({
+  tab: { url: "https://www.etsy.com/listing/123/example", title: "Example listing" },
+  extensionVersion: "2.0.0",
+});
+assert.equal(localListing.identity.role, "browser_edge_runtime");
+assert.equal(localListing.evidence.dom.state, "wrong_surface");
+assert.equal(localListing.evidence.viewport.state, "wrong_surface");
+assert.equal(localListing.execution.approvedDraft.state, "wrong_surface");
+assert.equal(localListing.execution.publishOrSpend.state, "forbidden");
+assert.equal(localListing.nextAction.label, "连接 Control Center");
+assert.equal(Object.hasOwn(localListing.execution, "governedWorkflow"), false);
+
+const localEditor = buildEdgeCapabilityPassport({
+  tab: { url: "https://www.etsy.com/your/shops/123/tools/listings/456" },
+  extensionVersion: "2.0.0",
+});
+assert.equal(localEditor.evidence.dom.state, "task_required");
+assert.equal(localEditor.execution.approvedDraft.state, "authorization_required");
+
+const activeListing = buildEdgeCapabilityPassport({
+  tab: { url: "https://www.etsy.com/your/shops/123/tools/listings/456" },
+  session: { user: { id: "operator-1" } },
+  activeTask: { task: { id: "task-1", operationId: "operation-1" } },
+});
+assert.equal(activeListing.runtime.state, "active");
+assert.equal(activeListing.runtime.operationRef, "operation-1");
+assert.equal(activeListing.evidence.dom.state, "ready");
+assert.equal(activeListing.execution.approvedDraft.state, "approval_required");
+assert.equal(activeListing.nextAction.state, "active");
+
+const activeWrongSurface = buildEdgeCapabilityPassport({
+  tab: { url: "https://www.etsy.com/listing/123/example" },
+  session: { user: { id: "operator-1" } },
+  activeTask: { task: { id: "task-1", operationId: "operation-1" } },
+});
+assert.equal(activeWrongSurface.evidence.viewport.state, "wrong_surface");
+assert.equal(activeWrongSurface.nextAction.label, "打开任务对应编辑器");
+
+const sensitive = buildEdgeCapabilityPassport({
+  tab: { url: "https://www.etsy.com/your/account/security" },
+  session: { user: { id: "operator-1" } },
+  activeTask: { task: { id: "task-1", operationId: "operation-1" } },
+});
+assert.equal(sensitive.surface.evidenceAllowed, false);
+assert.equal(sensitive.evidence.dom.state, "blocked");
+assert.equal(sensitive.nextAction.state, "blocked");
 
 console.log("browser-capability-contract-smoke: ok");

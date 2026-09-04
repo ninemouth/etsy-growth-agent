@@ -28,6 +28,24 @@ function etsyUrl(value, field) {
   return url.toString();
 }
 
+const ETSY_EDITOR_PATHS = [
+  /^\/your\/shops\/[^/]+\/(?:listing|listings)(?:\/|$)/i,
+  /^\/your\/shops\/[^/]+\/tools\/listings(?:\/|$)/i,
+  /^\/your\/listings(?:\/|$)/i,
+  /^\/listing-manager(?:\/|$)/i,
+  /^\/shop-manager\/listings(?:\/|$)/i,
+  /^\/listing-editor(?:\/|$)/i,
+];
+
+function etsyEditorUrl(value, field) {
+  const normalized = etsyUrl(value, field);
+  const url = new URL(normalized);
+  if (!ETSY_EDITOR_PATHS.some((pattern) => pattern.test(url.pathname))) {
+    throw adapterError("ETSY_PLATFORM_READBACK_INVALID", `${field} must be an allowlisted Etsy Listing editor URL.`);
+  }
+  return normalized;
+}
+
 function leaseUsable(task, now = Date.now()) {
   if (!task?.lease || task.lease.expired === true) return false;
   const expiresAt = Date.parse(String(task.lease.expiresAt || ""));
@@ -49,6 +67,7 @@ export function assertEtsyAdsPowerTask(task, { requireLease = false, now = Date.
   }
   requiredText(task.payload?.listingDraftId, "task.payload.listingDraftId", 180);
   requiredText(task.payload?.approvalId, "task.payload.approvalId", 180);
+  requiredText(task.payload?.etsyAutomationPermissionRef, "task.payload.etsyAutomationPermissionRef", 500);
   if (task.payload?.listingDraftContractVersion !== "etsy-listing-draft.v1") {
     throw adapterError("ETSY_DRAFT_VERSION_MISMATCH", "The task must reference etsy-listing-draft.v1.");
   }
@@ -110,7 +129,7 @@ export function buildEtsyReadbackDocument(task, {
 } = {}) {
   assertEtsyAdsPowerTask(task);
   if (!new Set(["uploaded", "failed"]).has(status)) throw adapterError("ETSY_READBACK_STATUS_INVALID", "Only uploaded or failed readback documents are supported.");
-  const normalizedUrl = listingUrl ? etsyUrl(listingUrl, "listingUrl") : "";
+  const normalizedUrl = listingUrl ? etsyEditorUrl(listingUrl, "listingUrl") : "";
   const normalizedListingId = String(listingId || "").trim().slice(0, 180);
   const normalizedFailure = String(failureReason || "").trim().slice(0, 2_000);
   if (status === "uploaded" && (!normalizedListingId || !normalizedUrl)) {
@@ -125,6 +144,7 @@ export function buildEtsyReadbackDocument(task, {
     taskId: task.id,
     operationId: task.operationId,
     listingDraftId: task.payload.listingDraftId,
+    etsyAutomationPermissionRef: task.payload.etsyAutomationPermissionRef,
     listingId: normalizedListingId,
     listingUrl: normalizedUrl,
     sourceUrl: normalizedUrl || "https://www.etsy.com/",
@@ -291,6 +311,56 @@ export function createEtsyAdsPowerTaskAdapter({
     return { reconciled: false, status: taskResult.task?.status || "unknown", retrySubmissionAllowed: false, task: taskResult.task, listingDraft: draft || null };
   };
 
+  const prepareNext = async () => {
+    let source = "active";
+    let record = await active();
+    if (record?.reconciliationRequired) {
+      return {
+        state: "reconciliation_required",
+        source,
+        task: record.task,
+        retrySubmissionAllowed: false,
+        nextHumanAction: "Run read-only reconciliation. Do not repeat the Etsy page action.",
+      };
+    }
+
+    let task = record?.task || null;
+    if (!task) {
+      const resumableResult = await resumable();
+      task = resumableResult?.task || null;
+      source = task ? "resumable" : "next";
+      if (!task) task = (await next())?.task || null;
+    }
+    if (!task) {
+      return {
+        state: "empty",
+        source,
+        task: null,
+        nextHumanAction: "Create and approve an exact Listing draft in Marqel Control Center.",
+      };
+    }
+
+    if (task.status === "queued") {
+      task = (await claim(task.id)).task;
+      source = "claimed";
+    } else if (RESUMABLE_STATUSES.has(task.status) && (source === "resumable" || task.status !== "claimed" || !leaseUsable(task, now()))) {
+      task = (await resume(task)).task;
+      source = "resumed";
+    } else if (!RESUMABLE_STATUSES.has(task.status)) {
+      throw adapterError("ETSY_TASK_NOT_PREPARABLE", `The Etsy task status ${task.status || "unknown"} cannot enter draft preflight.`);
+    }
+
+    const verified = await preflight();
+    return {
+      state: "ready_for_visible_draft",
+      source,
+      task: verified.task,
+      operation: verified.operation,
+      listingDraft: verified.listingDraft,
+      nextHumanAction: "Apply only the approved fields in the visible Etsy editor, review them, then save as draft without publishing.",
+    };
+  };
+
   const recordReadback = async ({ status, listingId = "", listingUrl = "", failureReason = "", observedAt, humanConfirmedDraftSaved = false } = {}) => {
     if (status === "uploaded" && humanConfirmedDraftSaved !== true) {
       throw adapterError("ETSY_HUMAN_CONFIRMATION_REQUIRED", "Confirm the visible Etsy draft ID and URL before recording an uploaded readback.");
@@ -345,6 +415,7 @@ export function createEtsyAdsPowerTaskAdapter({
     checkpoint,
     preflight,
     pauseForVerification,
+    prepareNext,
     recordUploaded: (input = {}) => recordReadback({ ...input, status: "uploaded" }),
     recordFailed: (input = {}) => recordReadback({ ...input, status: "failed" }),
     reconcile,

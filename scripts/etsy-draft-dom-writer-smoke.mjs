@@ -63,9 +63,9 @@ const readOnly = editorDom('<input name="title" readonly value="unchanged"><text
 assert.throws(() => writer.applyApprovedDraft(draft, { documentImpl:readOnly.window.document, locationHref:readOnly.window.location.href, EventImpl:readOnly.window.Event }), /title.*No fields were changed/);
 
 const manifest = JSON.parse(fs.readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
-assert.deepEqual(manifest.content_scripts[0].js.slice(0, 3), ["modules/screenshotPrivacyMask.js", "modules/etsyDraftDomWriter.js", "content.js"]);
-const background = fs.readFileSync(new URL("../background.js", import.meta.url), "utf8");
-const content = fs.readFileSync(new URL("../content.js", import.meta.url), "utf8");
+assert.deepEqual(manifest.content_scripts[0].js.slice(0, 3), ["modules/screenshotPrivacyMask.js", "modules/etsyDraftDomWriter.js", "edge-content.js"]);
+const background = fs.readFileSync(new URL("../edge-background.js", import.meta.url), "utf8");
+const content = fs.readFileSync(new URL("../edge-content.js", import.meta.url), "utf8");
 assert.match(background, /ETSY_TASK_APPLY_APPROVED_DRAFT/);
 assert.match(background, /approved_fields_applied_pending_human_save/);
 assert.match(content, /APPLY_APPROVED_ETSY_DRAFT/);

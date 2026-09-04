@@ -1,8 +1,8 @@
 {
   "name": "etsy-growth-agent",
-  "version": "1.2.9",
-  "description": "An Etsy-focused AI Chrome Extension for shop optimization, product discovery, competitor analysis, supplier-workflow handoff, and governed listing drafts.",
-  "main": "background.js",
+  "version": "2.0.0",
+  "description": "The governed Etsy browser execution, evidence capture, and terminal readback runtime for Codex and Marqel Control Center.",
+  "main": "edge-background.js",
   "type": "module",
   "scripts": {
     "lint": "eslint .",
@@ -10,40 +10,22 @@
     "release:readiness": "node scripts/release-readiness.mjs",
     "test:release": "node scripts/run-release-tests.mjs",
     "test:release-readiness": "node scripts/release-readiness-smoke.mjs",
-    "test:security": "node scripts/security-smoke.mjs",
     "test:control-center-auth": "node scripts/control-center-auth-smoke.mjs",
     "test:adspower-task": "node scripts/etsy-adspower-task-adapter-smoke.mjs",
     "test:draft-writer": "node scripts/etsy-draft-dom-writer-smoke.mjs",
     "test:privacy-mask": "node scripts/screenshot-privacy-mask-smoke.mjs",
-    "test:business": "node scripts/business-flow-smoke.mjs",
-    "test:authority": "node scripts/business-authority-smoke.mjs",
-    "test:sourcing": "node scripts/sourcing-workflow-guard-smoke.mjs",
-    "test:sourcing-extraction": "node scripts/sourcing-extraction-smoke.mjs",
-    "test:compliance": "node scripts/compliance-smoke.mjs",
-    "test:etsy-api": "node scripts/etsy-api-contract-smoke.mjs",
-    "test:trends": "node scripts/platform-trends-smoke.mjs",
-    "test:predictive-trends": "node scripts/predictive-trends-smoke.mjs",
-    "test:trend-query-planner": "node scripts/trend-query-planner-smoke.mjs",
-    "test:updates": "node scripts/update-manager-smoke.mjs",
-    "test:research-scope": "node scripts/research-scope-matrix-smoke.mjs",
-    "test:runtime": "node scripts/workflow-runtime-smoke.mjs",
-    "test:scheduler": "node scripts/workflow-scheduler-smoke.mjs",
-    "test:llm": "node scripts/llm-client-smoke.mjs",
     "test:task-logs": "node scripts/task-log-store-smoke.mjs",
     "test:browser-capabilities": "node scripts/browser-capability-contract-smoke.mjs",
-    "test:evidence-bundle": "node scripts/evidence-bundle-smoke.mjs",
     "test:extension-surface": "node scripts/extension-surface-smoke.mjs",
-    "test:campaign-adapter": "node scripts/etsy-campaign-adapter-smoke.mjs",
+    "test:edge-v2": "node scripts/edge-v2-smoke.mjs",
     "acceptance:matrix": "node scripts/real-browser-acceptance-matrix.mjs",
     "format": "prettier --write ."
   },
   "keywords": [
     "chrome-extension",
-    "ai-agent",
-    "llm",
-    "e-commerce",
-    "dropshipping",
-    "selection",
+    "browser-edge-runtime",
+    "governed-execution",
+    "terminal-readback",
     "etsy",
     "etsy-shop",
     "etsy-seller"
@@ -55,7 +37,5 @@
     "jsdom": "^26.1.0",
     "prettier": "^3.2.5"
   },
-  "dependencies": {
-    "dompurify": "^3.4.14"
-  }
+  "dependencies": {}
 }

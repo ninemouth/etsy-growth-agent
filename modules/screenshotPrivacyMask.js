@@ -1,6 +1,14 @@
 (() => {
   const CONTRACT_VERSION = "etsy-screenshot-privacy-mask.v1";
-  const POLICY_VERSION = "etsy-screenshot-sensitive-selectors.2026-08-25";
+  const POLICY_VERSION = "etsy-screenshot-sensitive-selectors.2026-09-04";
+  const EDITOR_PATHS = [
+    /^\/your\/shops\/[^/]+\/(?:listing|listings)(?:\/|$)/i,
+    /^\/your\/shops\/[^/]+\/tools\/listings(?:\/|$)/i,
+    /^\/your\/listings(?:\/|$)/i,
+    /^\/listing-manager(?:\/|$)/i,
+    /^\/shop-manager\/listings(?:\/|$)/i,
+    /^\/listing-editor(?:\/|$)/i,
+  ];
   const BLOCKED_PATH = /\/(?:account|signin|login|checkout|cart|payment|billing|security|messages?|conversations?|orders?)(?:\/|$)/i;
   const SENSITIVE_SELECTORS = [
     'input[type="password"]', 'input[type="email"]', 'input[type="tel"]',
@@ -38,7 +46,9 @@
 
   function prepare({ documentImpl = document, locationHref = location.href } = {}) {
     const url = pageUrl(locationHref);
-    if (BLOCKED_PATH.test(url.pathname)) {
+    const blockedSellerRoute = /^\/your(?:\/|$)/i.test(url.pathname)
+      && !EDITOR_PATHS.some((pattern) => pattern.test(url.pathname));
+    if (BLOCKED_PATH.test(url.pathname) || blockedSellerRoute) {
       return { contractVersion:CONTRACT_VERSION, policyVersion:POLICY_VERSION, blocked:true, reason:"sensitive_route", sourceUrl:url.toString(), maskedCount:0, token:"" };
     }
     const token = `mask-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;

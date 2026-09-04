@@ -21,28 +21,25 @@ function createStorage() {
 const sessionStorage = createStorage();
 const localStorage = createStorage();
 const openedUrls = [];
-let installType = "development";
 globalThis.chrome = {
   storage: { session: sessionStorage, local: localStorage },
   tabs: { create: async ({ url }) => openedUrls.push(url) },
-  runtime: {
-    id: "abcdefghijklmnopabcdefghijklmnop",
-    getManifest: () => ({ version: "1.2.5" }),
-  },
-  management: { getSelf: async () => ({ installType }) },
 };
-Object.defineProperty(globalThis, "navigator", { value: { userAgent: "Mozilla/5.0 Chrome/140.0.7339.10" }, configurable: true });
 
-await new Promise((resolve) => localStorage.set({ apiKey: "manual-key", llmModel: "manual-model", imageApiKey: "manual-image-key" }, resolve));
+await new Promise((resolve) => localStorage.set({
+  apiKey: "retired-key",
+  llmModel: "retired-model",
+  imageApiKey: "retired-image-key",
+  marqelClientConfig: { llm: { apiKey: "retired-config-key" } },
+}, resolve));
 
 let pollCount = 0;
 let refreshCount = 0;
-const extensionReports = [];
-const configAcknowledgements = [];
+let taskRequestCount = 0;
 globalThis.fetch = async (url, options = {}) => {
   if (url.endsWith("/api/auth/device/start")) {
     return new Response(JSON.stringify({
-      deviceCode: "growth-device-secret",
+      deviceCode: "private-device-code",
       userCode: "87654321",
       verificationUri: "https://www.marqel.shop/device-approval.html",
       verificationUriComplete: "https://www.marqel.shop/device-approval.html?user_code=87654321",
@@ -54,152 +51,88 @@ globalThis.fetch = async (url, options = {}) => {
   }
   if (url.endsWith("/api/auth/device/poll")) {
     pollCount += 1;
-    if (pollCount === 1) return new Response(JSON.stringify({ error: { code: "AUTHORIZATION_PENDING", message: "pending" } }), { status: 428, headers: { "Content-Type": "application/json" } });
+    if (pollCount === 1) {
+      return new Response(JSON.stringify({ error: { code: "AUTHORIZATION_PENDING", message: "pending" } }), {
+        status: 428,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     return new Response(JSON.stringify({
-      accessToken: "growth-access-secret",
-      refreshToken: "growth-refresh-secret",
+      accessToken: "private-access-token",
+      refreshToken: "private-refresh-token",
       expiresInSeconds: 1800,
       refreshExpiresInSeconds: 7776000,
-      refreshExpiresAt: new Date(Date.now() + 7776000 * 1000).toISOString(),
-      refreshPolicy: "rolling",
       authVersion: 2,
       clientId: "etsy-growth-agent",
       deviceId: "growth-device-id",
-      user: { id: "growth-user", phone: "+8613900000000", membershipExpiresAt: new Date(Date.now() + 2592000 * 1000).toISOString() },
+      user: { id: "growth-user", email: "operator@example.com" },
     }), { status: 200, headers: { "Content-Type": "application/json" } });
   }
   if (url.endsWith("/api/auth/refresh")) {
     refreshCount += 1;
     await new Promise((resolve) => setTimeout(resolve, 5));
     return new Response(JSON.stringify({
-      accessToken: "growth-access-refreshed",
-      refreshToken: "growth-refresh-rotated",
+      accessToken: "rotated-access-token",
+      refreshToken: "rotated-refresh-token",
       expiresInSeconds: 1800,
       refreshExpiresInSeconds: 7776000,
-      refreshExpiresAt: new Date(Date.now() + 7776000 * 1000).toISOString(),
-      refreshPolicy: "rolling",
       authVersion: 2,
       clientId: "etsy-growth-agent",
       deviceId: "growth-device-id",
-      user: { id: "growth-user", phone: "+8613900000000", membershipExpiresAt: new Date(Date.now() + 2592000 * 1000).toISOString() },
+      user: { id: "growth-user", email: "operator@example.com" },
     }), { status: 200, headers: { "Content-Type": "application/json" } });
   }
-  if (url.endsWith("/api/client-config/ack")) {
-    configAcknowledgements.push(JSON.parse(options.body));
-    return new Response(JSON.stringify({ accepted: true, receipt: configAcknowledgements.at(-1) }), { status: 201, headers: { "Content-Type": "application/json" } });
-  }
-  if (url.includes("/api/client-config")) return new Response(JSON.stringify({ status: "configured", config: {
-    revision: 3,
-    deliveryRevision: "scene:3;llm:5;image:0",
-    deliveryDigest: "b".repeat(64),
-    updatedAt: "2026-09-01T00:00:00.000Z",
-    llm: { apiKey: "team-secret", model: "qwen-vl-max" },
-    image: { enabled: false, apiKey: "" },
-    interaction: { multimodalEnabled: true },
-  } }), { status: 200, headers: { "Content-Type": "application/json" } });
-  if (url.endsWith("/api/browser-extensions/report")) {
-    extensionReports.push({ body: JSON.parse(options.body), headers: options.headers });
-    return new Response(JSON.stringify({ status: { state: "current", installedVersion: "1.2.5" } }), { status: 201, headers: { "Content-Type": "application/json" } });
-  }
-  if (url.endsWith("/api/etsy/integration")) {
-    return new Response(JSON.stringify({ integration: {
-      contractVersion: "marqel-etsy-api-status.v1",
-      configured: true,
-      canConfigure: false,
-      appType: "seller",
-      credentialStatus: "verified",
-      oauthStatus: "connected",
-      keystring: { configured: true, last4: "7890" },
-      sharedSecret: { configured: true },
-      scopes: ["shops_r", "listings_r"],
-      applicationId: "987654",
-      shop: { id: "24680", name: "OwnerTestShop" },
-      accessState: "active",
-      refreshState: "active",
-      accessExpiresAt: "2026-09-01T01:00:00.000Z",
-      refreshExpiresAt: "2026-11-30T00:00:00.000Z",
-      updatedAt: "2026-09-01T00:00:00.000Z",
-      credentialDelivery: "server_only",
-      externalActionPerformed: false,
-    } }), { status: 200, headers: { "Content-Type": "application/json" } });
+  if (url.endsWith("/api/tasks/next")) {
+    taskRequestCount += 1;
+    assert.match(options.headers.Authorization, /^Bearer /);
+    assert.ok(options.headers["X-Marqel-Device-Proof"]);
+    return new Response(JSON.stringify({ task: null }), { status: 200, headers: { "Content-Type": "application/json" } });
   }
   throw new Error(`Unexpected request: ${url}`);
 };
 
-const { detectInternalExtensionInstallMode, getActiveSession, getEtsyIntegrationStatus, getPendingDeviceAuthorization, openEtsyIntegrationConfiguration, pollDeviceAuthorization, reportBrowserExtensionInstallationStatus, signOut, startDeviceAuthorization } = await import("../modules/controlCenterAuth.js");
+const {
+  controlCenterRequest,
+  getActiveSession,
+  getPendingDeviceAuthorization,
+  pollDeviceAuthorization,
+  signOut,
+  startDeviceAuthorization,
+} = await import("../modules/controlCenterAuth.js");
 
 const started = await startDeviceAuthorization();
 assert.equal(started.status, "approval_required");
-assert.equal(started.clientId, "etsy-growth-agent");
-assert.equal(started.clientType, "etsy_adspower");
 assert.equal(started.userCode, "87654321");
 assert.equal(Object.hasOwn(started, "deviceCode"), false);
 assert.equal(Object.hasOwn(started, "verificationUriComplete"), false);
 assert.deepEqual(openedUrls, ["https://www.marqel.shop/device-approval.html?user_code=87654321"]);
 
+const retired = await new Promise((resolve) => localStorage.get(["apiKey", "llmModel", "imageApiKey", "marqelClientConfig"], resolve));
+assert.equal(retired.apiKey, undefined);
+assert.equal(retired.llmModel, undefined);
+assert.equal(retired.imageApiKey, undefined);
+assert.equal(retired.marqelClientConfig, undefined);
+
 const pending = await pollDeviceAuthorization();
 assert.equal(pending.status, "approval_pending");
-assert.equal(pending.userCode, "87654321");
 assert.equal(Object.hasOwn(pending, "deviceCode"), false);
 
 const authorized = await pollDeviceAuthorization();
 assert.equal(authorized.status, "authorized");
-assert.equal(authorized.configStatus, "applied");
+assert.equal(authorized.configurationMode, "edge_only");
 assert.equal(Object.hasOwn(authorized, "accessToken"), false);
 assert.equal(Object.hasOwn(authorized, "refreshToken"), false);
-assert.equal(configAcknowledgements.length, 1);
-assert.equal(configAcknowledgements[0].deliveryRevision, "scene:3;llm:5;image:0");
-assert.equal(configAcknowledgements[0].deliveryDigest, "b".repeat(64));
-assert.equal(JSON.stringify(configAcknowledgements[0]).includes("team-secret"), false);
-const appliedSettings = await new Promise((resolve) => localStorage.get(["apiKey", "llmModel", "imageApiKey"], resolve));
-assert.equal(appliedSettings.apiKey, "team-secret");
-assert.equal(appliedSettings.llmModel, "qwen-vl-max");
-assert.equal(appliedSettings.imageApiKey, "manual-image-key", "a multimodal-only Web target must not replace the user's image provider setting");
-assert.ok(await getPendingDeviceAuthorization() === null);
+assert.equal(await getPendingDeviceAuthorization(), null);
+
+await controlCenterRequest("/api/tasks/next");
+assert.equal(taskRequestCount, 1);
 
 await new Promise((resolve) => sessionStorage.remove("marqelControlCenterSession", resolve));
 const [recoveredFirst, recoveredSecond] = await Promise.all([getActiveSession(), getActiveSession()]);
-assert.equal(recoveredFirst.accessToken, "growth-access-refreshed");
-assert.equal(recoveredSecond.accessToken, "growth-access-refreshed");
-assert.equal(refreshCount, 1, "browser restart recovery must rotate a single-use refresh token only once");
-assert.equal(recoveredFirst.refreshPolicy, "rolling");
-
-assert.equal(await detectInternalExtensionInstallMode(), "unpacked");
-const reported = await reportBrowserExtensionInstallationStatus();
-assert.equal(reported.ok, true);
-assert.equal(reported.state, "current");
-assert.equal(extensionReports.length, 1);
-assert.deepEqual(extensionReports[0].body.extension, {
-  id: "etsy-growth-agent",
-  version: "1.2.5",
-  runtimeExtensionId: "abcdefghijklmnopabcdefghijklmnop",
-  chromeVersion: "140.0.7339.10",
-  platform: "adspower_etsy",
-  installMode: "unpacked",
-});
-assert.match(extensionReports[0].headers.Authorization, /^Bearer growth-access-refreshed$/);
-
-const etsyStatus = await getEtsyIntegrationStatus();
-assert.equal(etsyStatus.oauthStatus, "connected");
-assert.deepEqual(etsyStatus.shop, { id: "24680", name: "OwnerTestShop" });
-assert.equal(etsyStatus.credentialDelivery, "server_only");
-assert.equal(etsyStatus.externalActionPerformed, false);
-assert.equal(JSON.stringify(etsyStatus).includes("sharedSecret"), false);
-assert.equal(JSON.stringify(etsyStatus).includes("accessToken"), false);
-await openEtsyIntegrationConfiguration();
-assert.equal(openedUrls.at(-1), "https://www.marqel.shop/etsy-api.html");
-
-installType = "normal";
-const rejected = await reportBrowserExtensionInstallationStatus();
-assert.equal(rejected.ok, false);
-assert.equal(rejected.errorCode, "INTERNAL_UNPACKED_INSTALL_REQUIRED");
-assert.equal(extensionReports.length, 1, "non-unpacked installs must fail before the Control Center report");
+assert.equal(recoveredFirst.accessToken, "rotated-access-token");
+assert.equal(recoveredSecond.accessToken, "rotated-access-token");
+assert.equal(refreshCount, 1, "single-use refresh token must rotate only once");
 
 await signOut();
-const restoredSettings = await new Promise((resolve) => localStorage.get(["apiKey", "llmModel", "imageApiKey", "marqelClientConfig", "marqelClientConfigBackup"], resolve));
-assert.equal(restoredSettings.apiKey, "manual-key");
-assert.equal(restoredSettings.llmModel, "manual-model");
-assert.equal(restoredSettings.imageApiKey, "manual-image-key");
-assert.equal(restoredSettings.marqelClientConfig, undefined);
-assert.equal(restoredSettings.marqelClientConfigBackup, undefined);
-console.log("control-center auth message-boundary smoke passed");
+assert.equal(await getActiveSession(), null);
+console.log("control-center auth edge-only smoke passed");

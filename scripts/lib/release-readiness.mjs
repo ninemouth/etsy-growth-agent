@@ -54,9 +54,13 @@ export function validateAcceptanceRecord(record = {}, { manifestVersion = "", ex
 }
 
 export const RELEASE_RUNTIME_PATHS = [
-  "_locales/", "icons/", "libs/", "modules/", "skills/",
-  "background.js", "content.js", "dashboard.css", "dashboard.html", "dashboard.js", "dashboardAds.js",
-  "manifest.json", "print.html", "print.js", "sidepanel.css", "sidepanel.html", "sidepanel.js",
+  "_locales/", "icons/",
+  "modules/browserAutomationCapabilities.js", "modules/controlCenterAuth.js", "modules/deviceProof.js",
+  "modules/etsyAdsPowerTaskAdapter.js", "modules/etsyDraftDomWriter.js", "modules/extensionSurface.js",
+  "modules/screenshotPrivacyMask.js", "modules/taskLogStore.js",
+  "edge-background.js", "edge-content.js",
+  "dashboard.css", "dashboard.html", "dashboard.js",
+  "manifest.json", "sidepanel.css", "sidepanel.html", "sidepanel.js",
   "package.json", "package-lock.json", "scripts/", ".github/workflows/",
 ];
 

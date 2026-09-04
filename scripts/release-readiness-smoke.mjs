@@ -36,7 +36,9 @@ assert.ok(validateAcceptanceRecord({ ...valid, tested: { ...valid.tested, browse
 assert.ok(validateAcceptanceRecord({ ...valid, tested: { ...valid.tested, controlCenterInstallationState: "not_reported" } }, { manifestVersion: "1.2.0" }).length > 0);
 assert.ok(validateAcceptanceRecord({ ...valid, tested: { ...valid.tested, runtimeExtensionId: "abcdefghijklmnopabcdefghijklmnop" } }, { manifestVersion: "1.2.0", expectedRuntimeExtensionId: stableExtensionId }).length > 0);
 assert.ok(validateAcceptanceRecord({ ...valid, matrix: valid.matrix.map((item, index) => index === 0 ? { ...item, evidence: [] } : item) }, { manifestVersion: "1.2.0" }).length > 0);
-assert.equal(isReleaseRuntimePath("modules/toolRegistry.js"), true);
+assert.equal(isReleaseRuntimePath("modules/toolRegistry.js"), false);
+assert.equal(isReleaseRuntimePath("modules/controlCenterAuth.js"), true);
+assert.equal(isReleaseRuntimePath("edge-background.js"), true);
 assert.equal(isReleaseRuntimePath("operations/acceptance/evidence.json"), false);
 
 console.log("release-readiness-smoke: ok");
