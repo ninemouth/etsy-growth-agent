@@ -140,6 +140,17 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   border: 1px solid #bfb6ac;
   border-radius: 5px;
 }
+.binding-form { display: grid; gap: 11px; }
+.binding-form label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.binding-form input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 11px;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid #bfb6ac;
+  border-radius: 5px;
+}
 .readback-panel textarea { resize: vertical; }
 .readback-panel .check-row { display: flex; align-items: flex-start; gap: 9px; color: var(--ink); font-weight: 600; }
 .check-row input { width: 18px; min-height: 18px; margin-top: 2px; }

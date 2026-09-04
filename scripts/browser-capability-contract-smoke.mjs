@@ -22,6 +22,7 @@ for (const item of BROWSER_AUTOMATION_CAPABILITIES) {
 
 assert.equal(classifyEtsySurface({ url: "https://www.etsy.com/listing/123/example" }).type, "listing");
 assert.equal(classifyEtsySurface({ url: "https://www.etsy.com/your/shops/123/tools/listings/456" }).type, "listing_editor");
+assert.equal(classifyEtsySurface({ url: "https://www.etsy.com/your/shops/me/tools/listings/456" }).type, "sensitive");
 assert.equal(classifyEtsySurface({ url: "https://www.etsy.com/shop/ExampleShop" }).type, "shop");
 assert.equal(classifyEtsySurface({ url: "https://www.etsy.com/search?q=gift" }).type, "search");
 assert.equal(classifyEtsySurface({ url: "https://www.etsy.com/your/orders" }).type, "sensitive");
@@ -48,7 +49,8 @@ assert.equal(localEditor.execution.approvedDraft.state, "authorization_required"
 
 const activeListing = buildEdgeCapabilityPassport({
   tab: { url: "https://www.etsy.com/your/shops/123/tools/listings/456" },
-  session: { user: { id: "operator-1" } },
+  session: { user: { id: "operator-1" }, deviceId:"device-1" },
+  runtimeBinding: { browserProfileRef:"etsy-profile-01", etsyShopRef:"123" },
   activeTask: { task: { id: "task-1", operationId: "operation-1" } },
 });
 assert.equal(activeListing.runtime.state, "active");

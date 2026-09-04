@@ -18,6 +18,20 @@ function requiredText(value, field, max = 2_000) {
   return normalized;
 }
 
+function normalizedBindingRef(value, field, max = 180) {
+  const normalized = requiredText(value, field, max).normalize("NFKC");
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{1,179}$/.test(normalized)) {
+    throw adapterError("ETSY_EXECUTION_BINDING_INVALID", `${field} contains unsupported characters.`);
+  }
+  return normalized;
+}
+
+function normalizedShopRef(value, field = "etsyShopRef") {
+  const normalized = normalizedBindingRef(value, field, 80);
+  if (normalized.toLowerCase() === "me") throw adapterError("ETSY_SHOP_BINDING_UNVERIFIABLE", `${field} must identify the exact Etsy shop, not the generic me route.`);
+  return normalized.toLowerCase();
+}
+
 function etsyUrl(value, field) {
   const normalized = requiredText(value, field);
   let url;
@@ -46,6 +60,15 @@ function etsyEditorUrl(value, field) {
   return normalized;
 }
 
+function shopRefFromEditorUrl(value, field = "listingUrl") {
+  const normalized = etsyEditorUrl(value, field);
+  const match = new URL(normalized).pathname.match(/^\/your\/shops\/([^/]+)\/(?:listing|listings|tools\/listings)(?:\/|$)/i);
+  if (!match) throw adapterError("ETSY_SHOP_BINDING_UNVERIFIABLE", `${field} must expose the exact /your/shops/<shop>/ Listing editor identity.`);
+  let decoded = "";
+  try { decoded = decodeURIComponent(match[1]); } catch { throw adapterError("ETSY_SHOP_BINDING_UNVERIFIABLE", `${field} contains an invalid shop identity.`); }
+  return normalizedShopRef(decoded, `${field}.shopRef`);
+}
+
 function leaseUsable(task, now = Date.now()) {
   if (!task?.lease || task.lease.expired === true) return false;
   const expiresAt = Date.parse(String(task.lease.expiresAt || ""));
@@ -68,12 +91,26 @@ export function assertEtsyAdsPowerTask(task, { requireLease = false, now = Date.
   requiredText(task.payload?.listingDraftId, "task.payload.listingDraftId", 180);
   requiredText(task.payload?.approvalId, "task.payload.approvalId", 180);
   requiredText(task.payload?.etsyAutomationPermissionRef, "task.payload.etsyAutomationPermissionRef", 500);
+  normalizedBindingRef(task.payload?.targetDeviceId, "task.payload.targetDeviceId");
+  normalizedBindingRef(task.payload?.browserProfileRef, "task.payload.browserProfileRef");
+  normalizedShopRef(task.payload?.etsyShopRef, "task.payload.etsyShopRef");
   if (task.payload?.listingDraftContractVersion !== "etsy-listing-draft.v1") {
     throw adapterError("ETSY_DRAFT_VERSION_MISMATCH", "The task must reference etsy-listing-draft.v1.");
   }
   requiredText(task.payload?.expectedUpdatedAt, "task.payload.expectedUpdatedAt", 80);
   if (requireLease && !leaseUsable(task, now)) throw adapterError("ETSY_TASK_LEASE_INVALID", "The Etsy task lease is missing or expired; stop all page writes and resume explicitly.");
   return task;
+}
+
+export function assertEtsyExecutionBinding(task, binding = {}) {
+  assertEtsyAdsPowerTask(task);
+  const deviceId = normalizedBindingRef(binding.deviceId, "runtimeBinding.deviceId");
+  const browserProfileRef = normalizedBindingRef(binding.browserProfileRef, "runtimeBinding.browserProfileRef");
+  const etsyShopRef = normalizedShopRef(binding.etsyShopRef, "runtimeBinding.etsyShopRef");
+  if (task.payload.targetDeviceId !== deviceId) throw adapterError("ETSY_TARGET_DEVICE_MISMATCH", "The task belongs to another approved Edge device.");
+  if (task.payload.browserProfileRef !== browserProfileRef) throw adapterError("ETSY_BROWSER_PROFILE_MISMATCH", "The task belongs to another AdsPower browser profile.");
+  if (normalizedShopRef(task.payload.etsyShopRef, "task.payload.etsyShopRef") !== etsyShopRef) throw adapterError("ETSY_SHOP_MISMATCH", "The task belongs to another Etsy shop.");
+  return { deviceId, browserProfileRef, etsyShopRef };
 }
 
 export function assertEtsyDraftPreflight(task, operation, { now = Date.now() } = {}) {
@@ -135,6 +172,9 @@ export function buildEtsyReadbackDocument(task, {
   if (status === "uploaded" && (!normalizedListingId || !normalizedUrl)) {
     throw adapterError("ETSY_PLATFORM_READBACK_INVALID", "An uploaded Etsy draft requires a visible listingId and Etsy draft URL.");
   }
+  if (status === "uploaded" && shopRefFromEditorUrl(normalizedUrl) !== normalizedShopRef(task.payload.etsyShopRef, "task.payload.etsyShopRef")) {
+    throw adapterError("ETSY_SHOP_MISMATCH", "The visible Etsy draft URL does not belong to the task-bound shop.");
+  }
   if (status === "failed" && !normalizedFailure) throw adapterError("ETSY_FAILURE_REASON_REQUIRED", "A failed Etsy task requires a failure reason.");
   const timestamp = new Date(observedAt).toISOString();
   return {
@@ -145,6 +185,9 @@ export function buildEtsyReadbackDocument(task, {
     operationId: task.operationId,
     listingDraftId: task.payload.listingDraftId,
     etsyAutomationPermissionRef: task.payload.etsyAutomationPermissionRef,
+    targetDeviceId: task.payload.targetDeviceId,
+    browserProfileRef: task.payload.browserProfileRef,
+    etsyShopRef: task.payload.etsyShopRef,
     listingId: normalizedListingId,
     listingUrl: normalizedUrl,
     sourceUrl: normalizedUrl || "https://www.etsy.com/",
@@ -181,12 +224,14 @@ async function encodeReadbackArtifact(document, { cryptoImpl, btoaImpl }) {
 export function createEtsyAdsPowerTaskAdapter({
   request,
   storage,
+  getRuntimeBinding,
   now = () => Date.now(),
   cryptoImpl = globalThis.crypto,
   btoaImpl = globalThis.btoa,
 } = {}) {
   if (typeof request !== "function") throw new TypeError("request is required");
   if (!storage?.get || !storage?.set || !storage?.remove) throw new TypeError("storage is required");
+  if (typeof getRuntimeBinding !== "function") throw new TypeError("getRuntimeBinding is required");
   if (!cryptoImpl?.subtle || typeof btoaImpl !== "function") throw new TypeError("Web Crypto and base64 encoding are required");
 
   const readActive = async () => (await storage.get([ETSY_ADSPOWER_ACTIVE_TASK_KEY]))[ETSY_ADSPOWER_ACTIVE_TASK_KEY] || null;
@@ -276,9 +321,62 @@ export function createEtsyAdsPowerTaskAdapter({
     const taskResult = await request(`/api/tasks/${encodeURIComponent(record.task.id)}`);
     const operationResult = await request(`/api/operations/${encodeURIComponent(taskResult.task?.operationId || record.task.operationId)}`);
     const verified = assertEtsyDraftPreflight(taskResult.task, operationResult.operation, { now: now() });
-    await saveActive({ ...record, task: verified.task, preflightVerifiedAt: new Date(now()).toISOString(), listingDraft: verified.listingDraft });
+    const runtimeBinding = assertEtsyExecutionBinding(verified.task, await getRuntimeBinding());
+    await saveActive({ ...record, task: verified.task, runtimeBinding, preflightVerifiedAt: new Date(now()).toISOString(), listingDraft: verified.listingDraft });
     await checkpoint({ stage: "preflight_verified", nextHumanAction: "Open the approved Etsy draft workflow and keep public publishing disabled." });
-    return verified;
+    return { ...verified, runtimeBinding };
+  };
+
+  const beginPageMutation = async ({ pageUrl, selectorSetVersion, etsyShopRef } = {}) => {
+    const record = await readActive();
+    const task = record?.task;
+    assertEtsyAdsPowerTask(task, { requireLease:true, now:now() });
+    assertEtsyExecutionBinding(task, record.runtimeBinding || await getRuntimeBinding());
+    if (record.pageMutation) throw adapterError("ETSY_PAGE_MUTATION_ALREADY_ATTEMPTED", "This task already attempted its one allowed page mutation. Inspect the visible result and record uploaded or failed; do not repeat field fill.");
+    const normalizedUrl = etsyEditorUrl(pageUrl, "pageMutation.pageUrl");
+    const observedShopRef = normalizedShopRef(etsyShopRef, "pageMutation.etsyShopRef");
+    if (shopRefFromEditorUrl(normalizedUrl, "pageMutation.pageUrl") !== observedShopRef || observedShopRef !== normalizedShopRef(task.payload.etsyShopRef, "task.payload.etsyShopRef")) {
+      throw adapterError("ETSY_SHOP_MISMATCH", "The visible editor does not match the task-bound Etsy shop.");
+    }
+    const mutation = {
+      contractVersion:"etsy-edge-page-mutation.v1",
+      nonce:`${task.id}:${now()}`,
+      state:"started",
+      pageUrl:normalizedUrl,
+      etsyShopRef:observedShopRef,
+      selectorSetVersion:requiredText(selectorSetVersion, "pageMutation.selectorSetVersion", 120),
+      startedAt:new Date(now()).toISOString(),
+      retryAllowed:false,
+    };
+    await saveActive({ ...record, pageMutation:mutation });
+    return mutation;
+  };
+
+  const completePageMutation = async (receipt = {}) => {
+    const record = await readActive();
+    if (!record?.pageMutation || record.pageMutation.state !== "started") throw adapterError("ETSY_PAGE_MUTATION_STATE_INVALID", "No started page mutation is available to complete.");
+    if (receipt.operationId !== record.task.operationId || receipt.listingDraftId !== record.task.payload.listingDraftId
+      || receipt.selectorSetVersion !== record.pageMutation.selectorSetVersion
+      || normalizedShopRef(receipt.etsyShopRef, "receipt.etsyShopRef") !== record.pageMutation.etsyShopRef) {
+      throw adapterError("ETSY_PAGE_MUTATION_RECEIPT_MISMATCH", "The Etsy page mutation receipt does not match the task, draft, selector set, or shop binding.");
+    }
+    const pageMutation = {
+      ...record.pageMutation,
+      state:"applied_verified",
+      completedAt:new Date(now()).toISOString(),
+      fieldsApplied:Number(receipt.fieldsApplied || 0),
+      retryAllowed:false,
+    };
+    await saveActive({ ...record, pageMutation, mutationReviewRequired:false });
+    return pageMutation;
+  };
+
+  const markPageMutationUncertain = async (error) => {
+    const record = await readActive();
+    if (!record?.pageMutation) return null;
+    const pageMutation = { ...record.pageMutation, state:"uncertain", failedAt:new Date(now()).toISOString(), retryAllowed:false };
+    await saveActive({ ...record, pageMutation, mutationReviewRequired:true, mutationError:String(error?.message || error || "Unknown page mutation failure").slice(0, 1_000) });
+    return pageMutation;
   };
 
   const pauseForVerification = async ({ stage = "human_verification_required", pageUrl = "", reason = "Human verification is required." } = {}) => {
@@ -323,6 +421,16 @@ export function createEtsyAdsPowerTaskAdapter({
         nextHumanAction: "Run read-only reconciliation. Do not repeat the Etsy page action.",
       };
     }
+    if (record?.pageMutation) {
+      return {
+        state:"mutation_confirmation_required",
+        source,
+        task:record.task,
+        pageMutation:record.pageMutation,
+        retrySubmissionAllowed:false,
+        nextHumanAction:"Inspect the visible Etsy page and record uploaded or failed. Never repeat field fill for this task.",
+      };
+    }
 
     let task = record?.task || null;
     if (!task) {
@@ -361,9 +469,13 @@ export function createEtsyAdsPowerTaskAdapter({
     };
   };
 
-  const recordReadback = async ({ status, listingId = "", listingUrl = "", failureReason = "", observedAt, humanConfirmedDraftSaved = false } = {}) => {
+  const recordReadback = async ({ status, listingId = "", listingUrl = "", failureReason = "", observedAt, humanConfirmedDraftSaved = false, visibleDraftVerified = false } = {}) => {
     if (status === "uploaded" && humanConfirmedDraftSaved !== true) {
       throw adapterError("ETSY_HUMAN_CONFIRMATION_REQUIRED", "Confirm the visible Etsy draft ID and URL before recording an uploaded readback.");
+    }
+    const activeRecord = await readActive();
+    if (status === "uploaded" && (!activeRecord?.pageMutation || !new Set(["applied_verified", "uncertain"]).has(activeRecord.pageMutation.state) || visibleDraftVerified !== true)) {
+      throw adapterError("ETSY_PAGE_MUTATION_PROOF_REQUIRED", "Uploaded readback requires this task's one-shot page mutation plus a current visible approved-value verification.");
     }
     const verified = await preflight();
     await heartbeat();
@@ -414,6 +526,9 @@ export function createEtsyAdsPowerTaskAdapter({
     heartbeat,
     checkpoint,
     preflight,
+    beginPageMutation,
+    completePageMutation,
+    markPageMutationUncertain,
     pauseForVerification,
     prepareNext,
     recordUploaded: (input = {}) => recordReadback({ ...input, status: "uploaded" }),

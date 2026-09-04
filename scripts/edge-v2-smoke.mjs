@@ -26,6 +26,8 @@ for (const retiredSurface of ["skills", "background.js", "content.js", "ui-syste
 assert.match(packageScript, /edge-background\.js/);
 assert.match(packageScript, /edge-content\.js/);
 assert.match(background, /etsyAutomationPermissionRef|ETSY_TASK_APPLY_APPROVED_DRAFT/);
+assert.match(background, /marqel-browser-extension-report\.v2/);
+assert.match(background, /ETSY_PAGE_MUTATION_ALREADY_ATTEMPTED|beginPageMutation/);
 assert.match(background, /ETSY_TASK_CAPTURE_EVIDENCE[\s\S]*captureTaskEvidence/);
 assert.match(background, /RETIRED_LOCAL_KEYS/);
 assert.doesNotMatch(background, /lastAccessed|tabs\.query\(\{ url:/, "Edge must never fall back to a background Etsy tab");
@@ -36,7 +38,7 @@ assert.match(dashboard, /这里不是第二个经营后台，也不是 AI 研究
 
 const ids = [...sidepanel.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);
 assert.equal(new Set(ids).size, ids.length, "sidepanel ids must be unique");
-for (const required of ["passportState", "taskState", "prepareBtn", "captureBtn", "applyBtn", "reconcileBtn", "recordUploadedBtn", "settingsBtn", "authorizeBtn"]) {
+for (const required of ["passportState", "taskState", "prepareBtn", "captureBtn", "applyBtn", "reconcileBtn", "recordUploadedBtn", "settingsBtn", "authorizeBtn", "bindingProfileRef", "bindingShopRef", "saveBindingBtn"]) {
   assert.ok(ids.includes(required), `missing sidepanel control ${required}`);
 }
 

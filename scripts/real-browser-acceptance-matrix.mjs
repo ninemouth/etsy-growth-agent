@@ -16,6 +16,7 @@ const acceptanceMatrix = [
     requiredEvidence: [
       "完整 Git SHA、ZIP SHA-256、manifest SHA-256 与版本 2.0.0",
       "实际 Chrome 版本、OS、AdsPower Profile ID 与运行时 Extension ID",
+      "marqel-browser-extension-report.v2 中的 target device、browserProfileRef 与 etsyShopRef",
       "权限清单只有 storage、alarms、sidePanel 以及 Etsy/Marqel 精确 host",
       "Control Center 对应设备身份和候选版本的可回读记录",
     ],
@@ -66,12 +67,14 @@ const acceptanceMatrix = [
     trigger: "领取并预检",
     requiredEvidence: [
       "task、operation、listingDraft、approval 与 etsyAutomationPermissionRef 的同链引用",
+      "targetDeviceId、browserProfileRef、etsyShopRef 与 Edge 当前绑定完全一致",
       "etsy-listing-draft.v1、expectedUpdatedAt 与 publicPublishAllowed=false",
       "claim/resume、heartbeat、checkpoint 和 lease owner 记录",
       "stale draft、错误 approval、取消 operation 与失效 lease 的阻断记录",
     ],
     passCriteria: [
       "只有 etsy_publish + etsy_adspower + upload_draft 可进入执行",
+      "非目标设备无法查询、领取、续租、提交 Artifact 或回写该任务",
       "每次页面写入前重新读取任务和 operation",
       "租约丢失后停止全部写动作，必须显式恢复",
     ],
@@ -84,6 +87,7 @@ const acceptanceMatrix = [
     requiredEvidence: [
       "title、description、price、tags、category、personalization 的逐字段结果",
       "selectorSetVersion、字段状态计数与页面 route class",
+      "etsy-listing-editor-inspection.v1 与 etsy-edge-page-mutation.v1 一次性写入记录",
       "缺失/只读必填字段的原值恢复证据",
       "Save、Submit、Publish 和图片上传均未触发的浏览器证据",
     ],
@@ -91,6 +95,7 @@ const acceptanceMatrix = [
       "所有成功字段写入后回读值与获批草稿一致",
       "任一必填字段失败时已触碰字段原子回滚",
       "验证码、MFA、登录墙或未知编辑器变体均 fail closed",
+      "一次写入开始后按钮锁定；无论成功还是响应不确定都不能重放",
     ],
   },
   {
@@ -120,6 +125,7 @@ const acceptanceMatrix = [
       "etsy-publish-readback-artifact.v1 与 etsy-adspower-readback.v1",
       "Control Center task、operation、Listing draft 与 Artifact 的终态一致",
       "响应丢失、context invalidation 与重开侧栏后的 reconciliation 记录",
+      "pageMutation 状态、retryAllowed=false 与目标设备/Profile/Shop 身份",
     ],
     passCriteria: [
       "无人确认时 uploaded readback 被拒绝",
@@ -169,7 +175,9 @@ function renderJson() {
       platform: "",
       osPlatform: "",
       browserProfileId: "",
+      etsyShopRef: "",
       runtimeExtensionId: "",
+      runtimeReportContract: "marqel-browser-extension-report.v2",
       installMode: "unpacked",
       deviceClientType: "etsy_adspower",
       deviceClientId: "etsy-growth-agent",

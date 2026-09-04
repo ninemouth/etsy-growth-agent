@@ -3,6 +3,7 @@ import fs from "node:fs";
 import {
   assertEtsyAdsPowerTask,
   assertEtsyDraftPreflight,
+  assertEtsyExecutionBinding,
   buildEtsyReadbackDocument,
   createEtsyAdsPowerTaskAdapter,
   ETSY_ADSPOWER_ACTIVE_TASK_KEY,
@@ -62,6 +63,9 @@ function createFixture({ staleDraft = false, uncertainReadback = false } = {}) {
       writeAction: "upload_draft",
       publicPublishAllowed: false,
       etsyAutomationPermissionRef: "legal://etsy/permission/demo-2026-08-25",
+      targetDeviceId: "device-1",
+      browserProfileRef: "etsy-profile-01",
+      etsyShopRef: "targetshop",
     },
   };
   const operation = {
@@ -118,6 +122,9 @@ function createFixture({ staleDraft = false, uncertainReadback = false } = {}) {
       const decoded = JSON.parse(Buffer.from(body.contentBase64, "base64").toString("utf8"));
       assert.equal(decoded.kind, "etsy_publish_readback");
       assert.equal(decoded.publicPublishPerformed, false);
+      assert.equal(decoded.targetDeviceId, "device-1");
+      assert.equal(decoded.browserProfileRef, "etsy-profile-01");
+      assert.equal(decoded.etsyShopRef, "targetshop");
       return { artifact: { id: "artifact-1", storageRef: "marqel://evidence-artifacts/artifact-1", kind: "etsy_publish_readback" } };
     }
     if (path === "/api/tasks/etsy-task-1/readback") {
@@ -171,22 +178,33 @@ stale.task.status = "claimed";
 stale.task.lease = { expiresAt: new Date(fixedNow + 600_000).toISOString(), expired: false };
 assert.throws(() => assertEtsyDraftPreflight(stale.task, stale.operation, { now: fixedNow }), (error) => error.code === "ETSY_DRAFT_STALE");
 
+const runtimeBinding = { deviceId:"device-1", browserProfileRef:"etsy-profile-01", etsyShopRef:"targetshop" };
+assert.deepEqual(assertEtsyExecutionBinding(createFixture().task, runtimeBinding), runtimeBinding);
+assert.throws(() => assertEtsyExecutionBinding(createFixture().task, { ...runtimeBinding, deviceId:"device-2" }), (error) => error.code === "ETSY_TARGET_DEVICE_MISMATCH");
+
 const fixture = createFixture();
 const storage = createStorage();
-const adapter = createEtsyAdsPowerTaskAdapter({ request: fixture.request, storage, now: () => fixedNow });
+const adapter = createEtsyAdsPowerTaskAdapter({ request: fixture.request, storage, getRuntimeBinding:async () => runtimeBinding, now: () => fixedNow });
 assert.equal((await adapter.next()).task.id, "etsy-task-1");
 assert.equal((await adapter.claim("etsy-task-1")).task.status, "claimed");
 const verified = await adapter.preflight();
 assert.equal(verified.listingDraft.id, "listing-draft-1");
+await adapter.beginPageMutation({ pageUrl:"https://www.etsy.com/your/shops/TargetShop/listing/draft-123", selectorSetVersion:"selectors.v2", etsyShopRef:"targetshop" });
+await adapter.completePageMutation({ operationId:"operation-1", listingDraftId:"listing-draft-1", selectorSetVersion:"selectors.v2", etsyShopRef:"targetshop", fieldsApplied:3 });
 await assert.rejects(
-  adapter.recordUploaded({ listingId: "draft-123", listingUrl: "https://www.etsy.com/your/shops/me/listing/draft-123" }),
+  adapter.recordUploaded({ listingId: "draft-123", listingUrl: "https://www.etsy.com/your/shops/TargetShop/listing/draft-123" }),
   (error) => error.code === "ETSY_HUMAN_CONFIRMATION_REQUIRED",
+);
+await assert.rejects(
+  adapter.recordUploaded({ listingId:"draft-123", listingUrl:"https://www.etsy.com/your/shops/TargetShop/listing/draft-123", humanConfirmedDraftSaved:true }),
+  (error) => error.code === "ETSY_PAGE_MUTATION_PROOF_REQUIRED",
 );
 const completed = await adapter.recordUploaded({
   listingId: "draft-123",
-  listingUrl: "https://www.etsy.com/your/shops/me/listing/draft-123",
+  listingUrl: "https://www.etsy.com/your/shops/TargetShop/listing/draft-123",
   observedAt: "2026-08-25T08:01:00.000Z",
   humanConfirmedDraftSaved: true,
+  visibleDraftVerified: true,
 });
 assert.equal(completed.externalActionPerformed, false);
 assert.equal(completed.reconciliation.reconciled, true);
@@ -195,7 +213,7 @@ assert.equal(fixture.calls.filter((call) => call.path.endsWith("/readback")).len
 
 const preparedFixture = createFixture();
 const preparedStorage = createStorage();
-const preparedAdapter = createEtsyAdsPowerTaskAdapter({ request: preparedFixture.request, storage: preparedStorage, now: () => fixedNow });
+const preparedAdapter = createEtsyAdsPowerTaskAdapter({ request: preparedFixture.request, storage: preparedStorage, getRuntimeBinding:async () => runtimeBinding, now: () => fixedNow });
 const prepared = await preparedAdapter.prepareNext();
 assert.equal(prepared.state, "ready_for_visible_draft");
 assert.equal(prepared.source, "claimed");
@@ -209,17 +227,30 @@ const resumedPrepared = await preparedAdapter.prepareNext();
 assert.equal(resumedPrepared.state, "ready_for_visible_draft");
 assert.equal(resumedPrepared.source, "resumed");
 assert.equal(preparedFixture.calls.filter((call) => call.path.endsWith("/resume")).length, 1);
+const mutation = await preparedAdapter.beginPageMutation({ pageUrl:"https://www.etsy.com/your/shops/TargetShop/listing/draft-123", selectorSetVersion:"selectors.v2", etsyShopRef:"targetshop" });
+assert.equal(mutation.retryAllowed, false);
+await assert.rejects(
+  preparedAdapter.beginPageMutation({ pageUrl:mutation.pageUrl, selectorSetVersion:"selectors.v2", etsyShopRef:"targetshop" }),
+  (error) => error.code === "ETSY_PAGE_MUTATION_ALREADY_ATTEMPTED",
+);
+const completedMutation = await preparedAdapter.completePageMutation({ operationId:"operation-1", listingDraftId:"listing-draft-1", selectorSetVersion:"selectors.v2", etsyShopRef:"targetshop", fieldsApplied:3 });
+assert.equal(completedMutation.state, "applied_verified");
+assert.equal((await preparedAdapter.prepareNext()).state, "mutation_confirmation_required");
 
 const uncertainty = createFixture({ uncertainReadback: true });
 const uncertaintyStorage = createStorage();
-const uncertainAdapter = createEtsyAdsPowerTaskAdapter({ request: uncertainty.request, storage: uncertaintyStorage, now: () => fixedNow });
+const uncertainAdapter = createEtsyAdsPowerTaskAdapter({ request: uncertainty.request, storage: uncertaintyStorage, getRuntimeBinding:async () => runtimeBinding, now: () => fixedNow });
 await uncertainAdapter.claim("etsy-task-1");
+await uncertainAdapter.preflight();
+await uncertainAdapter.beginPageMutation({ pageUrl:"https://www.etsy.com/your/shops/TargetShop/listing/draft-456", selectorSetVersion:"selectors.v2", etsyShopRef:"targetshop" });
+await uncertainAdapter.completePageMutation({ operationId:"operation-1", listingDraftId:"listing-draft-1", selectorSetVersion:"selectors.v2", etsyShopRef:"targetshop", fieldsApplied:3 });
 await assert.rejects(
   uncertainAdapter.recordUploaded({
     listingId: "draft-456",
-    listingUrl: "https://www.etsy.com/your/shops/me/listing/draft-456",
+    listingUrl: "https://www.etsy.com/your/shops/TargetShop/listing/draft-456",
     observedAt: "2026-08-25T08:02:00.000Z",
     humanConfirmedDraftSaved: true,
+    visibleDraftVerified: true,
   }),
   (error) => error.code === "ETSY_READBACK_RECONCILIATION_REQUIRED",
 );
@@ -235,7 +266,7 @@ uncertainty.recordServerReadback({
   status: "uploaded",
   artifactRef: uncertainRecord.artifactRef,
   listingId: "draft-456",
-  draftUrl: "https://www.etsy.com/your/shops/me/listing/draft-456",
+  draftUrl: "https://www.etsy.com/your/shops/TargetShop/listing/draft-456",
 });
 assert.equal((await uncertainAdapter.reconcile()).reconciled, true);
 assert.equal(uncertainty.calls.filter((call) => call.path.endsWith("/readback")).length, 1);

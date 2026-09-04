@@ -44,7 +44,7 @@ function runBackground(operation, onError = (error) => showMessage(error.message
 
 function showView(name) {
   document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === `view-${name}`));
-  if (name === "settings") refreshAuth();
+  if (name === "settings") Promise.all([refreshAuth(), refreshBinding()]);
   else Promise.all([refreshPassport(), refreshTask(), refreshActivity()]);
 }
 
@@ -100,11 +100,17 @@ function renderTask(record, queuedTask = null) {
     $("operationId").textContent = task.operationId || "—";
     $("draftId").textContent = task.payload?.listingDraftId || "—";
     $("taskStatus").textContent = task.status || "—";
+    $("taskProfileRef").textContent = task.payload?.browserProfileRef || "—";
+    $("taskShopRef").textContent = task.payload?.etsyShopRef || "—";
   }
 
   if (record?.reconciliationRequired) {
     setStatus($("taskState"), "必须对账", "attention");
     $("taskSummary").textContent = "平台结果已观察，但 Web 终态尚不确定。只能进行只读对账，禁止重复写入。";
+    $("taskSummary").dataset.state = "active";
+  } else if (record?.pageMutation) {
+    setStatus($("taskState"), "等待终态确认", "attention");
+    $("taskSummary").textContent = "该任务的一次性页面写入已经开始，禁止再次填充。请检查当前 Etsy 页面，并回写草稿成功或失败终态。";
     $("taskSummary").dataset.state = "active";
   } else if (hasActive) {
     setStatus($("taskState"), "进行中", "active");
@@ -121,8 +127,9 @@ function renderTask(record, queuedTask = null) {
   }
 
   const reconciliation = Boolean(record?.reconciliationRequired);
+  const mutationAttempted = Boolean(record?.pageMutation);
   $("prepareBtn").disabled = hasActive || !hasQueued || reconciliation;
-  $("applyBtn").disabled = !hasActive || reconciliation;
+  $("applyBtn").disabled = !hasActive || reconciliation || mutationAttempted;
   $("captureBtn").disabled = !hasActive || reconciliation;
   $("pauseBtn").disabled = !hasActive || reconciliation;
   $("reconcileBtn").disabled = !hasActive || !reconciliation;
@@ -228,6 +235,21 @@ async function refreshAuth() {
   $("runtimeId").textContent = chrome.runtime.id;
 }
 
+async function refreshBinding() {
+  try {
+    const data = await send("GET_EDGE_BINDING");
+    const binding = data?.binding;
+    $("bindingProfileRef").value = binding?.browserProfileRef || "";
+    $("bindingShopRef").value = binding?.etsyShopRef || "";
+    setStatus($("bindingState"), binding ? "已绑定" : "未绑定", binding ? "ready" : "attention");
+  } catch (error) {
+    setStatus($("bindingState"), "读取失败", "error");
+    $("bindingMessage").textContent = error.message;
+    $("bindingMessage").dataset.kind = "error";
+    $("bindingMessage").hidden = false;
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   showView(location.hash === "#settings" ? "settings" : "main");
   $("settingsBtn").addEventListener("click", () => { location.hash = "settings"; showView("settings"); });
@@ -263,5 +285,28 @@ document.addEventListener("DOMContentLoaded", () => {
   $("authorizeBtn").addEventListener("click", () => authAction("AUTH_DEVICE_START"));
   $("pollAuthBtn").addEventListener("click", () => authAction("AUTH_DEVICE_POLL"));
   $("logoutBtn").addEventListener("click", () => authAction("AUTH_LOGOUT"));
+  $("saveBindingBtn").addEventListener("click", (event) => runBackground(async () => {
+    const button = event.currentTarget;
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = "保存中…";
+    try {
+      await send("SAVE_EDGE_BINDING", { binding: {
+        browserProfileRef: $("bindingProfileRef").value,
+        etsyShopRef: $("bindingShopRef").value,
+      } });
+      $("bindingMessage").textContent = "绑定已保存，并已向 Web 报告当前 Edge 运行身份。";
+      $("bindingMessage").dataset.kind = "success";
+      $("bindingMessage").hidden = false;
+      await Promise.all([refreshBinding(), refreshPassport()]);
+    } catch (error) {
+      $("bindingMessage").textContent = error.message;
+      $("bindingMessage").dataset.kind = "error";
+      $("bindingMessage").hidden = false;
+    } finally {
+      button.disabled = false;
+      button.textContent = original;
+    }
+  }));
   window.addEventListener("hashchange", () => showView(location.hash === "#settings" ? "settings" : "main"));
 });

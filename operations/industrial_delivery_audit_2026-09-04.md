@@ -59,42 +59,44 @@ On install/update, v2 removes retired local model/image credentials, reports, mo
 The implemented vertical path is:
 
 1. Web creates an `etsy_publish` task for `upload_draft`.
-2. Task carries `etsy-listing-draft.v1`, `approvalId`, `expectedUpdatedAt`, `etsyAutomationPermissionRef`, and `publicPublishAllowed=false`.
+2. Task carries `etsy-listing-draft.v1`, `approvalId`, `expectedUpdatedAt`, `etsyAutomationPermissionRef`, `targetDeviceId`, `browserProfileRef`, `etsyShopRef`, and `publicPublishAllowed=false`.
 3. Edge claims or resumes a valid lease.
 4. Edge re-reads the operation and exact draft version.
-5. On an allowlisted Etsy editor route, Edge fills only supported fields and verifies their values; partial failure rolls back all touched fields.
+5. Edge compares its approved device ID and locally bound AdsPower Profile / Etsy shop with the task. Web refuses to dispatch unless that exact device has a fresh `marqel-browser-extension-report.v2` binding.
+6. On an exact `/your/shops/<shop>/...` Etsy editor route, Edge inspects required selectors and shop identity before mutation, heartbeats the lease, then persists a one-shot `etsy-edge-page-mutation.v1` guard before touching fields.
+7. Edge fills only supported fields and verifies their values; partial failure rolls back all touched fields.
    The runtime never falls back to another background Etsy tab: the current active tab must itself be the matching Etsy surface.
-6. Edge never clicks Save or Publish. Tags, images and unsupported dynamic fields remain manual.
-7. The operator may save a task-bound privacy-masked screenshot to the Web artifact store.
-8. After a visible human save-as-draft, the operator records Etsy draft ID/URL or a failure reason.
-9. Edge uploads a redacted readback artifact and reconciles task, operation and Listing draft terminal state.
-10. If response delivery is uncertain, repeat execution is disabled and only read-only reconciliation is allowed.
+8. Edge never clicks Save or Publish. Tags, images and unsupported dynamic fields remain manual.
+9. The operator may save a task-bound privacy-masked screenshot to the Web artifact store.
+10. After a visible human save-as-draft, the operator records Etsy draft ID/URL or a failure reason.
+11. Edge uploads an `etsy-publish-readback-artifact.v1` whose task, operation, draft, device, profile, shop and URL are verified by Web, then reconciles terminal state.
+12. If mutation or response delivery is uncertain, repeat execution is disabled and only visible confirmation or read-only reconciliation is allowed.
 
 The audit initially found a real cross-system contract defect: Edge submitted privacy-masked evidence as `image/jpeg`, while the Web Artifact endpoint accepted only structured JSON. The Web endpoint now accepts JPEG only for a claimed `etsy_publish` / `etsy_adspower` task, validates the JPEG byte signature, source platform, task lease, claimant, size, SHA-256 and redaction status, encrypts it at rest as `etsy_task_viewport`, and keeps terminal readback restricted to the separate `etsy_publish_readback` JSON kind. This prevents screenshot evidence from being used as a forged success readback.
 
 ## Verification performed
 
 - Node `22.23.2` `npm run test:release`: lint plus 8 active v2 smoke suites passed.
-- Control Center `npm test`: the full Web suite passed, including the JPEG task-evidence vertical path and rejection of malformed JPEG evidence.
+- Control Center Node `22.23.2` `npm test`: the full Web suite passed, including fresh Edge 2.0 binding, target-device isolation, idempotency conflict, exact-shop URL, actual readback-contract, JPEG task-evidence and malformed/forged evidence cases.
 - Syntax checks passed for the service worker, content script, Side Panel, Dashboard, auth and capability modules.
 - `npm audit --omit=dev --audit-level=high`: zero known production-dependency vulnerabilities.
 - Package-content assertions confirm that the release script does not ship old Skills, agent/runtime files or compatibility surfaces.
-- Static contract tests verify sensitive-route blocking, privacy-mask restoration, exact draft preflight, atomic DOM rollback, no Save/Publish clicks, human confirmation, uncertain-readback reconciliation and one-settings-surface routing.
+- Static contract tests verify sensitive-route blocking, privacy-mask restoration, exact draft preflight, device/Profile/Shop mismatch blocking, atomic DOM rollback, one-shot page mutation, visible approved-value confirmation, no Save/Publish clicks, uncertain-readback reconciliation and one-settings-surface routing.
 - Local visual rendering checked the Side Panel at a 420 px viewport, the single settings route and the read-only Node Console. This is layout evidence only, not target-profile acceptance.
-- Development package: 26 files, SHA-256 `62647e63395c073cbf03a6011f2ca6d109ac6b0e359795cf37ba48bc14308745`; its manifest correctly records `source_dirty=true`.
-- `npm run release:readiness` correctly returned `ok=false` because the checkout is dirty and RB-01 through RB-07 remain unexecuted.
+- A clean candidate package must be regenerated from the reviewed commit; its immutable SHA-256 and source revision belong in `dist/release-manifest.json` and RB-01 evidence.
+- `npm run release:readiness` must remain `ok=false` until RB-01 through RB-07 are executed in the target AdsPower environment, even when all local gates and checkout cleanliness pass.
 
 ## Remaining delivery blockers
 
 Industrial production readiness remains **blocked**:
 
-- The worktree is dirty and not tied to a reviewed commit.
+- A reviewed source commit and clean package can close the local source-identity gate, but do not replace real-browser acceptance.
 - No exact Etsy written authorization artifact was found in this repository.
 - No target AdsPower Profile, Chrome version, runtime Extension ID or Control Center installation readback has been captured for v2.
 - The new Dock, Side Panel and Node Console have not been accepted in the actual target browser profile.
 - The Etsy editor selectors have not been exercised against current real Etsy locale/A-B variants.
 - No real Web-approved task has completed field fill, human save, evidence upload and terminal reconciliation under v2.
-- The active-tab rule prevents silent writes to a background Etsy tab, but the current task contract still lacks a separately verified target-shop/profile binding that can prove the visible editor belongs to the intended Etsy shop. The AdsPower Profile remains a real-browser acceptance dependency.
+- Device/Profile/Shop binding and exact editor-route checks now exist in source and tests, but the AdsPower Profile identifier is still operator-entered and must be validated in the real target environment; the browser does not expose an independent cryptographic AdsPower Profile identity.
 - No design-partner measurement yet proves fewer copy steps, lower error rate or improved outcome-cycle time.
 
 Therefore the valid status is **source candidate, not production-ready and not proven to execute the complete Etsy business**.

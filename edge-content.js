@@ -52,12 +52,23 @@
   }
 
   chrome.runtime.onMessage.addListener((message = {}, _sender, sendResponse) => {
+    if (message.type === "INSPECT_APPROVED_ETSY_DRAFT") {
+      if (!globalThis.EtsyDraftDomWriter) {
+        sendResponse({ ok: false, error: "草稿检查模块未加载，请刷新 Etsy 页面。", errorCode: "EDGE_PAGE_REFRESH_REQUIRED" });
+        return false;
+      }
+      return respond(sendResponse, globalThis.EtsyDraftDomWriter.inspectEditor(message.listingDraft, {
+        executionBinding: message.executionBinding,
+      }));
+    }
     if (message.type === "APPLY_APPROVED_ETSY_DRAFT") {
       if (!globalThis.EtsyDraftDomWriter) {
         sendResponse({ ok: false, error: "草稿写入模块未加载，请刷新 Etsy 页面。", errorCode: "EDGE_PAGE_REFRESH_REQUIRED" });
         return false;
       }
-      return respond(sendResponse, globalThis.EtsyDraftDomWriter.applyApprovedDraft(message.listingDraft));
+      return respond(sendResponse, globalThis.EtsyDraftDomWriter.applyApprovedDraft(message.listingDraft, {
+        executionBinding: message.executionBinding,
+      }));
     }
     if (message.type === "PREPARE_PRIVACY_SAFE_SCREENSHOT") {
       if (!globalThis.EtsyScreenshotPrivacyMask) {

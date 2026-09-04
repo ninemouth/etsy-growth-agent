@@ -56,6 +56,8 @@
           <div><dt>Operation</dt><dd id="operationId">—</dd></div>
           <div><dt>Draft</dt><dd id="draftId">—</dd></div>
           <div><dt>状态</dt><dd id="taskStatus">—</dd></div>
+          <div><dt>AdsPower Profile</dt><dd id="taskProfileRef">—</dd></div>
+          <div><dt>Etsy Shop</dt><dd id="taskShopRef">—</dd></div>
         </dl>
         <div class="task-actions">
           <button id="prepareBtn" class="primary-btn" type="button" disabled>领取并预检</button>
@@ -109,6 +111,20 @@
           <button id="pollAuthBtn" class="secondary-btn" type="button" hidden>我已批准，重新检查</button>
           <button id="logoutBtn" class="danger-btn" type="button" hidden>断开设备</button>
         </div>
+      </article>
+
+      <article class="card" aria-labelledby="binding-title">
+        <div class="card-head">
+          <div><span class="overline">精确执行绑定</span><h2 id="binding-title">AdsPower 环境与 Etsy 店铺</h2></div>
+          <span id="bindingState" class="status" data-state="idle">检查中</span>
+        </div>
+        <p class="settings-copy">任务只会在与 Web 派发信息完全一致的设备、浏览器环境和店铺中执行。存在已领取任务时绑定不可修改。</p>
+        <div class="binding-form">
+          <label><span>AdsPower Profile Ref</span><input id="bindingProfileRef" type="text" autocomplete="off" placeholder="etsy-us-profile-01" /></label>
+          <label><span>Etsy Shop Ref</span><input id="bindingShopRef" type="text" autocomplete="off" placeholder="ExactShopName" /></label>
+        </div>
+        <button id="saveBindingBtn" class="primary-btn wide" type="button">保存并报告到 Web</button>
+        <p id="bindingMessage" class="message" role="status" aria-live="polite" hidden></p>
       </article>
 
       <article class="card" aria-labelledby="runtime-title">

@@ -19,6 +19,7 @@ const CONTROL_CENTER_URL = "https://www.marqel.shop/listing.html";
 const DEVICE_AUTH_ALARM = "marqel_edge_device_auth_poll";
 const TASK_HEARTBEAT_ALARM = "marqel_edge_task_heartbeat";
 const TASK_LOG_RETENTION_ALARM = "marqel_edge_task_log_retention";
+const ETSY_EDGE_BINDING_KEY = "marqelEtsyEdgeExecutionBinding";
 const RETIRED_LOCAL_KEYS = [
   "apiKey", "llmProvider", "llmModel", "llmFallbackModels", "llmBaseUrl",
   "llmVisionModel", "temperature", "imageGenerationModel", "imageProvider",
@@ -27,13 +28,117 @@ const RETIRED_LOCAL_KEYS = [
   "workflowCheckpoints", "workflowScheduler", "currencyRates",
 ];
 
+function storageRemove(keys) {
+  return new Promise((resolve) => chrome.storage.local.remove(keys, resolve));
+}
+
+function storageGet(keys) {
+  return new Promise((resolve) => chrome.storage.local.get(keys, resolve));
+}
+
+function storageSet(values) {
+  return new Promise((resolve) => chrome.storage.local.set(values, resolve));
+}
+
+function bindingRef(value, field, max = 180) {
+  const normalized = String(value || "").trim().normalize("NFKC");
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{1,179}$/.test(normalized) || normalized.length > max) {
+    const error = new Error(`${field} 只能包含字母、数字、点、下划线、冒号或连字符。`);
+    error.code = "ETSY_EXECUTION_BINDING_INVALID";
+    throw error;
+  }
+  return normalized;
+}
+
+function normalizeExecutionBinding(input = {}) {
+  const browserProfileRef = bindingRef(input.browserProfileRef, "AdsPower Profile", 180);
+  const etsyShopRef = bindingRef(input.etsyShopRef, "Etsy Shop", 80);
+  if (etsyShopRef.toLowerCase() === "me") {
+    const error = new Error("Etsy Shop 必须是精确店铺名，不能使用 me。");
+    error.code = "ETSY_SHOP_BINDING_UNVERIFIABLE";
+    throw error;
+  }
+  return { browserProfileRef, etsyShopRef: etsyShopRef.toLowerCase() };
+}
+
+async function storedExecutionBinding() {
+  const values = await storageGet([ETSY_EDGE_BINDING_KEY]);
+  const binding = values[ETSY_EDGE_BINDING_KEY];
+  if (!binding) return null;
+  try { return normalizeExecutionBinding(binding); } catch (_) { return null; }
+}
+
+async function getRuntimeBinding() {
+  const [session, binding] = await Promise.all([
+    getActiveSession({ revalidate: false }),
+    storedExecutionBinding(),
+  ]);
+  if (!session?.deviceId) {
+    const error = new Error("Control Center 设备身份尚未连接。");
+    error.code = "ETSY_TARGET_DEVICE_MISSING";
+    throw error;
+  }
+  if (!binding) {
+    const error = new Error("请先在 Edge 设置中绑定当前 AdsPower Profile 与精确 Etsy 店铺。");
+    error.code = "ETSY_EXECUTION_BINDING_MISSING";
+    throw error;
+  }
+  return { deviceId: bindingRef(session.deviceId, "Device ID"), ...binding };
+}
+
 const taskAdapter = createEtsyAdsPowerTaskAdapter({
   request: controlCenterRequest,
   storage: chrome.storage.local,
+  getRuntimeBinding,
 });
 
-function storageRemove(keys) {
-  return new Promise((resolve) => chrome.storage.local.remove(keys, resolve));
+function chromeVersion() {
+  return String(globalThis.navigator?.userAgent || "").match(/(?:Chrome|Chromium)\/([\d.]+)/)?.[1] || "unknown";
+}
+
+async function reportEdgeRuntime() {
+  const binding = await getRuntimeBinding();
+  const result = await controlCenterRequest("/api/browser-extensions/report", {
+    method: "POST",
+    body: JSON.stringify({
+      contractVersion: "marqel-browser-extension-report.v2",
+      extension: {
+        id: "etsy-growth-agent",
+        version: chrome.runtime.getManifest().version,
+        runtimeExtensionId: chrome.runtime.id,
+        chromeVersion: chromeVersion(),
+        platform: "adspower_etsy",
+        installMode: "unpacked",
+      },
+      binding: {
+        browserProfileRef: binding.browserProfileRef,
+        etsyShopRef: binding.etsyShopRef,
+      },
+    }),
+  });
+  await logEdge("edge_runtime_reported", "Edge 设备、AdsPower 环境与 Etsy 店铺绑定已报告。", binding);
+  return result;
+}
+
+async function saveExecutionBinding(input = {}) {
+  const active = await taskAdapter.active({ refresh: false });
+  if (active?.task) {
+    const error = new Error("存在已领取任务时禁止更改执行环境绑定；请先完成终态回读或对账。");
+    error.code = "ETSY_EXECUTION_BINDING_LOCKED";
+    throw error;
+  }
+  const binding = normalizeExecutionBinding(input);
+  await storageSet({ [ETSY_EDGE_BINDING_KEY]: binding });
+  const report = await reportEdgeRuntime();
+  return { binding, report };
+}
+
+async function pollAuthorizationAndReportBinding() {
+  const result = await pollDeviceAuthorization();
+  const binding = await storedExecutionBinding();
+  if (!binding) return result;
+  const runtimeReport = await reportEdgeRuntime();
+  return { ...result, runtimeReport };
 }
 
 function publicSession(session = null) {
@@ -98,16 +203,18 @@ async function currentEtsyTab() {
 }
 
 async function capabilityPassport() {
-  const [tab, session, activeTask] = await Promise.all([
+  const [tab, session, activeTask, runtimeBinding] = await Promise.all([
     currentEtsyTab(),
     getActiveSession({ revalidate: false }).catch(() => null),
     taskAdapter.active({ refresh: false }).catch(() => null),
+    storedExecutionBinding(),
   ]);
   return buildEdgeCapabilityPassport({
     tab: tab || {},
     session: publicSession(session),
     activeTask,
     extensionVersion: chrome.runtime.getManifest().version,
+    runtimeBinding,
   });
 }
 
@@ -123,6 +230,7 @@ function countFieldStatuses(fieldResults = {}) {
 
 async function applyApprovedDraft() {
   let tab = null;
+  let mutationStarted = false;
   try {
     const verified = await taskAdapter.preflight();
     tab = await currentEtsyTab();
@@ -131,19 +239,40 @@ async function applyApprovedDraft() {
       error.code = "ETSY_EDITOR_REQUIRED";
       throw error;
     }
+    const inspection = await sendTabMessage(tab.id, {
+      type: "INSPECT_APPROVED_ETSY_DRAFT",
+      listingDraft: verified.listingDraft,
+      executionBinding: verified.runtimeBinding,
+    });
+    if (inspection?.contractVersion !== "etsy-listing-editor-inspection.v1"
+      || inspection.ready !== true
+      || inspection.listingDraftId !== verified.listingDraft.id
+      || inspection.operationId !== verified.task.operationId
+      || inspection.etsyShopRef !== verified.runtimeBinding.etsyShopRef) {
+      const error = new Error(`页面预检未通过：${inspection?.unavailableRequiredFields?.join(", ") || "编辑器身份或字段不可验证"}。`);
+      error.code = "ETSY_EDITOR_INSPECTION_BLOCKED";
+      throw error;
+    }
+    await taskAdapter.heartbeat();
+    await taskAdapter.beginPageMutation(inspection);
+    mutationStarted = true;
     const result = await sendTabMessage(tab.id, {
       type: "APPLY_APPROVED_ETSY_DRAFT",
       listingDraft: verified.listingDraft,
+      executionBinding: verified.runtimeBinding,
     });
     if (result?.contractVersion !== "etsy-approved-draft-dom-write.v1"
       || result.listingDraftId !== verified.listingDraft.id
       || result.operationId !== verified.task.operationId
+      || result.etsyShopRef !== verified.runtimeBinding.etsyShopRef
+      || result.selectorSetVersion !== inspection.selectorSetVersion
       || result.saveTriggered !== false
       || result.publicPublishPerformed !== false) {
       const error = new Error("页面返回结果与获批草稿不一致，已停止后续动作。");
       error.code = "ETSY_DRAFT_RESULT_INVALID";
       throw error;
     }
+    await taskAdapter.completePageMutation(result);
     await taskAdapter.checkpoint({
       stage: "approved_fields_applied_pending_human_save",
       pageUrl: result.sourceUrl,
@@ -157,6 +286,7 @@ async function applyApprovedDraft() {
     });
     return result;
   } catch (error) {
+    if (mutationStarted) await taskAdapter.markPageMutationUncertain(error).catch(() => {});
     await logEdge("approved_draft_blocked", error.message, {
       taskId: "",
       operationId: "",
@@ -186,6 +316,16 @@ async function captureTaskEvidence() {
   if (classifyEtsySurface(tab).type !== "listing_editor") {
     const error = new Error("当前任务只允许在匹配的 Etsy Listing 编辑器保存现场证据。" );
     error.code = "ETSY_EDITOR_REQUIRED";
+    throw error;
+  }
+  const inspection = await sendTabMessage(tab.id, {
+    type: "INSPECT_APPROVED_ETSY_DRAFT",
+    listingDraft: verified.listingDraft,
+    executionBinding: verified.runtimeBinding,
+  });
+  if (inspection?.ready !== true || inspection.etsyShopRef !== verified.runtimeBinding.etsyShopRef) {
+    const error = new Error("当前编辑器无法证明属于任务绑定店铺，禁止保存任务证据。");
+    error.code = "ETSY_SHOP_MISMATCH";
     throw error;
   }
   let prepared = null;
@@ -240,6 +380,37 @@ async function captureTaskEvidence() {
   }
 }
 
+async function recordUploaded(readback = {}) {
+  const verified = await taskAdapter.preflight();
+  const tab = await currentEtsyTab();
+  if (!tab?.id || !isEtsyTab(tab)) {
+    const error = new Error("请在任务绑定的 Etsy Listing 编辑器中核对草稿终态。");
+    error.code = "ETSY_EDITOR_REQUIRED";
+    throw error;
+  }
+  const inspection = await sendTabMessage(tab.id, {
+    type: "INSPECT_APPROVED_ETSY_DRAFT",
+    listingDraft: verified.listingDraft,
+    executionBinding: verified.runtimeBinding,
+  });
+  if (inspection?.etsyShopRef !== verified.runtimeBinding.etsyShopRef) {
+    const error = new Error("当前 Etsy 店铺与任务绑定不一致，禁止回写成功终态。");
+    error.code = "ETSY_SHOP_MISMATCH";
+    throw error;
+  }
+  if (inspection.approvedRequiredValuesMatch !== true) {
+    const error = new Error("当前页面的必填字段与获批草稿不一致，禁止回写成功终态。");
+    error.code = "ETSY_DRAFT_VISIBLE_VALUES_MISMATCH";
+    throw error;
+  }
+  if (readback.listingUrl && new URL(readback.listingUrl).toString() !== new URL(inspection.sourceUrl).toString()) {
+    const error = new Error("输入的草稿 URL 与当前可见编辑器不一致。");
+    error.code = "ETSY_PLATFORM_READBACK_INVALID";
+    throw error;
+  }
+  return taskAdapter.recordUploaded({ ...readback, listingUrl: inspection.sourceUrl, visibleDraftVerified: true });
+}
+
 const TASK_HANDLERS = Object.freeze({
   ETSY_TASK_NEXT: () => taskAdapter.next(),
   ETSY_TASK_RESUMABLE: () => taskAdapter.resumable(),
@@ -253,7 +424,7 @@ const TASK_HANDLERS = Object.freeze({
   ETSY_TASK_HEARTBEAT: () => taskAdapter.heartbeat(),
   ETSY_TASK_CHECKPOINT: (message) => taskAdapter.checkpoint(message.checkpoint || {}),
   ETSY_TASK_PAUSE_FOR_VERIFICATION: (message) => taskAdapter.pauseForVerification(message.checkpoint || {}),
-  ETSY_TASK_RECORD_UPLOADED: (message) => taskAdapter.recordUploaded(message.readback || {}),
+  ETSY_TASK_RECORD_UPLOADED: (message) => recordUploaded(message.readback || {}),
   ETSY_TASK_RECORD_FAILED: (message) => taskAdapter.recordFailed(message.readback || {}),
   ETSY_TASK_RECONCILE: () => taskAdapter.reconcile(),
 });
@@ -287,7 +458,7 @@ chrome.runtime.onMessage.addListener((message = {}, sender, sendResponse) => {
   }
 
   if (message.type === "AUTH_DEVICE_POLL") {
-    pollDeviceAuthorization()
+    pollAuthorizationAndReportBinding()
       .then((data) => sendResponse({ ok: true, data }))
       .catch((error) => sendResponse({ ok: false, error: error.message, errorCode: error.code || "AUTH_POLL_FAILED" }));
     return true;
@@ -303,13 +474,29 @@ chrome.runtime.onMessage.addListener((message = {}, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "GET_EDGE_BINDING") {
+    storedExecutionBinding().then((binding) => sendResponse({ ok: true, data: { binding } })).catch((error) => sendResponse({ ok: false, error: error.message, errorCode: error.code }));
+    return true;
+  }
+
+  if (message.type === "SAVE_EDGE_BINDING") {
+    saveExecutionBinding(message.binding || {}).then((data) => sendResponse({ ok: true, data })).catch((error) => sendResponse({ ok: false, error: error.message, errorCode: error.code || "ETSY_EXECUTION_BINDING_SAVE_FAILED" }));
+    return true;
+  }
+
+  if (message.type === "REPORT_EDGE_RUNTIME") {
+    reportEdgeRuntime().then((data) => sendResponse({ ok: true, data })).catch((error) => sendResponse({ ok: false, error: error.message, errorCode: error.code || "EDGE_RUNTIME_REPORT_FAILED" }));
+    return true;
+  }
+
   if (message.type === "GET_EDGE_NODE_STATUS") {
     Promise.all([
       capabilityPassport(),
       getActiveSession({ revalidate: false }).catch(() => null),
       taskAdapter.active().catch(() => null),
       listTaskLogs({ limit: 30 }),
-    ]).then(([passport, session, activeTask, logs]) => sendResponse({
+      storedExecutionBinding(),
+    ]).then(([passport, session, activeTask, logs, runtimeBinding]) => sendResponse({
       ok: true,
       data: {
         schemaVersion: "marqel-etsy-edge-node-status.v2",
@@ -319,6 +506,7 @@ chrome.runtime.onMessage.addListener((message = {}, sender, sendResponse) => {
         passport,
         session: publicSession(session),
         activeTask,
+        runtimeBinding,
         logs,
       },
     })).catch((error) => sendResponse({ ok: false, error: error.message }));
@@ -362,7 +550,10 @@ chrome.action.onClicked.addListener((tab) => {
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === DEVICE_AUTH_ALARM) {
-    try { await pollDeviceAuthorization(); } catch (_) { /* surfaced on next explicit status check */ }
+    try {
+      const result = await pollDeviceAuthorization();
+      if (result?.status === "authorized" && await storedExecutionBinding()) await reportEdgeRuntime();
+    } catch (_) { /* surfaced on next explicit status check */ }
     return;
   }
   if (alarm.name === TASK_HEARTBEAT_ALARM) {

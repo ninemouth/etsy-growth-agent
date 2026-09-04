@@ -1,13 +1,9 @@
 (() => {
   const CONTRACT_VERSION = "etsy-approved-draft-dom-write.v1";
-  const SELECTOR_SET_VERSION = "etsy-listing-editor-selectors.2026-08-25";
+  const SELECTOR_SET_VERSION = "etsy-listing-editor-selectors.2026-09-04.v2";
   const EDITOR_PATHS = [
     /^\/your\/shops\/[^/]+\/(?:listing|listings)(?:\/|$)/i,
     /^\/your\/shops\/[^/]+\/tools\/listings(?:\/|$)/i,
-    /^\/your\/listings(?:\/|$)/i,
-    /^\/listing-manager(?:\/|$)/i,
-    /^\/shop-manager\/listings(?:\/|$)/i,
-    /^\/listing-editor(?:\/|$)/i,
   ];
   const BLOCKED_PATH = /\/(?:account|signin|login|checkout|cart|payment|billing|security|messages?|conversations?|orders?)(?:\/|$)/i;
   const SELECTORS = Object.freeze({
@@ -59,6 +55,22 @@
     return url;
   }
 
+  function normalizeShopRef(value, field = "etsyShopRef") {
+    const normalized = String(value || "").trim().normalize("NFKC");
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{1,79}$/.test(normalized) || normalized.toLowerCase() === "me") {
+      throw new Error(`${field} must identify the exact Etsy shop.`);
+    }
+    return normalized.toLowerCase();
+  }
+
+  function shopRefFromEditorUrl(url) {
+    const match = url.pathname.match(/^\/your\/shops\/([^/]+)\/(?:listing|listings|tools\/listings)(?:\/|$)/i);
+    if (!match) throw new Error("The Etsy editor URL does not expose an exact shop identity.");
+    let decoded = "";
+    try { decoded = decodeURIComponent(match[1]); } catch { throw new Error("The Etsy editor shop identity is invalid."); }
+    return normalizeShopRef(decoded, "page.etsyShopRef");
+  }
+
   function findEditable(documentImpl, field) {
     for (const selector of SELECTORS[field] || []) {
       const element = documentImpl.querySelector(selector);
@@ -90,13 +102,52 @@
     return option ? option.value : "";
   }
 
+  function inspectEditor(draft, {
+    documentImpl = document,
+    locationHref = location.href,
+    executionBinding = {},
+  } = {}) {
+    const normalized = normalizeDraft(draft);
+    const url = assertEditorUrl(locationHref);
+    const etsyShopRef = shopRefFromEditorUrl(url);
+    if (etsyShopRef !== normalizeShopRef(executionBinding.etsyShopRef, "executionBinding.etsyShopRef")) {
+      throw new Error("The visible Etsy editor belongs to another shop.");
+    }
+    const requiredFields = ["title", "description", ...(normalized.price ? ["price"] : [])];
+    const optionalFields = ["tags", "category", "personalization"];
+    const resolved = new Map([...requiredFields, ...optionalFields].map((field) => [field, findEditable(documentImpl, field)]));
+    const fieldResults = Object.fromEntries([...resolved.entries()].map(([field, entry]) => [field, {
+      required: requiredFields.includes(field),
+      available: Boolean(entry.element),
+      writable: Boolean(entry.element && !entry.blocked),
+      approvedValueMatch: Boolean(entry.element) && (!requiredFields.includes(field) || String(entry.element.value || "") === String(normalized[field] || "")),
+      selector: entry.selector,
+    }]));
+    const unavailable = requiredFields.filter((field) => !resolved.get(field)?.element || resolved.get(field)?.blocked);
+    return {
+      contractVersion: "etsy-listing-editor-inspection.v1",
+      selectorSetVersion: SELECTOR_SET_VERSION,
+      listingDraftId: normalized.id,
+      operationId: normalized.operationId,
+      sourceUrl: url.toString(),
+      etsyShopRef,
+      observedAt: new Date().toISOString(),
+      ready: unavailable.length === 0,
+      approvedRequiredValuesMatch: requiredFields.every((field) => fieldResults[field]?.approvedValueMatch === true),
+      unavailableRequiredFields: unavailable,
+      fieldResults,
+    };
+  }
+
   function applyApprovedDraft(draft, {
     documentImpl = document,
     locationHref = location.href,
     EventImpl = Event,
+    executionBinding = {},
   } = {}) {
     const normalized = normalizeDraft(draft);
-    const url = assertEditorUrl(locationHref);
+    const inspection = inspectEditor(draft, { documentImpl, locationHref, executionBinding });
+    const url = new URL(inspection.sourceUrl);
     const requiredFields = ["title", "description", ...(normalized.price ? ["price"] : [])];
     const optionalFields = ["tags", "category", "personalization"];
     const resolved = new Map([...requiredFields, ...optionalFields].map((field) => [field, findEditable(documentImpl, field)]));
@@ -142,6 +193,7 @@
       listingDraftId: normalized.id,
       operationId: normalized.operationId,
       sourceUrl: url.toString(),
+      etsyShopRef: inspection.etsyShopRef,
       observedAt: new Date().toISOString(),
       fieldsApplied: applied.length,
       fieldResults,
@@ -152,5 +204,5 @@
     };
   }
 
-  globalThis.EtsyDraftDomWriter = Object.freeze({ CONTRACT_VERSION, SELECTOR_SET_VERSION, normalizeDraft, assertEditorUrl, applyApprovedDraft });
+  globalThis.EtsyDraftDomWriter = Object.freeze({ CONTRACT_VERSION, SELECTOR_SET_VERSION, normalizeDraft, assertEditorUrl, inspectEditor, applyApprovedDraft });
 })();

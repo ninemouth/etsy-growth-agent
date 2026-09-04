@@ -25,6 +25,8 @@ export const BROWSER_AUTOMATION_CAPABILITIES = [
     robustness: "human_gated",
     guarantees: [
       "只接受 Web 精确批准且带有效租约的 etsy-listing-draft.v1",
+      "任务与 Edge 设备、AdsPower Profile 和精确 Etsy 店铺三重绑定",
+      "每个任务只允许一次页面写入尝试，结果不确定时禁止重放",
       "逐字段写入并验证页面值",
       "绝不点击保存或公开发布",
     ],
@@ -68,7 +70,7 @@ export const BROWSER_AUTOMATION_CAPABILITIES = [
 export const EDGE_CAPABILITY_PASSPORT_VERSION = "etsy-edge-capability-passport.v2";
 
 const ETSY_HOST_RE = /(^|\.)etsy\.com$/i;
-const LISTING_EDITOR_PATH_RE = /\/(?:your\/shops\/[^/]+\/(?:listing|listings)|your\/shops\/[^/]+\/tools\/listings|your\/listings|listing-manager|shop-manager\/listings|listing-editor)(?:\/|$)/i;
+const LISTING_EDITOR_PATH_RE = /\/your\/shops\/(?!me(?:\/|$))[^/]+\/(?:listing|listings|tools\/listings)(?:\/|$)/i;
 const SENSITIVE_ETSY_PATH_RE = /\/(?:account|signin|login|checkout|cart|payment|billing|security|messages?|conversations?|orders?|receipts?)(?:\/|$)/i;
 
 export function classifyEtsySurface(tab = {}) {
@@ -111,9 +113,11 @@ export function buildEdgeCapabilityPassport({
   session = null,
   activeTask = null,
   extensionVersion = "",
+  runtimeBinding = null,
 } = {}) {
   const surface = classifyEtsySurface(tab);
   const controlCenterBound = Boolean(session?.user);
+  const executionBound = Boolean(runtimeBinding?.browserProfileRef && runtimeBinding?.etsyShopRef);
   const active = activeTask?.task || activeTask || null;
   const taskBoundEvidenceState = !surface.evidenceAllowed
     ? surface.type === "sensitive" ? "blocked" : "unavailable"
@@ -135,6 +139,8 @@ export function buildEdgeCapabilityPassport({
     nextAction = capabilityState("attention", "打开任务对应编辑器", "当前获批任务只能在可见的 Etsy Listing 编辑器继续。" );
   } else if (!controlCenterBound) {
     nextAction = capabilityState("attention", "连接 Control Center", "完成设备授权后才允许启动 Etsy Edge 任务；公开页面仍只做本地识别。" );
+  } else if (!executionBound) {
+    nextAction = capabilityState("blocked", "绑定执行环境", "先在 Edge 设置中绑定当前 AdsPower 环境与精确 Etsy 店铺，任务才可领取。" );
   } else if (active) {
     nextAction = capabilityState("active", "继续已领取任务", `当前 ${active.id || "Etsy 任务"} 等待页面执行或终态回读。`);
   }
@@ -155,8 +161,11 @@ export function buildEdgeCapabilityPassport({
       reason: surface.reason,
     },
     authority: {
-      state: controlCenterBound ? "bound" : "local_only",
-      label: controlCenterBound ? "Control Center 已授权" : "仅本地识别",
+      state: controlCenterBound && executionBound ? "bound" : controlCenterBound ? "binding_required" : "local_only",
+      label: controlCenterBound && executionBound ? "设备与店铺已绑定" : controlCenterBound ? "缺少执行环境绑定" : "仅本地识别",
+      deviceId: String(session?.deviceId || ""),
+      browserProfileRef: String(runtimeBinding?.browserProfileRef || ""),
+      etsyShopRef: String(runtimeBinding?.etsyShopRef || ""),
     },
     runtime: {
       state: active ? "active" : "idle",
