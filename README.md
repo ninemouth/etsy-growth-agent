@@ -9,7 +9,7 @@ This repository intentionally keeps two independent product lines:
 | Edition | Branch | Intended user | Runtime |
 | --- | --- | --- | --- |
 | Etsy Growth Agent standalone | [`main`](https://github.com/ninemouth/etsy-growth-agent/tree/main) | Users without Codex who need the browser-side AI, competitor/trend research, reports and local workflows | v1.2.9 |
-| Marqel Etsy Edge | [`codex/etsy-edge-v2-20260904`](https://github.com/ninemouth/etsy-growth-agent/tree/codex/etsy-edge-v2-20260904) | Teams using Codex for planning and Marqel Web for approval, dispatch and outcomes | v2.0.0 |
+| Marqel Etsy Edge | [`edge2.0`](https://github.com/ninemouth/etsy-growth-agent/tree/edge2.0) | Teams using Codex for planning and Marqel Web for approval, dispatch and outcomes | v2.0.0 |
 
 The standalone `main` branch is retained and is not replaced by this branch. The editions are not an in-place compatibility upgrade: use only one in a Chrome/AdsPower Profile, and choose it according to the operating model. Edge 2.0 deliberately removes the standalone AI runtime and retired local data.
 
@@ -62,13 +62,24 @@ Etsy is a trademark of Etsy, Inc. Marqel Etsy Edge is an independent tool and is
 
 ## Install for controlled testing
 
+Choose one source method:
+
+```bash
+git clone --branch edge2.0 --single-branch https://github.com/ninemouth/etsy-growth-agent.git etsy-edge-2.0
+cd etsy-edge-2.0
+```
+
+Alternatively, download the [Edge 2.0 source snapshot ZIP](https://github.com/ninemouth/etsy-growth-agent/archive/refs/heads/edge2.0.zip), extract it, and open a terminal in the extracted directory. This archive is a source snapshot, not a signed or production-accepted release package.
+
+Run the controlled-test checks and build:
+
 ```bash
 npm install
 npm run test:release
 npm run package:extension -- --allow-dirty
 ```
 
-Then open `chrome://extensions`, enable Developer Mode, load `/Users/yang/ProductAssistant/etsy-growth-agent`, and refresh every already-open Etsy tab. Reloading the extension does not replace content scripts that are already running in a tab.
+Then open `chrome://extensions`, enable Developer Mode, choose **Load unpacked**, select the extracted repository directory that contains `manifest.json`, and refresh every already-open Etsy tab. Reloading the extension does not replace content scripts that are already running in a tab.
 
 ## Release evidence
 
